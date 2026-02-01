@@ -21,19 +21,7 @@ export declare function initConfig(): Promise<AppConfig | null>;
  */
 export declare function getConfig(): AppConfig | null;
 /**
- * Wait for config to be available. Resolves when config is loaded.
- */
-export declare function waitForConfig(): Promise<AppConfig>;
-/**
- * Check if the app is configured (has valid Supabase credentials)
- */
-export declare function isConfigured(): boolean;
-/**
  * Set config directly (used after setup wizard completes)
  */
 export declare function setConfig(config: AppConfig): void;
-/**
- * Clear cached config from localStorage
- */
-export declare function clearConfigCache(): void;
 //# sourceMappingURL=runtimeConfig.d.ts.map

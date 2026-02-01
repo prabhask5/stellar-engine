@@ -415,58 +415,6 @@ export async function queueSyncOperation(
 }
 
 /**
- * Helper to queue an increment operation.
- */
-export async function queueIncrementOperation(
-  table: string,
-  entityId: string,
-  field: string,
-  delta: number
-): Promise<void> {
-  await queueSyncOperation({
-    table,
-    entityId,
-    operationType: 'increment',
-    field,
-    value: delta
-  });
-}
-
-/**
- * Helper to queue a set operation for a single field.
- */
-export async function queueSetOperation(
-  table: string,
-  entityId: string,
-  field: string,
-  value: unknown
-): Promise<void> {
-  await queueSyncOperation({
-    table,
-    entityId,
-    operationType: 'set',
-    field,
-    value
-  });
-}
-
-/**
- * Helper to queue a set operation for multiple fields.
- */
-export async function queueMultiFieldSetOperation(
-  table: string,
-  entityId: string,
-  fields: Record<string, unknown>
-): Promise<void> {
-  await queueSyncOperation({
-    table,
-    entityId,
-    operationType: 'set',
-    value: fields
-  });
-}
-
-/**
  * Helper to queue a create operation.
  */
 export async function queueCreateOperation(

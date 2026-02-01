@@ -67,12 +67,4 @@ export declare function getPendingOpsForEntity(entityId: string): Promise<SyncOp
  * Clean up old conflict history entries (older than 30 days).
  */
 export declare function cleanupConflictHistory(): Promise<number>;
-/**
- * Get recent conflict history for an entity.
- *
- * @param entityId The entity ID to check
- * @param limit Maximum number of entries to return
- * @returns Array of conflict history entries
- */
-export declare function getConflictHistory(entityId: string, limit?: number): Promise<ConflictHistoryEntry[]>;
 //# sourceMappingURL=conflicts.d.ts.map

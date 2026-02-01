@@ -6,7 +6,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { getConfig, waitForConfig } from '../runtime/runtimeConfig';
+import { getConfig } from '../runtime/runtimeConfig';
 import { debugLog, debugWarn, debugError } from '../debug';
 
 let _prefix = 'stellar';
@@ -169,19 +169,3 @@ export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
   }
 });
 
-/**
- * Get Supabase client asynchronously, waiting for config to load first.
- * Use this when config might not be loaded yet (e.g., in hooks.client.ts).
- */
-export async function getSupabaseAsync(): Promise<SupabaseClient> {
-  await waitForConfig();
-  return getOrCreateClient();
-}
-
-/**
- * Reset the Supabase client (for admin config updates).
- * Forces re-creation with new config on next access.
- */
-export function resetSupabaseClient(): void {
-  realClient = null;
-}

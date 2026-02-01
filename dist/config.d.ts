@@ -50,8 +50,4 @@ export declare function getTableMap(): Record<string, string>;
  * Get columns for a specific Supabase table from config.
  */
 export declare function getTableColumns(supabaseName: string): string;
-/**
- * Get a TableConfig by its Supabase name.
- */
-export declare function getTableConfig(supabaseName: string): TableConfig | undefined;
 //# sourceMappingURL=config.d.ts.map

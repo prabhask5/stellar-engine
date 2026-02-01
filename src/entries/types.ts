@@ -1,4 +1,4 @@
-// Types subpath barrel – @stellar/sync-engine/types
+// Types subpath barrel – @prabhask5/stellar-engine/types
 export type { SyncEngineConfig, TableConfig } from '../config';
 export type { DatabaseConfig, DatabaseVersionConfig } from '../database';
 export type { BatchOperation } from '../data';

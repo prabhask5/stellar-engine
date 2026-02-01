@@ -408,23 +408,3 @@ export async function cleanupConflictHistory(): Promise<number> {
   }
 }
 
-/**
- * Get recent conflict history for an entity.
- *
- * @param entityId The entity ID to check
- * @param limit Maximum number of entries to return
- * @returns Array of conflict history entries
- */
-export async function getConflictHistory(
-  entityId: string,
-  limit: number = 10
-): Promise<ConflictHistoryEntry[]> {
-  const entries = await getEngineConfig().db!.table('conflictHistory')
-    .where('entityId')
-    .equals(entityId)
-    .reverse()
-    .limit(limit)
-    .toArray();
-
-  return entries;
-}

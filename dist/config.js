@@ -52,11 +52,4 @@ export function getTableColumns(supabaseName) {
     }
     return table.columns;
 }
-/**
- * Get a TableConfig by its Supabase name.
- */
-export function getTableConfig(supabaseName) {
-    const config = getEngineConfig();
-    return config.tables.find(t => t.supabaseName === supabaseName);
-}
 //# sourceMappingURL=config.js.map

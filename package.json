@@ -1,5 +1,5 @@
 {
-  "name": "@stellar/sync-engine",
+  "name": "@prabhask5/stellar-engine",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",

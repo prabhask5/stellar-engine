@@ -43,10 +43,6 @@ export interface SyncOperationItem {
     timestamp: string;
     retries: number;
 }
-/**
- * Type guard to check if an item is a SyncOperationItem
- */
-export declare function isOperationItem(item: unknown): item is SyncOperationItem;
 export interface OfflineCredentials {
     id: string;
     userId: string;

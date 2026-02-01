@@ -118,7 +118,7 @@ export async function clearPendingSyncQueue(): Promise<number> {
  * Mark that we need auth validation before next sync
  * Called when going offline
  */
-export function markOffline(): void {
+function markOffline(): void {
   wasOffline = true;
   authValidatedAfterReconnect = false;
 }
@@ -127,7 +127,7 @@ export function markOffline(): void {
  * Mark auth as validated (safe to sync)
  * Called after successful credential validation on reconnect
  */
-export function markAuthValidated(): void {
+function markAuthValidated(): void {
   authValidatedAfterReconnect = true;
   wasOffline = false;
 }
@@ -135,7 +135,7 @@ export function markAuthValidated(): void {
 /**
  * Check if auth needs validation before syncing
  */
-export function needsAuthValidation(): boolean {
+function needsAuthValidation(): boolean {
   return wasOffline && !authValidatedAfterReconnect;
 }
 
@@ -237,6 +237,7 @@ function logSyncCycle(stats: Omit<SyncCycleStats, 'timestamp'>) {
 // Uses configurable prefix: window.__<prefix>SyncStats?.()
 // Also: window.__<prefix>Tombstones?.() or window.__<prefix>Tombstones?.({ cleanup: true, force: true })
 // Also: window.__<prefix>Egress?.()
+// Also: window.__<prefix>Sync.forceFullSync(), .resetSyncCursor(), .sync(), .getStatus(), .checkConnection(), .realtimeStatus()
 function initDebugWindowUtilities(): void {
   if (typeof window === 'undefined' || !isDebugMode()) return;
 
@@ -556,10 +557,10 @@ function setLastSyncCursor(cursor: string, userId: string | null): void {
 }
 
 /**
- * Reset the sync cursor to force a full sync on next sync cycle.
- * This is useful when data is out of sync between devices.
+ * Reset the sync cursor so the next sync pulls ALL data.
+ * Available in browser console via window.__<prefix>Sync.resetSyncCursor()
  */
-export async function resetSyncCursor(): Promise<void> {
+async function resetSyncCursor(): Promise<void> {
   const userId = await getCurrentUserId();
   if (typeof localStorage !== 'undefined') {
     const key = userId ? `lastSyncCursor_${userId}` : 'lastSyncCursor';
@@ -569,16 +570,15 @@ export async function resetSyncCursor(): Promise<void> {
 }
 
 /**
- * Force a full sync by resetting the cursor and running sync.
- * This clears local data and re-downloads everything from the server.
+ * Force a full sync by resetting the cursor and re-downloading all data.
+ * Available in browser console via window.__<prefix>Sync.forceFullSync()
  */
-export async function forceFullSync(): Promise<void> {
+async function forceFullSync(): Promise<void> {
   debugLog('[SYNC] Starting force full sync...');
 
   const config = getEngineConfig();
   const db = config.db!;
 
-  // Reset cursor to pull all data
   await resetSyncCursor();
 
   // Clear local data (except sync queue - keep pending changes)
@@ -591,12 +591,10 @@ export async function forceFullSync(): Promise<void> {
 
   debugLog('[SYNC] Local data cleared, pulling from server...');
 
-  // Pull directly without using runFullSync (which passes a minCursor that overrides our reset)
   try {
     syncStatusStore.setStatus('syncing');
     syncStatusStore.setSyncMessage('Downloading all data...');
 
-    // Pull with NO minCursor so it uses the reset cursor (1970)
     await pullRemoteChanges();
 
     syncStatusStore.setStatus('idle');
@@ -757,10 +755,6 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
 // Continues until queue is empty to catch items added during sync
 // Track push errors for this sync cycle
 let pushErrors: Array<{ message: string; table: string; operation: string; entityId: string }> = [];
-
-export function getPushErrors() {
-  return pushErrors;
-}
 
 interface PushStats {
   originalCount: number;
@@ -1444,7 +1438,7 @@ export async function runFullSync(quiet: boolean = false, skipPull: boolean = fa
  *
  * Only runs when the sync queue is empty (otherwise normal sync handles it).
  */
-export async function reconcileLocalWithRemote(): Promise<number> {
+async function reconcileLocalWithRemote(): Promise<number> {
   const db = getDb();
   const config = getEngineConfig();
 
@@ -1483,7 +1477,7 @@ export async function reconcileLocalWithRemote(): Promise<number> {
 }
 
 // Initial hydration: if local DB is empty, pull everything from remote
-export async function hydrateFromRemote(): Promise<void> {
+async function hydrateFromRemote(): Promise<void> {
   if (typeof navigator === 'undefined' || !navigator.onLine) return;
 
   // Atomically acquire sync lock to prevent concurrent syncs/hydrations
@@ -1704,7 +1698,7 @@ async function cleanupOldTombstones(): Promise<{ local: number; server: number }
 }
 
 // Debug function to check tombstone status and manually trigger cleanup
-export async function debugTombstones(options?: {
+async function debugTombstones(options?: {
   cleanup?: boolean;
   force?: boolean;
 }): Promise<void> {
@@ -2150,10 +2144,47 @@ export async function startSyncEngine(): Promise<void> {
     }
   }, WATCHDOG_INTERVAL_MS);
 
-  // Expose tombstone debug to window for console access
+  // Expose debug utilities to window for console access
   if (typeof window !== 'undefined' && isDebugMode()) {
     const prefix = getPrefix();
+    const supabase = getSupabase();
+
     (window as unknown as Record<string, unknown>)[`__${prefix}Tombstones`] = debugTombstones;
+
+    // Sync debug tools: window.__<prefix>Sync.forceFullSync(), .resetSyncCursor(), etc.
+    (window as unknown as Record<string, unknown>)[`__${prefix}Sync`] = {
+      forceFullSync,
+      resetSyncCursor,
+      sync: () => runFullSync(false),
+      getStatus: () => ({
+        cursor:
+          typeof localStorage !== 'undefined'
+            ? localStorage.getItem('lastSyncCursor') ||
+              Object.entries(localStorage)
+                .filter(([k]) => k.startsWith('lastSyncCursor_'))
+                .map(([k, v]) => ({ [k]: v }))[0]
+            : 'N/A',
+        pendingOps: getPendingSync().then((ops) => ops.length)
+      }),
+      checkConnection: async () => {
+        try {
+          const config = getEngineConfig();
+          const firstTable = config.tables[0]?.supabaseName;
+          if (!firstTable) return { connected: false, error: 'No tables configured' };
+          const { data, error } = await supabase.from(firstTable).select('id').limit(1);
+          if (error) return { connected: false, error: error.message };
+          return { connected: true, records: data?.length || 0 };
+        } catch (e) {
+          return { connected: false, error: String(e) };
+        }
+      },
+      realtimeStatus: () => ({
+        state: getConnectionState(),
+        healthy: isRealtimeHealthy()
+      })
+    };
+
+    debugLog(`[SYNC] Debug utilities available at window.__${prefix}Sync`);
   }
 }
 
@@ -2243,101 +2274,4 @@ export async function clearLocalCache(): Promise<void> {
   _hasHydrated = false;
 }
 
-// Manual sync trigger (for UI button / pull-to-refresh)
-export async function performSync(): Promise<void> {
-  await runFullSync(false); // Always show syncing indicator for manual sync
-}
 
-// Expose debug utilities to window for troubleshooting sync issues
-function initDebugSyncUtilities(): void {
-  if (typeof window === 'undefined' || !isDebugMode()) return;
-
-  const prefix = getPrefix();
-  const supabase = getSupabase();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any)[`${prefix}Sync`] = {
-    // Force full sync - clears local data and re-downloads from server
-    forceFullSync,
-    // Reset sync cursor without clearing data
-    resetSyncCursor,
-    // Get current sync status
-    getStatus: () => ({
-      cursor:
-        typeof localStorage !== 'undefined'
-          ? localStorage.getItem('lastSyncCursor') ||
-            Object.entries(localStorage)
-              .filter(([k]) => k.startsWith('lastSyncCursor_'))
-              .map(([k, v]) => ({ [k]: v }))[0]
-          : 'N/A',
-      pendingOps: getPendingSync().then((ops) => ops.length)
-    }),
-    // Check Supabase connection
-    checkConnection: async () => {
-      try {
-        const config = getEngineConfig();
-        const firstTable = config.tables[0]?.supabaseName;
-        if (!firstTable) return { connected: false, error: 'No tables configured' };
-
-        const { data, error } = await supabase.from(firstTable).select('id').limit(1);
-        if (error) {
-          debugError('[SYNC DEBUG] Supabase query failed:', error);
-          return { connected: false, error: error.message };
-        }
-        debugLog('[SYNC DEBUG] Supabase connected, found', data?.length || 0, 'records');
-        return { connected: true, records: data?.length || 0 };
-      } catch (e) {
-        debugError('[SYNC DEBUG] Connection check failed:', e);
-        return { connected: false, error: String(e) };
-      }
-    },
-    // Manual sync
-    sync: performSync,
-    // Check realtime status
-    realtimeStatus: () => ({
-      state: getConnectionState(),
-      healthy: isRealtimeHealthy()
-    }),
-    // Test realtime subscription directly
-    testRealtime: async () => {
-      const config = getEngineConfig();
-      const firstTable = config.tables[0]?.supabaseName;
-      if (!firstTable) return 'No tables configured';
-
-      debugLog('[TEST] Setting up test realtime subscription...');
-      const channel = supabase
-        .channel('debug-test-channel')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: firstTable },
-          (payload) => {
-            debugLog('REALTIME TEST - Raw event received:', payload);
-          }
-        )
-        .subscribe((status, err) => {
-          debugLog('REALTIME TEST - Subscription status:', status, err || '');
-        });
-
-      debugLog('[TEST] Subscription created. Make a change on another device.');
-      debugLog(`[TEST] To cleanup: window.${prefix}Sync.cleanupTestRealtime()`);
-
-      // Store for cleanup
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any)._testRealtimeChannel = channel;
-      return `Listening for events on ${firstTable}...`;
-    },
-    // Cleanup test subscription
-    cleanupTestRealtime: async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const channel = (window as any)._testRealtimeChannel;
-      if (channel) {
-        await supabase.removeChannel(channel);
-        debugLog('[TEST] Test channel removed');
-      }
-    }
-  };
-  debugLog(`[SYNC] Debug utilities available at window.${prefix}Sync`);
-}
-
-// Re-export for external usage
-export { initDebugSyncUtilities };

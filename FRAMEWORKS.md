@@ -1,6 +1,6 @@
-# @stellar/sync-engine -- Frameworks & Libraries
+# @prabhask5/stellar-engine -- Frameworks & Libraries
 
-The `@stellar/sync-engine` package is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database and a remote Supabase PostgreSQL backend, using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
+The `@prabhask5/stellar-engine` package is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database and a remote Supabase PostgreSQL backend, using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
 
 ---
 
@@ -46,7 +46,7 @@ The engine does not own entity tables. Consumer applications define their own De
 These three steps are wrapped in a single Dexie transaction to guarantee atomicity:
 
 ```typescript
-import { queueCreateOperation, scheduleSyncPush, markEntityModified } from '@stellar/sync-engine';
+import { queueCreateOperation, scheduleSyncPush, markEntityModified } from '@prabhask5/stellar-engine';
 import { db } from './schema'; // Consumer's Dexie database
 
 export async function createItem(name: string) {
@@ -444,7 +444,7 @@ Auto-save forms apply remote changes immediately with animation. Manual-save for
 **`triggerLocalAnimation`** -- programmatically triggers the same animations for local actions:
 
 ```typescript
-import { triggerLocalAnimation } from '@stellar/sync-engine';
+import { triggerLocalAnimation } from '@prabhask5/stellar-engine';
 triggerLocalAnimation(element, 'toggle');
 ```
 

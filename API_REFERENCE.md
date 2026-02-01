@@ -1,21 +1,21 @@
 # Stellar Engine API Reference
 
-Complete reference for all public exports from `@stellar/sync-engine`.
+Complete reference for all public exports from `@prabhask5/stellar-engine`.
 
 ### Subpath Exports
 
 | Subpath | Contents |
 |---|---|
-| `@stellar/sync-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
-| `@stellar/sync-engine/data` | CRUD + query operations |
-| `@stellar/sync-engine/auth` | Authentication functions |
-| `@stellar/sync-engine/stores` | Reactive stores + event subscriptions |
-| `@stellar/sync-engine/types` | All type exports (including `Session` from Supabase) |
-| `@stellar/sync-engine/utils` | Utility functions + debug |
-| `@stellar/sync-engine/actions` | Svelte `use:` actions |
-| `@stellar/sync-engine/config` | Runtime config |
+| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
+| `@prabhask5/stellar-engine/data` | CRUD + query operations |
+| `@prabhask5/stellar-engine/auth` | Authentication functions |
+| `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions |
+| `@prabhask5/stellar-engine/types` | All type exports (including `Session` from Supabase) |
+| `@prabhask5/stellar-engine/utils` | Utility functions + debug |
+| `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
+| `@prabhask5/stellar-engine/config` | Runtime config |
 
-All exports are also available from the root `@stellar/sync-engine` for backward compatibility.
+All exports are also available from the root `@prabhask5/stellar-engine` for backward compatibility.
 
 ---
 
@@ -59,7 +59,7 @@ function initEngine(config: SyncEngineConfig): void
 **Example:**
 
 ```ts
-import { initEngine } from '@stellar/sync-engine';
+import { initEngine } from '@prabhask5/stellar-engine';
 
 initEngine({
   prefix: 'myapp',
@@ -167,7 +167,7 @@ async function startSyncEngine(): Promise<void>
 **Example:**
 
 ```ts
-import { startSyncEngine } from '@stellar/sync-engine';
+import { startSyncEngine } from '@prabhask5/stellar-engine';
 
 await startSyncEngine();
 ```
@@ -202,7 +202,7 @@ function onSyncComplete(callback: () => void): () => void
 **Example:**
 
 ```ts
-import { onSyncComplete } from '@stellar/sync-engine';
+import { onSyncComplete } from '@prabhask5/stellar-engine';
 
 const unsubscribe = onSyncComplete(() => {
   console.log('Sync complete, refresh UI');
@@ -216,7 +216,7 @@ const unsubscribe = onSyncComplete(() => {
 
 ### `validateSupabaseCredentials(url, anonKey)`
 
-> **Subpath:** `@stellar/sync-engine` (root)
+> **Subpath:** `@prabhask5/stellar-engine` (root)
 
 Test connectivity to a Supabase project using provided credentials. Creates a temporary client, runs a test query, and checks for common error patterns (invalid API key, missing schema, etc.). Useful in setup/onboarding flows.
 
@@ -602,7 +602,7 @@ async function resolveAuthState(): Promise<AuthStateResult>
 **Example:**
 
 ```ts
-import { resolveAuthState } from '@stellar/sync-engine';
+import { resolveAuthState } from '@prabhask5/stellar-engine';
 
 const { session, authMode, offlineProfile } = await resolveAuthState();
 if (authMode === 'supabase') {
@@ -849,7 +849,7 @@ const supabase: SupabaseClient
 **Example:**
 
 ```ts
-import { supabase } from '@stellar/sync-engine';
+import { supabase } from '@prabhask5/stellar-engine';
 
 const { data, error } = await supabase
   .from('custom_table')
@@ -985,7 +985,7 @@ function calculateNewOrder<T extends { order: number }>(
 **Example:**
 
 ```ts
-import { calculateNewOrder } from '@stellar/sync-engine';
+import { calculateNewOrder } from '@prabhask5/stellar-engine';
 
 // items sorted by order: [{ order: 1 }, { order: 2 }, { order: 3 }]
 const newOrder = calculateNewOrder(items, 0, 2);
@@ -1092,7 +1092,7 @@ function triggerLocalAnimation(
 
 ```svelte
 <script>
-  import { triggerLocalAnimation } from '@stellar/sync-engine';
+  import { triggerLocalAnimation } from '@prabhask5/stellar-engine';
   let element;
 
   function handleToggle() {
@@ -1109,14 +1109,14 @@ function triggerLocalAnimation(
 
 ## Types
 
-> **Subpath:** All types are available from `@stellar/sync-engine/types`.
+> **Subpath:** All types are available from `@prabhask5/stellar-engine/types`.
 
 ### `Session`
 
 Re-exported from `@supabase/supabase-js`. Represents a Supabase auth session. Consumers can import this from the engine instead of depending on `@supabase/supabase-js` directly.
 
 ```ts
-import type { Session } from '@stellar/sync-engine/types';
+import type { Session } from '@prabhask5/stellar-engine/types';
 ```
 
 ### `SyncOperationItem`

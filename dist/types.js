@@ -12,13 +12,5 @@
  * Operations are converted to final values before pushing to Supabase, so conflicts
  * use last-write-wins. Full numeric merge would require an operation inbox system.
  */
-/**
- * Type guard to check if an item is a SyncOperationItem
- */
-export function isOperationItem(item) {
-    return (typeof item === 'object' &&
-        item !== null &&
-        'operationType' in item &&
-        ['increment', 'set', 'create', 'delete'].includes(item.operationType));
-}
+export {};
 //# sourceMappingURL=types.js.map

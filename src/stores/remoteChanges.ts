@@ -43,7 +43,7 @@ export type RemoteActionType =
   | 'rename' // Name changed
   | 'update'; // Other field updates
 
-export interface RemoteChange {
+interface RemoteChange {
   entityId: string;
   entityType: string; // Table name
   fields: string[]; // Which fields changed
@@ -54,7 +54,7 @@ export interface RemoteChange {
   valueDelta?: number;
 }
 
-export interface ActiveEdit {
+interface ActiveEdit {
   entityId: string;
   entityType: string;
   formType: 'auto-save' | 'manual-save';

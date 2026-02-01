@@ -107,10 +107,3 @@ export function getTableColumns(supabaseName: string): string {
   return table.columns;
 }
 
-/**
- * Get a TableConfig by its Supabase name.
- */
-export function getTableConfig(supabaseName: string): TableConfig | undefined {
-  const config = getEngineConfig();
-  return config.tables.find(t => t.supabaseName === supabaseName);
-}

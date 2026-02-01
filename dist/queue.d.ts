@@ -22,18 +22,6 @@ export declare function getPendingEntityIds(): Promise<Set<string>>;
  */
 export declare function queueSyncOperation(item: Omit<SyncOperationItem, 'id' | 'timestamp' | 'retries'>): Promise<void>;
 /**
- * Helper to queue an increment operation.
- */
-export declare function queueIncrementOperation(table: string, entityId: string, field: string, delta: number): Promise<void>;
-/**
- * Helper to queue a set operation for a single field.
- */
-export declare function queueSetOperation(table: string, entityId: string, field: string, value: unknown): Promise<void>;
-/**
- * Helper to queue a set operation for multiple fields.
- */
-export declare function queueMultiFieldSetOperation(table: string, entityId: string, fields: Record<string, unknown>): Promise<void>;
-/**
  * Helper to queue a create operation.
  */
 export declare function queueCreateOperation(table: string, entityId: string, payload: Record<string, unknown>): Promise<void>;

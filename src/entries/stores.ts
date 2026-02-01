@@ -1,4 +1,4 @@
-// Stores subpath barrel – @stellar/sync-engine/stores
+// Stores subpath barrel – @prabhask5/stellar-engine/stores
 export { syncStatusStore } from '../stores/sync';
 export type { SyncError, RealtimeState } from '../stores/sync';
 

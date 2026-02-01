@@ -62,7 +62,8 @@ export function onRealtimeDataUpdate(callback) {
     return () => dataUpdateCallbacks.delete(callback);
 }
 /**
- * Get current connection state
+ * Get current realtime connection state.
+ * Used by debug utilities exposed on the window object.
  */
 export function getConnectionState() {
     return state.connectionState;

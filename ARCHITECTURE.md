@@ -1,4 +1,4 @@
-# @stellar/sync-engine: Architecture & System Design
+# @prabhask5/stellar-engine: Architecture & System Design
 
 ## Table of Contents
 1. [Authentication System](#1-authentication-system)

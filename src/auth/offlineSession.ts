@@ -40,7 +40,7 @@ export async function createOfflineSession(userId: string): Promise<OfflineSessi
  * Get the current offline session
  * Returns null if no session exists
  */
-export async function getOfflineSession(): Promise<OfflineSession | null> {
+async function getOfflineSession(): Promise<OfflineSession | null> {
   const db = getEngineConfig().db!;
   const session = await db.table('offlineSession').get(SESSION_ID);
   return session || null;
@@ -56,14 +56,6 @@ export async function getValidOfflineSession(): Promise<OfflineSession | null> {
 }
 
 /**
- * Check if there is a valid offline session
- */
-export async function hasValidOfflineSession(): Promise<boolean> {
-  const session = await getValidOfflineSession();
-  return session !== null;
-}
-
-/**
  * Clear the offline session (on logout or session invalidation)
  */
 export async function clearOfflineSession(): Promise<void> {
@@ -71,21 +63,3 @@ export async function clearOfflineSession(): Promise<void> {
   await db.table('offlineSession').delete(SESSION_ID);
 }
 
-/**
- * Get session info for display purposes
- * Returns null if no valid session
- */
-export async function getOfflineSessionInfo(): Promise<{
-  userId: string;
-  createdAt: Date;
-} | null> {
-  const session = await getValidOfflineSession();
-  if (!session) {
-    return null;
-  }
-
-  return {
-    userId: session.userId,
-    createdAt: new Date(session.createdAt)
-  };
-}

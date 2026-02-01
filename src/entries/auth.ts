@@ -1,4 +1,4 @@
-// Auth subpath barrel – @stellar/sync-engine/auth
+// Auth subpath barrel – @prabhask5/stellar-engine/auth
 export { signIn, signUp, signOut, changePassword, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from '../supabase/auth';
 export type { AuthResponse } from '../supabase/auth';
 

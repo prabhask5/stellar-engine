@@ -318,20 +318,4 @@ export async function cleanupConflictHistory() {
         return 0;
     }
 }
-/**
- * Get recent conflict history for an entity.
- *
- * @param entityId The entity ID to check
- * @param limit Maximum number of entries to return
- * @returns Array of conflict history entries
- */
-export async function getConflictHistory(entityId, limit = 10) {
-    const entries = await getEngineConfig().db.table('conflictHistory')
-        .where('entityId')
-        .equals(entityId)
-        .reverse()
-        .limit(limit)
-        .toArray();
-    return entries;
-}
 //# sourceMappingURL=conflicts.js.map

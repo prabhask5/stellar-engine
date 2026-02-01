@@ -45,13 +45,4 @@ function generateUUID() {
         return v.toString(16);
     });
 }
-/**
- * Reset the device ID (for testing purposes).
- * In production, this should rarely be called.
- */
-export function resetDeviceId() {
-    if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem(getDeviceIdKey());
-    }
-}
 //# sourceMappingURL=deviceId.js.map

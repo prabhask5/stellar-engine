@@ -27,7 +27,7 @@
  * Used to apply appropriate animations.
  */
 export type RemoteActionType = 'create' | 'delete' | 'toggle' | 'increment' | 'decrement' | 'reorder' | 'rename' | 'update';
-export interface RemoteChange {
+interface RemoteChange {
     entityId: string;
     entityType: string;
     fields: string[];
@@ -36,7 +36,7 @@ export interface RemoteChange {
     applied: boolean;
     valueDelta?: number;
 }
-export interface ActiveEdit {
+interface ActiveEdit {
     entityId: string;
     entityType: string;
     formType: 'auto-save' | 'manual-save';

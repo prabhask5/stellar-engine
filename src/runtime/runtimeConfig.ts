@@ -120,23 +120,6 @@ export function getConfig(): AppConfig | null {
 }
 
 /**
- * Wait for config to be available. Resolves when config is loaded.
- */
-export async function waitForConfig(): Promise<AppConfig> {
-  if (configCache) return configCache;
-  const config = await initConfig();
-  if (config) return config;
-  throw new Error('App is not configured');
-}
-
-/**
- * Check if the app is configured (has valid Supabase credentials)
- */
-export function isConfigured(): boolean {
-  return getConfig() !== null;
-}
-
-/**
  * Set config directly (used after setup wizard completes)
  */
 export function setConfig(config: AppConfig): void {
@@ -147,7 +130,7 @@ export function setConfig(config: AppConfig): void {
 /**
  * Clear cached config from localStorage
  */
-export function clearConfigCache(): void {
+function clearConfigCache(): void {
   configCache = null;
   if (typeof localStorage !== 'undefined') {
     try {

@@ -63,7 +63,7 @@ export declare function trackEditing(node: HTMLElement, options: TrackEditingOpt
  * Usage in components:
  * ```svelte
  * <script>
- *   import { triggerLocalAnimation } from '@stellar/sync-engine';
+ *   import { triggerLocalAnimation } from '@prabhask5/stellar-engine';
  *   let element: HTMLElement;
  *
  *   function handleToggle() {

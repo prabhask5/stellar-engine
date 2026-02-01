@@ -9,7 +9,7 @@ import { getOfflineCredentials, verifyOfflineCredentials } from './offlineCreden
 import { createOfflineSession, getValidOfflineSession } from './offlineSession';
 import { debugLog, debugError } from '../debug';
 
-export interface OfflineLoginResult {
+interface OfflineLoginResult {
   success: boolean;
   error?: string;
   reason?: 'no_credentials' | 'no_stored_password' | 'user_mismatch' | 'email_mismatch' | 'password_mismatch' | 'session_failed';

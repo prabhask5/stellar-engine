@@ -91,7 +91,8 @@ export function onRealtimeDataUpdate(
 }
 
 /**
- * Get current connection state
+ * Get current realtime connection state.
+ * Used by debug utilities exposed on the window object.
  */
 export function getConnectionState(): RealtimeConnectionState {
   return state.connectionState;

@@ -4,7 +4,7 @@
  * Provides high-level offline sign-in and credential info functions,
  * absorbing the login page's direct use of offline auth internals.
  */
-export interface OfflineLoginResult {
+interface OfflineLoginResult {
     success: boolean;
     error?: string;
     reason?: 'no_credentials' | 'no_stored_password' | 'user_mismatch' | 'email_mismatch' | 'password_mismatch' | 'session_failed';
@@ -30,4 +30,5 @@ export declare function getOfflineLoginInfo(): Promise<{
     firstName?: string;
     lastName?: string;
 } | null>;
+export {};
 //# sourceMappingURL=offlineLogin.d.ts.map

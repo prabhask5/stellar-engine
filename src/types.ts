@@ -46,18 +46,6 @@ export interface SyncOperationItem {
   retries: number; // Number of failed sync attempts
 }
 
-/**
- * Type guard to check if an item is a SyncOperationItem
- */
-export function isOperationItem(item: unknown): item is SyncOperationItem {
-  return (
-    typeof item === 'object' &&
-    item !== null &&
-    'operationType' in item &&
-    ['increment', 'set', 'create', 'delete'].includes((item as SyncOperationItem).operationType)
-  );
-}
-
 // ============================================================
 // OFFLINE AUTHENTICATION TYPES
 // ============================================================

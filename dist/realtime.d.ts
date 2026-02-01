@@ -24,7 +24,8 @@ export declare function onConnectionStateChange(callback: (state: RealtimeConnec
  */
 export declare function onRealtimeDataUpdate(callback: (table: string, entityId: string) => void): () => void;
 /**
- * Get current connection state
+ * Get current realtime connection state.
+ * Used by debug utilities exposed on the window object.
  */
 export declare function getConnectionState(): RealtimeConnectionState;
 /**

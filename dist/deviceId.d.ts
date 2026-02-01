@@ -13,9 +13,4 @@ export declare function _setDeviceIdPrefix(prefix: string): void;
  * Format: Random UUID v4
  */
 export declare function getDeviceId(): string;
-/**
- * Reset the device ID (for testing purposes).
- * In production, this should rarely be called.
- */
-export declare function resetDeviceId(): void;
 //# sourceMappingURL=deviceId.d.ts.map

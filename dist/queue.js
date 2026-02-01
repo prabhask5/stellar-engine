@@ -354,41 +354,6 @@ export async function queueSyncOperation(item) {
     await db.table('syncQueue').add(fullItem);
 }
 /**
- * Helper to queue an increment operation.
- */
-export async function queueIncrementOperation(table, entityId, field, delta) {
-    await queueSyncOperation({
-        table,
-        entityId,
-        operationType: 'increment',
-        field,
-        value: delta
-    });
-}
-/**
- * Helper to queue a set operation for a single field.
- */
-export async function queueSetOperation(table, entityId, field, value) {
-    await queueSyncOperation({
-        table,
-        entityId,
-        operationType: 'set',
-        field,
-        value
-    });
-}
-/**
- * Helper to queue a set operation for multiple fields.
- */
-export async function queueMultiFieldSetOperation(table, entityId, fields) {
-    await queueSyncOperation({
-        table,
-        entityId,
-        operationType: 'set',
-        value: fields
-    });
-}
-/**
  * Helper to queue a create operation.
  */
 export async function queueCreateOperation(table, entityId, payload) {

@@ -1,4 +1,4 @@
-# @stellar/sync-engine
+# @prabhask5/stellar-engine
 
 A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** applications. All reads come from IndexedDB, all writes land locally first, and a background sync loop ships changes to Supabase -- so your app stays fast and functional regardless of network state.
 
@@ -23,7 +23,7 @@ A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** 
 Install from GitHub Packages:
 
 ```bash
-npm install @stellar/sync-engine@^1.0.0
+npm install @prabhask5/stellar-engine@^1.0.0
 ```
 
 > Requires an `.npmrc` with `@stellar:registry=https://npm.pkg.github.com`.
@@ -31,9 +31,9 @@ npm install @stellar/sync-engine@^1.0.0
 Initialize the engine at app startup (e.g., in a SvelteKit root `+layout.ts`):
 
 ```ts
-import { initEngine, startSyncEngine, supabase } from '@stellar/sync-engine';
-import { initConfig } from '@stellar/sync-engine/config';
-import { resolveAuthState } from '@stellar/sync-engine/auth';
+import { initEngine, startSyncEngine, supabase } from '@prabhask5/stellar-engine';
+import { initConfig } from '@prabhask5/stellar-engine/config';
+import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
 
 initEngine({
   prefix: 'myapp',
@@ -74,16 +74,16 @@ Import only what you need via subpath exports:
 
 | Subpath | Contents |
 |---|---|
-| `@stellar/sync-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
-| `@stellar/sync-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
-| `@stellar/sync-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, etc.) |
-| `@stellar/sync-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
-| `@stellar/sync-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, etc.) |
-| `@stellar/sync-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `debug`, etc.) |
-| `@stellar/sync-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
-| `@stellar/sync-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
+| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
+| `@prabhask5/stellar-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
+| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, etc.) |
+| `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
+| `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, etc.) |
+| `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `debug`, etc.) |
+| `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
+| `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
 
-The root export (`@stellar/sync-engine`) re-exports everything for backward compatibility.
+The root export (`@prabhask5/stellar-engine`) re-exports everything for backward compatibility.
 
 ## Requirements
 
@@ -170,11 +170,6 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `stopSyncEngine()` | Tear down everything cleanly. |
 | `scheduleSyncPush()` | Trigger a debounced push of pending operations. |
 | `runFullSync()` | Run a complete pull-then-push cycle. |
-| `forceFullSync()` | Full sync ignoring debounce / cooldown. |
-| `resetSyncCursor()` | Clear the stored cursor so the next sync pulls all data. |
-| `hydrateFromRemote()` | Pull all remote data into local DB (first-load scenario). |
-| `reconcileLocalWithRemote()` | Merge remote state with local pending changes. |
-| `performSync()` | Single push cycle (coalesce, push, handle errors). |
 | `clearLocalCache()` | Wipe all local application data. |
 | `clearPendingSyncQueue()` | Drop all pending outbound operations. |
 
@@ -193,23 +188,19 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `getSession` / `isSessionExpired` | Session inspection helpers. |
 | `changePassword` / `resendConfirmationEmail` | Account management. |
 | `getUserProfile` / `updateProfile` | Profile read/write via Supabase user metadata. |
-| `markOffline` / `markAuthValidated` / `needsAuthValidation` | Engine-level auth state transitions. |
 
 ### Offline auth
 
 | Export | Description |
 |---|---|
 | `cacheOfflineCredentials` / `getOfflineCredentials` / `verifyOfflineCredentials` / `clearOfflineCredentials` | Store and verify credentials locally for offline sign-in. |
-| `createOfflineSession` / `getValidOfflineSession` / `hasValidOfflineSession` / `clearOfflineSession` | Manage offline session tokens in IndexedDB. |
+| `createOfflineSession` / `getValidOfflineSession` / `clearOfflineSession` | Manage offline session tokens in IndexedDB. |
 
 ### Queue
 
 | Export | Description |
 |---|---|
 | `queueSyncOperation(item)` | Enqueue a raw `SyncOperationItem`. |
-| `queueIncrementOperation(table, id, field, delta)` | Enqueue a numeric increment. |
-| `queueSetOperation(table, id, field, value)` | Enqueue a single-field set. |
-| `queueMultiFieldSetOperation(table, id, fields)` | Enqueue a multi-field set. |
 | `queueCreateOperation(table, id, payload)` | Enqueue entity creation. |
 | `queueDeleteOperation(table, id)` | Enqueue a soft delete. |
 | `coalescePendingOps()` | Compress the outbox in-place (called automatically before push). |
@@ -220,14 +211,13 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | Export | Description |
 |---|---|
 | `resolveConflicts(table, localEntity, remoteEntity, pendingOps)` | Three-tier field-level conflict resolver. Returns the merged entity. |
-| `getConflictHistory()` | Retrieve stored conflict resolution records. |
 
 ### Realtime
 
 | Export | Description |
 |---|---|
 | `startRealtimeSubscriptions()` / `stopRealtimeSubscriptions()` | Manage Supabase Realtime channels for all configured tables. |
-| `isRealtimeHealthy()` / `getConnectionState()` | Health checks. |
+| `isRealtimeHealthy()` | Realtime connection health check. |
 | `wasRecentlyProcessedByRealtime(table, id)` | Guard against duplicate processing. |
 | `onRealtimeDataUpdate(callback)` | Register a handler for incoming realtime changes. |
 
@@ -266,7 +256,24 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `calculateNewOrder(before, after)` | Fractional ordering helper for drag-and-drop reorder. |
 | `getDeviceId()` | Stable per-device identifier (persisted in localStorage). |
 | `debugLog` / `debugWarn` / `debugError` | Prefixed console helpers (gated by `setDebugMode`). |
-| `setReconnectHandler` / `callReconnectHandler` | Hook for custom reconnect logic. |
+
+### Browser console debug utilities
+
+When debug mode is enabled, the engine exposes utilities on the `window` object using the configured app prefix (e.g. `stellar`):
+
+| Window property | Description |
+|---|---|
+| `window.__<prefix>SyncStats()` | View sync cycle statistics (total cycles, recent cycle details, trigger types). |
+| `window.__<prefix>Egress()` | Monitor data transfer from Supabase (total bytes, per-table breakdown, recent cycles). |
+| `window.__<prefix>Tombstones()` | Check soft-deleted record counts across all tables. |
+| `window.__<prefix>Tombstones({ cleanup: true })` | Manually trigger tombstone cleanup. |
+| `window.__<prefix>Tombstones({ cleanup: true, force: true })` | Force server cleanup (bypasses 24-hour interval). |
+| `window.__<prefix>Sync.forceFullSync()` | Reset sync cursor, clear local data, and re-download everything from server. |
+| `window.__<prefix>Sync.resetSyncCursor()` | Clear the stored cursor so the next sync pulls all data. |
+| `window.__<prefix>Sync.sync()` | Trigger a manual sync cycle. |
+| `window.__<prefix>Sync.getStatus()` | View current sync cursor and pending operation count. |
+| `window.__<prefix>Sync.checkConnection()` | Test Supabase connectivity. |
+| `window.__<prefix>Sync.realtimeStatus()` | Check realtime connection state and health. |
 
 ### Svelte actions
 

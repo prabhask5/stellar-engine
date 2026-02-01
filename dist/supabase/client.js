@@ -5,7 +5,7 @@
  * The Proxy pattern preserves the exact same API surface.
  */
 import { createClient } from '@supabase/supabase-js';
-import { getConfig, waitForConfig } from '../runtime/runtimeConfig';
+import { getConfig } from '../runtime/runtimeConfig';
 import { debugLog, debugWarn, debugError } from '../debug';
 let _prefix = 'stellar';
 export function _setClientPrefix(prefix) {
@@ -146,19 +146,4 @@ export const supabase = new Proxy({}, {
         return value;
     }
 });
-/**
- * Get Supabase client asynchronously, waiting for config to load first.
- * Use this when config might not be loaded yet (e.g., in hooks.client.ts).
- */
-export async function getSupabaseAsync() {
-    await waitForConfig();
-    return getOrCreateClient();
-}
-/**
- * Reset the Supabase client (for admin config updates).
- * Forces re-creation with new config on next access.
- */
-export function resetSupabaseClient() {
-    realClient = null;
-}
 //# sourceMappingURL=client.js.map

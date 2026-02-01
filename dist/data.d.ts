@@ -37,6 +37,12 @@ export type BatchOperation = {
  */
 export declare function engineBatchWrite(operations: BatchOperation[]): Promise<void>;
 /**
+ * Increment a numeric field on an entity, preserving increment intent for conflict resolution.
+ * Uses increment operationType in the sync queue so multi-device increments are additive.
+ * Optionally sets additional fields (e.g., completed, updated_at) alongside the increment.
+ */
+export declare function engineIncrement(table: string, id: string, field: string, amount: number, additionalFields?: Record<string, unknown>): Promise<Record<string, unknown> | undefined>;
+/**
  * Get a single entity by ID. Optional remote fallback if not found locally.
  */
 export declare function engineGet(table: string, id: string, opts?: {

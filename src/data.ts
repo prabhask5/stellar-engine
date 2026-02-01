@@ -175,6 +175,70 @@ export async function engineBatchWrite(operations: BatchOperation[]): Promise<vo
 }
 
 // ============================================================
+// INCREMENT OPERATION
+// ============================================================
+
+/**
+ * Increment a numeric field on an entity, preserving increment intent for conflict resolution.
+ * Uses increment operationType in the sync queue so multi-device increments are additive.
+ * Optionally sets additional fields (e.g., completed, updated_at) alongside the increment.
+ */
+export async function engineIncrement(
+  table: string,
+  id: string,
+  field: string,
+  amount: number,
+  additionalFields?: Record<string, unknown>
+): Promise<Record<string, unknown> | undefined> {
+  const db = getDb();
+  const dexieTable = getDexieTableName(table);
+  const timestamp = now();
+
+  // Read current value
+  const current = await db.table(dexieTable).get(id);
+  if (!current) return undefined;
+
+  const currentValue = (current[field] as number) || 0;
+  const newValue = currentValue + amount;
+  const updateFields: Record<string, unknown> = {
+    [field]: newValue,
+    updated_at: timestamp,
+    ...additionalFields
+  };
+
+  let updated: Record<string, unknown> | undefined;
+  await db.transaction('rw', [db.table(dexieTable), db.table('syncQueue')], async () => {
+    await db.table(dexieTable).update(id, updateFields);
+    updated = await db.table(dexieTable).get(id);
+    if (updated) {
+      await queueSyncOperation({
+        table,
+        entityId: id,
+        operationType: 'increment',
+        field,
+        value: amount
+      });
+      // Queue additional fields as a separate set operation if present
+      if (additionalFields && Object.keys(additionalFields).length > 0) {
+        await queueSyncOperation({
+          table,
+          entityId: id,
+          operationType: 'set',
+          value: { ...additionalFields, updated_at: timestamp }
+        });
+      }
+    }
+  });
+
+  if (updated) {
+    markEntityModified(id);
+    scheduleSyncPush();
+  }
+
+  return updated;
+}
+
+// ============================================================
 // QUERY OPERATIONS
 // ============================================================
 

@@ -2,6 +2,12 @@
 
 A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** applications. All reads come from IndexedDB, all writes land locally first, and a background sync loop ships changes to Supabase -- so your app stays fast and functional regardless of network state.
 
+## Documentation
+
+- [API Reference](./API_REFERENCE.md) -- full signatures, parameters, and usage examples for every public export
+- [Architecture](./ARCHITECTURE.md) -- internal design, data flow, and module responsibilities
+- [Framework Integration](./FRAMEWORKS.md) -- SvelteKit-specific patterns and conventions
+
 ## Features
 
 - **Intent-based sync operations** -- operations preserve intent (`increment`, `set`, `create`, `delete`) instead of just final state, enabling smarter coalescing and conflict handling.

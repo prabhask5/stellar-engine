@@ -1,0 +1,75 @@
+/**
+ * Offline Session Management
+ * Handles creation, validation, and cleanup of offline sessions
+ */
+import { getEngineConfig } from '../config';
+const SESSION_ID = 'current_session';
+/**
+ * Create a new offline session
+ * @param userId - The Supabase user ID
+ * @returns The created session
+ */
+export async function createOfflineSession(userId) {
+    const now = new Date();
+    const db = getEngineConfig().db;
+    const session = {
+        id: SESSION_ID,
+        userId: userId,
+        offlineToken: crypto.randomUUID(),
+        createdAt: now.toISOString()
+    };
+    // Use put to insert or update the singleton record
+    await db.table('offlineSession').put(session);
+    // Verify the session was persisted by reading it back
+    const verified = await db.table('offlineSession').get(SESSION_ID);
+    if (!verified) {
+        throw new Error('Failed to persist offline session');
+    }
+    return session;
+}
+/**
+ * Get the current offline session
+ * Returns null if no session exists
+ */
+export async function getOfflineSession() {
+    const db = getEngineConfig().db;
+    const session = await db.table('offlineSession').get(SESSION_ID);
+    return session || null;
+}
+/**
+ * Get a valid offline session
+ * Returns null if no session exists
+ * Note: Sessions don't expire - they're only revoked on re-auth or logout
+ */
+export async function getValidOfflineSession() {
+    return await getOfflineSession();
+}
+/**
+ * Check if there is a valid offline session
+ */
+export async function hasValidOfflineSession() {
+    const session = await getValidOfflineSession();
+    return session !== null;
+}
+/**
+ * Clear the offline session (on logout or session invalidation)
+ */
+export async function clearOfflineSession() {
+    const db = getEngineConfig().db;
+    await db.table('offlineSession').delete(SESSION_ID);
+}
+/**
+ * Get session info for display purposes
+ * Returns null if no valid session
+ */
+export async function getOfflineSessionInfo() {
+    const session = await getValidOfflineSession();
+    if (!session) {
+        return null;
+    }
+    return {
+        userId: session.userId,
+        createdAt: new Date(session.createdAt)
+    };
+}
+//# sourceMappingURL=offlineSession.js.map

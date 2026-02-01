@@ -1,0 +1,159 @@
+/**
+ * Runtime Configuration Module
+ *
+ * Replaces build-time $env/static/public with runtime config fetched from the server.
+ * Config is cached in localStorage for instant subsequent loads and offline PWA support.
+ */
+
+export interface AppConfig {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  configured: boolean;
+}
+
+let _prefix = 'stellar';
+
+export function _setConfigPrefix(prefix: string) {
+  _prefix = prefix;
+}
+
+function getCacheKey(): string {
+  return `${_prefix}_config`;
+}
+
+let configCache: AppConfig | null = null;
+let configPromise: Promise<AppConfig | null> | null = null;
+
+/**
+ * Get cached config from localStorage (synchronous, instant)
+ */
+function loadFromCache(): AppConfig | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem(getCacheKey());
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as AppConfig;
+    if (parsed.configured && parsed.supabaseUrl && parsed.supabaseAnonKey) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save config to localStorage cache
+ */
+function saveToCache(config: AppConfig): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(getCacheKey(), JSON.stringify(config));
+  } catch {
+    // Storage full or unavailable
+  }
+}
+
+/**
+ * Initialize config: tries localStorage first (instant), then validates against server.
+ * Returns the config if configured, null if not.
+ */
+export async function initConfig(): Promise<AppConfig | null> {
+  // Return in-flight promise if already initializing
+  if (configPromise) return configPromise;
+
+  configPromise = (async () => {
+    // Try localStorage first for instant load
+    const cached = loadFromCache();
+    if (cached) {
+      configCache = cached;
+    }
+
+    // Fetch from server to validate/update
+    try {
+      const response = await fetch('/api/config');
+      if (response.ok) {
+        const serverConfig = await response.json();
+        if (serverConfig.configured) {
+          const config: AppConfig = {
+            supabaseUrl: serverConfig.supabaseUrl,
+            supabaseAnonKey: serverConfig.supabaseAnonKey,
+            configured: true
+          };
+          configCache = config;
+          saveToCache(config);
+          return config;
+        } else {
+          // Server says not configured — clear any stale cache
+          configCache = null;
+          clearConfigCache();
+          return null;
+        }
+      }
+    } catch {
+      // Network error — use cached config if available (offline PWA support)
+      if (configCache) {
+        return configCache;
+      }
+    }
+
+    return configCache;
+  })();
+
+  const result = await configPromise;
+  configPromise = null;
+  return result;
+}
+
+/**
+ * Get config synchronously. Returns cached config or null.
+ * Call initConfig() first to ensure config is loaded.
+ */
+export function getConfig(): AppConfig | null {
+  if (configCache) return configCache;
+  // Try localStorage as fallback
+  const cached = loadFromCache();
+  if (cached) {
+    configCache = cached;
+  }
+  return configCache;
+}
+
+/**
+ * Wait for config to be available. Resolves when config is loaded.
+ */
+export async function waitForConfig(): Promise<AppConfig> {
+  if (configCache) return configCache;
+  const config = await initConfig();
+  if (config) return config;
+  throw new Error('App is not configured');
+}
+
+/**
+ * Check if the app is configured (has valid Supabase credentials)
+ */
+export function isConfigured(): boolean {
+  return getConfig() !== null;
+}
+
+/**
+ * Set config directly (used after setup wizard completes)
+ */
+export function setConfig(config: AppConfig): void {
+  configCache = config;
+  saveToCache(config);
+}
+
+/**
+ * Clear cached config from localStorage
+ */
+export function clearConfigCache(): void {
+  configCache = null;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(getCacheKey());
+    } catch {
+      // Ignore
+    }
+  }
+}

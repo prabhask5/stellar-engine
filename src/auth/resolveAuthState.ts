@@ -11,7 +11,7 @@ import type { OfflineCredentials, SingleUserConfig } from '../types';
 import { getSession, isSessionExpired } from '../supabase/auth';
 import { getValidOfflineSession, clearOfflineSession } from './offlineSession';
 import { getOfflineCredentials } from './offlineCredentials';
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
 
@@ -33,6 +33,9 @@ export interface AuthStateResult {
  */
 export async function resolveAuthState(): Promise<AuthStateResult> {
   try {
+    // Ensure DB is open and upgraded before any access
+    await waitForDb();
+
     // ── SINGLE-USER MODE ──────────────────────────────────────────
     const engineConfig = getEngineConfig();
     if (engineConfig.auth?.mode === 'single-user') {

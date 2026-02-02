@@ -1,4 +1,4 @@
-import { getEngineConfig, getDexieTableFor } from './config';
+import { getEngineConfig, getDexieTableFor, waitForDb } from './config';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
   getPendingSync,
@@ -1844,6 +1844,9 @@ let authStateUnsubscribe: { data: { subscription: { unsubscribe: () => void } } 
 
 export async function startSyncEngine(): Promise<void> {
   if (typeof window === 'undefined') return;
+
+  // Ensure DB is open and upgraded before any access
+  await waitForDb();
 
   const supabase = getSupabase();
 

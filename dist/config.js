@@ -5,6 +5,7 @@ import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { createDatabase, _setManagedDb } from './database';
 import { snakeToCamel } from './utils';
 let engineConfig = null;
+let _dbReady = null;
 export function initEngine(config) {
     engineConfig = config;
     // Propagate prefix to all internal modules
@@ -16,14 +17,23 @@ export function initEngine(config) {
     }
     // Handle database creation
     if (config.database) {
-        const db = createDatabase(config.database);
-        // Store on config for backward compat (engine.ts reads config.db)
-        config.db = db;
+        _dbReady = createDatabase(config.database).then(db => {
+            // Store on config for backward compat (engine.ts reads config.db)
+            config.db = db;
+        });
     }
     else if (config.db) {
         // Backward compat: use provided Dexie instance
         _setManagedDb(config.db);
+        _dbReady = Promise.resolve();
     }
+}
+/**
+ * Wait for the database to be fully opened and upgraded.
+ * Must be awaited before any DB access.
+ */
+export function waitForDb() {
+    return _dbReady || Promise.resolve();
 }
 export function getEngineConfig() {
     if (!engineConfig) {

@@ -48,6 +48,11 @@ export interface TableConfig {
     onRemoteChange?: (table: string, record: Record<string, unknown>) => void;
 }
 export declare function initEngine(config: SyncEngineConfig): void;
+/**
+ * Wait for the database to be fully opened and upgraded.
+ * Must be awaited before any DB access.
+ */
+export declare function waitForDb(): Promise<void>;
 export declare function getEngineConfig(): SyncEngineConfig;
 /**
  * Get the Dexie (IndexedDB) table name for a TableConfig entry.

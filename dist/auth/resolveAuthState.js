@@ -8,7 +8,7 @@
 import { getSession, isSessionExpired } from '../supabase/auth';
 import { getValidOfflineSession, clearOfflineSession } from './offlineSession';
 import { getOfflineCredentials } from './offlineCredentials';
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
 /**
@@ -21,6 +21,8 @@ import { debugLog, debugWarn, debugError } from '../debug';
  */
 export async function resolveAuthState() {
     try {
+        // Ensure DB is open and upgraded before any access
+        await waitForDb();
         // ── SINGLE-USER MODE ──────────────────────────────────────────
         const engineConfig = getEngineConfig();
         if (engineConfig.auth?.mode === 'single-user') {

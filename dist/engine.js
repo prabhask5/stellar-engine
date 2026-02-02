@@ -1,4 +1,4 @@
-import { getEngineConfig, getDexieTableFor } from './config';
+import { getEngineConfig, getDexieTableFor, waitForDb } from './config';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import { getPendingSync, removeSyncItem, incrementRetry, getPendingEntityIds, cleanupFailedItems, coalescePendingOps, queueSyncOperation } from './queue';
 import { getDeviceId } from './deviceId';
@@ -1517,6 +1517,8 @@ let authStateUnsubscribe = null;
 export async function startSyncEngine() {
     if (typeof window === 'undefined')
         return;
+    // Ensure DB is open and upgraded before any access
+    await waitForDb();
     const supabase = getSupabase();
     // Clean up any existing listeners and intervals first (prevents duplicates if called multiple times)
     if (handleOnlineRef) {

@@ -60,6 +60,7 @@ export interface TableConfig {
 }
 
 let engineConfig: SyncEngineConfig | null = null;
+let _dbReady: Promise<void> | null = null;
 
 export function initEngine(config: SyncEngineConfig): void {
   engineConfig = config;
@@ -74,13 +75,23 @@ export function initEngine(config: SyncEngineConfig): void {
 
   // Handle database creation
   if (config.database) {
-    const db = createDatabase(config.database);
-    // Store on config for backward compat (engine.ts reads config.db)
-    (config as { db: Dexie }).db = db;
+    _dbReady = createDatabase(config.database).then(db => {
+      // Store on config for backward compat (engine.ts reads config.db)
+      (config as { db: Dexie }).db = db;
+    });
   } else if (config.db) {
     // Backward compat: use provided Dexie instance
     _setManagedDb(config.db);
+    _dbReady = Promise.resolve();
   }
+}
+
+/**
+ * Wait for the database to be fully opened and upgraded.
+ * Must be awaited before any DB access.
+ */
+export function waitForDb(): Promise<void> {
+  return _dbReady || Promise.resolve();
 }
 
 export function getEngineConfig(): SyncEngineConfig {

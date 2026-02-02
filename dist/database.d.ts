@@ -17,8 +17,12 @@ export interface DatabaseConfig {
 }
 /**
  * Create a Dexie database with system tables auto-merged into every version.
+ *
+ * Opens the database eagerly so version upgrades run immediately.
+ * If the upgrade fails (e.g., another tab blocked it, or the DB is corrupted),
+ * deletes and recreates the database from scratch.
  */
-export declare function createDatabase(config: DatabaseConfig): Dexie;
+export declare function createDatabase(config: DatabaseConfig): Promise<Dexie>;
 /**
  * Get the engine-managed Dexie instance.
  * Must be set via createDatabase() or _setManagedDb() before use.

@@ -49,4 +49,31 @@ export function getDb() {
 export function _setManagedDb(db) {
     managedDb = db;
 }
+/**
+ * Delete the IndexedDB database entirely and recreate it.
+ *
+ * Use this as a nuclear recovery option when the database is corrupted
+ * (e.g., missing object stores due to failed upgrades). After this call,
+ * the app should reload so initEngine() runs fresh and rehydrates from Supabase.
+ *
+ * Returns the name of the database that was deleted.
+ */
+export async function resetDatabase() {
+    if (!managedDb)
+        return null;
+    const dbName = managedDb.name;
+    // Close all connections so IndexedDB allows deletion
+    managedDb.close();
+    managedDb = null;
+    // Delete the database
+    await Dexie.delete(dbName);
+    // Clear sync cursors and auth data from localStorage
+    if (typeof localStorage !== 'undefined') {
+        const keysToRemove = Object.keys(localStorage).filter(k => k.startsWith('lastSyncCursor') || k.startsWith('sb-'));
+        for (const key of keysToRemove) {
+            localStorage.removeItem(key);
+        }
+    }
+    return dbName;
+}
 //# sourceMappingURL=database.js.map

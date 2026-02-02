@@ -1,6 +1,6 @@
 export { initEngine } from './config';
 export type { SyncEngineConfig, TableConfig } from './config';
-export { getDb } from './database';
+export { getDb, resetDatabase } from './database';
 export type { DatabaseConfig, DatabaseVersionConfig } from './database';
 export { startSyncEngine, runFullSync } from './engine';
 export { onSyncComplete } from './engine';

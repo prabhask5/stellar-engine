@@ -1,7 +1,7 @@
 // Config
 export { initEngine } from './config';
 // Database
-export { getDb } from './database';
+export { getDb, resetDatabase } from './database';
 // Engine lifecycle
 export { startSyncEngine, runFullSync } from './engine';
 export { onSyncComplete } from './engine';

@@ -3,7 +3,7 @@ export { initEngine } from './config';
 export type { SyncEngineConfig, TableConfig } from './config';
 
 // Database
-export { getDb } from './database';
+export { getDb, resetDatabase } from './database';
 export type { DatabaseConfig, DatabaseVersionConfig } from './database';
 
 // Engine lifecycle

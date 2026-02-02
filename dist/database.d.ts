@@ -28,4 +28,14 @@ export declare function getDb(): Dexie;
  * Set the managed database instance (used when db is provided directly via config).
  */
 export declare function _setManagedDb(db: Dexie): void;
+/**
+ * Delete the IndexedDB database entirely and recreate it.
+ *
+ * Use this as a nuclear recovery option when the database is corrupted
+ * (e.g., missing object stores due to failed upgrades). After this call,
+ * the app should reload so initEngine() runs fresh and rehydrates from Supabase.
+ *
+ * Returns the name of the database that was deleted.
+ */
+export declare function resetDatabase(): Promise<string | null>;
 //# sourceMappingURL=database.d.ts.map

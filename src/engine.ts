@@ -744,28 +744,25 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   // Apply changes to local DB with conflict handling
   const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
 
-  // Diagnostic: log expected vs actual object stores to help debug NotFoundError
-  const expectedStores = [...entityTables.map(t => t.name), 'conflictHistory'];
-  const actualStores = db.tables.map(t => t.name);
-  const missing = expectedStores.filter(s => !actualStores.includes(s));
-  if (missing.length > 0) {
-    debugError(`[SYNC] Object store mismatch! Missing: ${missing.join(', ')}. DB has: ${actualStores.join(', ')}. DB version: ${db.verno}`);
-  }
+  // Check if any table has data to process (avoid opening transaction on empty pull)
+  const hasData = results.some(r => r.data && r.data.length > 0);
 
-  await db.transaction(
-    'rw',
-    [...entityTables, db.table('conflictHistory')],
-    async () => {
-      for (let i = 0; i < config.tables.length; i++) {
-        const data = results[i].data as { id: string; updated_at: string }[] | null;
-        await applyRemoteWithConflictResolution(
-          tableNames[i],
-          data,
-          db.table(getDexieTableFor(config.tables[i]))
-        );
+  if (hasData) {
+    await db.transaction(
+      'rw',
+      [...entityTables, db.table('syncQueue'), db.table('conflictHistory')],
+      async () => {
+        for (let i = 0; i < config.tables.length; i++) {
+          const data = results[i].data as { id: string; updated_at: string }[] | null;
+          await applyRemoteWithConflictResolution(
+            tableNames[i],
+            data,
+            db.table(getDexieTableFor(config.tables[i]))
+          );
+        }
       }
-    }
-  );
+    );
+  }
 
   // Update sync cursor (per-user)
   setLastSyncCursor(newestUpdate, userId);

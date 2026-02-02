@@ -16,7 +16,7 @@
  */
 
 import { debugLog, debugWarn, debugError } from './debug';
-import { getEngineConfig } from './config';
+import { getEngineConfig, getDexieTableFor } from './config';
 import { getDeviceId } from './deviceId';
 import { resolveConflicts, storeConflictHistory, getPendingOpsForEntity } from './conflicts';
 import { getPendingEntityIds } from './queue';
@@ -207,7 +207,8 @@ async function handleRealtimeChange(
 
   debugLog(`[Realtime] Processing remote change: ${eventType} ${table}/${entityId}`);
 
-  const dexieTable = getEngineConfig().tables.find(t => t.supabaseName === table)?.dexieTable;
+  const tableConfig = getEngineConfig().tables.find(t => t.supabaseName === table);
+  const dexieTable = tableConfig ? getDexieTableFor(tableConfig) : undefined;
   if (!dexieTable) {
     debugWarn('[Realtime] Unknown table:', table);
     return;
@@ -499,9 +500,6 @@ export async function startRealtimeSubscriptions(userId: string): Promise<void> 
 
     // Subscribe to the channel
     state.channel.subscribe((status, err) => {
-      // Release the operation lock once we get any response
-      operationInProgress = false;
-
       switch (status) {
         case 'SUBSCRIBED':
           debugLog('[Realtime] Connected and subscribed');
@@ -538,10 +536,11 @@ export async function startRealtimeSubscriptions(userId: string): Promise<void> 
       }
     });
   } catch (error) {
-    operationInProgress = false;
     debugError('[Realtime] Failed to start subscriptions:', error);
     setConnectionState('error', error instanceof Error ? error.message : 'Failed to connect');
     scheduleReconnect();
+  } finally {
+    operationInProgress = false;
   }
 }
 

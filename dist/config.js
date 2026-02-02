@@ -3,6 +3,7 @@ import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { createDatabase, _setManagedDb } from './database';
+import { snakeToCamel } from './utils';
 let engineConfig = null;
 export function initEngine(config) {
     engineConfig = config;
@@ -31,13 +32,20 @@ export function getEngineConfig() {
     return engineConfig;
 }
 /**
+ * Get the Dexie (IndexedDB) table name for a TableConfig entry.
+ * Derives from supabaseName via snake_case → camelCase conversion.
+ */
+export function getDexieTableFor(table) {
+    return snakeToCamel(table.supabaseName);
+}
+/**
  * Get the Supabase-to-Dexie table mapping derived from config.
  */
 export function getTableMap() {
     const config = getEngineConfig();
     const map = {};
     for (const table of config.tables) {
-        map[table.supabaseName] = table.dexieTable;
+        map[table.supabaseName] = getDexieTableFor(table);
     }
     return map;
 }

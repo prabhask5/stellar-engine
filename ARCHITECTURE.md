@@ -2,15 +2,16 @@
 
 ## Table of Contents
 1. [Authentication System](#1-authentication-system)
-2. [Sync Engine](#2-sync-engine)
-3. [Outbox Pattern & Operation Coalescing](#3-outbox-pattern--operation-coalescing)
-4. [Conflict Resolution](#4-conflict-resolution)
-5. [Realtime Subscriptions](#5-realtime-subscriptions)
-6. [Tombstone System](#6-tombstone-system)
-7. [Network State Machine](#7-network-state-machine)
-8. [Egress Optimization](#8-egress-optimization)
-9. [Data Flow Diagrams](#9-data-flow-diagrams)
-10. [Debug & Observability](#10-debug--observability)
+2. [Single-User Auth Mode](#2-single-user-auth-mode)
+3. [Sync Engine](#3-sync-engine)
+4. [Outbox Pattern & Operation Coalescing](#4-outbox-pattern--operation-coalescing)
+5. [Conflict Resolution](#5-conflict-resolution)
+6. [Realtime Subscriptions](#6-realtime-subscriptions)
+7. [Tombstone System](#7-tombstone-system)
+8. [Network State Machine](#8-network-state-machine)
+9. [Egress Optimization](#9-egress-optimization)
+10. [Data Flow Diagrams](#10-data-flow-diagrams)
+11. [Debug & Observability](#11-debug--observability)
 
 ---
 
@@ -128,13 +129,195 @@ Derived stores:
 
 ---
 
-## 2. Sync Engine
+## 2. Single-User Auth Mode
+
+The engine supports a **single-user auth mode** as an alternative to the standard email/password multi-user authentication described above. In single-user mode, there is no registration or email sign-in. Instead, the user is authenticated via an **anonymous Supabase session** and access is gated by a **local PIN code** (or password) whose SHA-256 hash is stored in IndexedDB.
+
+### 2.1 Architecture Diagram
+
+```
++------------------------------------------------------------------+
+|               SINGLE-USER AUTH STATE MACHINE                      |
+|                                                                  |
+|   +-----------+     +-------------+     +-----------+            |
+|   | not setup |---->|   locked    |---->| unlocked  |            |
+|   | (first    |     | (config     |     | (session  |            |
+|   |  visit)   |     |  exists,    |     |  active)  |            |
+|   +-----------+     |  no session)|     +-----+-----+            |
+|         |           +------+------+           |                  |
+|         |                  ^                  |                  |
+|         | setupSingleUser()|  lockSingleUser() |                  |
+|         | (creates anon   |  (clears auth    |                  |
+|         |  session + hash)|  state, stops    |                  |
+|         v                  |  sync engine)    |                  |
+|   +-------------+          +------------------+                  |
+|   | unlocked    |                                                |
+|   | (setup      |     unlockSingleUser()                         |
+|   |  complete)  |     (verifies PIN hash, restores session)      |
+|   +-------------+                                                |
++------------------------------------------------------------------+
+```
+
+### 2.2 The `singleUserConfig` System Table
+
+**File**: `src/auth/singleUser.ts`
+
+When the engine is configured with `auth.mode === 'single-user'`, an additional IndexedDB system table is created:
+
+```
++--------------------+-----------------------------------------------+
+| singleUserConfig   | Singleton config for single-user gate.         |
+|                    | Key: 'config'                                 |
++--------------------+-----------------------------------------------+
+```
+
+```typescript
+interface SingleUserConfig {
+  id: string;                         // 'config' -- singleton
+  gateType: 'code' | 'password';     // Gate kind
+  codeLength?: 4 | 6;                // Only when gateType === 'code'
+  gateHash: string;                   // SHA-256 hex of the code/password
+  profile: Record<string, unknown>;   // { firstName, lastName, ... }
+  supabaseUserId?: string;            // Anonymous user's Supabase UUID (set after first online setup)
+  setupAt: string;                    // ISO timestamp
+  updatedAt: string;                  // ISO timestamp
+}
+```
+
+The `supabaseUserId` is deferred when setup happens offline; it is populated on the first online unlock when an anonymous Supabase session is created.
+
+### 2.3 Shared Hash Utility
+
+**File**: `src/auth/crypto.ts`
+
+A shared module provides SHA-256 hashing via the Web Crypto API. It is used by both the single-user gate and the offline credential system.
+
+```typescript
+// Hash a value to a 64-character hex string
+async function hashValue(value: string): Promise<string>;
+
+// Check if a stored value is already hashed (64-char hex)
+function isAlreadyHashed(value: string): boolean;
+```
+
+### 2.4 Single-User Module API
+
+**File**: `src/auth/singleUser.ts`
+
+The module exports 8 functions:
+
+| Function | Purpose |
+|----------|---------|
+| `isSingleUserSetUp()` | Returns `true` if `singleUserConfig` exists in IndexedDB |
+| `getSingleUserInfo()` | Returns non-sensitive display info (profile, gateType, codeLength) |
+| `setupSingleUser(gate, profile)` | First-time setup: hashes gate, creates anonymous Supabase session (if online), stores config, caches offline credentials, sets auth state |
+| `unlockSingleUser(gate)` | Verifies gate hash, restores existing Supabase session or creates new anonymous session, falls back to offline auth when offline |
+| `lockSingleUser()` | Stops sync engine, resets auth state to `'none'`; does NOT destroy session or sign out |
+| `changeSingleUserGate(oldGate, newGate)` | Verifies old gate, updates hash in config and offline credential cache |
+| `updateSingleUserProfile(profile)` | Updates profile in IndexedDB and Supabase `user_metadata` |
+| `resetSingleUser()` | Full reset: signs out of Supabase, clears all data, deletes config |
+
+### 2.5 Setup Flow (Online)
+
+```
+User enters PIN + profile on first visit
+  |
+  v
+setupSingleUser(gate, profile)
+  |
+  +---> hashValue(gate)  -->  64-char SHA-256 hex
+  |
+  +---> supabase.auth.signInAnonymously()
+  |       |
+  |       +---> SUCCESS:
+  |       |       Store profile in user_metadata
+  |       |       Write SingleUserConfig to IndexedDB
+  |       |       cacheOfflineCredentials() for offline fallback
+  |       |       createOfflineSession()
+  |       |       authState.setSupabaseAuth(session)
+  |       |
+  |       +---> FAILURE: return { error }
+  |
+  +---> (If offline: generates temp UUID, defers Supabase user creation)
+```
+
+### 2.6 Unlock Flow
+
+```
+User enters PIN on return visit
+  |
+  v
+unlockSingleUser(gate)
+  |
+  +---> hashValue(gate) === config.gateHash?
+  |       NO  --> return { error: 'Incorrect code' }
+  |       YES --> continue
+  |
+  +---> ONLINE:
+  |       Try existing Supabase session (getSession)
+  |         Valid? --> authState.setSupabaseAuth(session)
+  |         Expired? --> signInAnonymously() again
+  |           If new user ID --> update config, clear sync cursors
+  |           Re-apply profile to user_metadata
+  |           Update offline credential cache
+  |
+  +---> OFFLINE:
+          Try cached Supabase session from localStorage
+            Valid? --> authState.setSupabaseAuth(session)
+            No session? --> createOfflineSession(userId)
+                           authState.setOfflineAuth(offlineProfile)
+```
+
+### 2.7 How `resolveAuthState` Handles Single-User Mode
+
+**File**: `src/auth/resolveAuthState.ts`
+
+When `auth.mode === 'single-user'`, `resolveAuthState()` delegates to a dedicated `resolveSingleUserAuthState()` function. The result includes a `singleUserSetUp` boolean so the app can distinguish between "not set up" and "locked":
+
+```typescript
+interface AuthStateResult {
+  session: Session | null;
+  authMode: 'supabase' | 'offline' | 'none';
+  offlineProfile: OfflineCredentials | null;
+  singleUserSetUp?: boolean;  // only present in single-user mode
+}
+```
+
+Resolution logic:
+
+| Config Exists | Session State | Result |
+|---------------|---------------|--------|
+| No | -- | `authMode: 'none'`, `singleUserSetUp: false` (needs first-time setup) |
+| Yes | Valid Supabase session | `authMode: 'supabase'`, `singleUserSetUp: true` |
+| Yes | Expired but offline | `authMode: 'supabase'` (usable offline), `singleUserSetUp: true` |
+| Yes | Offline session only | `authMode: 'offline'`, `singleUserSetUp: true` |
+| Yes | No session | `authMode: 'none'`, `singleUserSetUp: true` (locked) |
+
+### 2.8 Admin Is Always True in Single-User Mode
+
+**File**: `src/auth/admin.ts`
+
+In single-user mode, the `isAdmin()` function short-circuits to always return `true`, bypassing the `adminCheck` callback:
+
+```typescript
+export function isAdmin(user: User | null): boolean {
+  const config = getEngineConfig();
+  if (config.auth?.mode === 'single-user') return true;
+  // ... multi-user adminCheck logic
+}
+```
+
+This ensures the single user has full access to all admin-gated features without needing a separate admin configuration.
+
+---
+
+## 3. Sync Engine
 
 **File**: `src/engine.ts`
 
 The sync engine is the core of multi-device synchronization. It implements a **push-then-pull architecture** with mutex locking, cursor-based incremental sync, egress monitoring, and tombstone cleanup.
 
-### 2.1 Core Rules
+### 3.1 Core Rules
 
 ```
 Rule 1: All reads come from local DB (IndexedDB)
@@ -144,7 +327,7 @@ Rule 4: Sync loop ships outbox to server in background
 Rule 5: On refresh, load local state instantly, then run background sync
 ```
 
-### 2.2 Sync Lifecycle
+### 3.2 Sync Lifecycle
 
 ```
   User Action (write)
@@ -211,7 +394,7 @@ Rule 5: On refresh, load local state instantly, then run background sync
   notifySyncComplete()  --> All stores refresh from local
 ```
 
-### 2.3 Mutex Lock Implementation
+### 3.3 Mutex Lock Implementation
 
 The sync engine uses a **promise-based async mutex** with stale lock detection:
 
@@ -232,7 +415,7 @@ acquireSyncLock()
 
 This prevents concurrent sync cycles from corrupting state while also handling deadlocks from crashed syncs.
 
-### 2.4 Cursor-Based Incremental Sync
+### 3.4 Cursor-Based Incremental Sync
 
 ```
 localStorage: lastSyncCursor_{userId} = "2024-01-15T10:30:00.000Z"
@@ -254,7 +437,7 @@ Key design decisions:
 - **30-second timeout** with `withTimeout()` wrapper prevents hanging syncs
 - **Column-level SELECT** (explicit columns per table) instead of `SELECT *` to minimize egress
 
-### 2.5 Watchdog & Resilience
+### 3.5 Watchdog & Resilience
 
 ```
 Watchdog (every 15s):
@@ -266,7 +449,7 @@ Watchdog (every 15s):
   +---> Clean up realtime tracking
 ```
 
-### 2.6 Session Validation & Caching
+### 3.6 Session Validation & Caching
 
 To avoid a network call (`getUser()`) every sync cycle, the engine caches successful auth validation for 1 hour:
 
@@ -289,9 +472,9 @@ This optimization alone saves approximately **720 Supabase auth API calls per da
 
 ---
 
-## 3. Outbox Pattern & Operation Coalescing
+## 4. Outbox Pattern & Operation Coalescing
 
-### 3.1 Intent-Based Operations
+### 4.1 Intent-Based Operations
 
 **File**: `src/types.ts`
 
@@ -323,7 +506,7 @@ With intent-preservation:
                               --> 1 Supabase UPDATE request
 ```
 
-### 3.2 Coalescing Engine
+### 4.2 Coalescing Engine
 
 **File**: `src/queue.ts`
 
@@ -364,7 +547,7 @@ Step 5: Batch apply (bulkDelete + transaction updates)
 OUTPUT: Queue with M operations (M << N)
 ```
 
-### 3.3 Retry & Backoff
+### 4.3 Retry & Backoff
 
 **File**: `src/queue.ts`
 
@@ -381,13 +564,13 @@ Errors are classified as **transient** (network, timeout, rate-limit, 5xx) or **
 
 ---
 
-## 4. Conflict Resolution
+## 5. Conflict Resolution
 
 **File**: `src/conflicts.ts`
 
 The engine implements a **three-tier, field-level conflict resolution** system.
 
-### 4.1 Three-Tier Resolution Diagram
+### 5.1 Three-Tier Resolution Diagram
 
 ```
 Remote change arrives for entity X
@@ -436,7 +619,7 @@ Does entity X exist locally?
                       Store FieldConflictResolution
 ```
 
-### 4.2 Resolution Strategies
+### 5.2 Resolution Strategies
 
 | Strategy | When Applied | Behavior |
 |----------|-------------|----------|
@@ -445,7 +628,7 @@ Does entity X exist locally?
 | `numeric_merge` | Numeric counter fields (e.g., `current_value`, `elapsed_duration`) | Falls back to last-write-wins (true merge would require operation inbox) |
 | `last_write` | All other fields | Most recent timestamp wins; device_id breaks ties |
 
-### 4.3 Device ID Tiebreaker
+### 5.3 Device ID Tiebreaker
 
 **File**: `src/deviceId.ts`
 
@@ -462,7 +645,7 @@ if (localDeviceId < remoteDeviceId) {
 
 Device IDs are **UUID v4** values stored in `localStorage`. They persist across sessions but are unique per browser/device. The lexicographic ordering of UUIDs provides a deterministic, consistent tiebreaker that produces the same result regardless of which device processes the conflict first.
 
-### 4.4 Conflict History
+### 5.4 Conflict History
 
 Every resolved conflict is logged to the `conflictHistory` table:
 
@@ -484,11 +667,11 @@ History is auto-cleaned after 30 days via `cleanupConflictHistory()`.
 
 ---
 
-## 5. Realtime Subscriptions
+## 6. Realtime Subscriptions
 
 **File**: `src/realtime.ts`
 
-### 5.1 Architecture
+### 6.1 Architecture
 
 ```
 +------------------------------------------------------------------+
@@ -510,7 +693,7 @@ History is auto-cleaned after 30 days via `cleanupConflictHistory()`.
 +------------------------------------------------------------------+
 ```
 
-### 5.2 Consolidated Channel Pattern
+### 6.2 Consolidated Channel Pattern
 
 Instead of N separate channels (one per table), the engine uses a **single channel** with N event subscriptions:
 
@@ -529,7 +712,7 @@ for (const table of REALTIME_TABLES) {
 
 This reduces WebSocket overhead from N connections to 1.
 
-### 5.3 Echo Suppression
+### 6.3 Echo Suppression
 
 When device A pushes a change, Supabase broadcasts it to all subscribers including device A. The realtime handler **skips changes from its own device**:
 
@@ -539,7 +722,7 @@ function isOwnDeviceChange(record: Record<string, unknown>): boolean {
 }
 ```
 
-### 5.4 Deduplication with Polling
+### 6.4 Deduplication with Polling
 
 Realtime and polling can both deliver the same change. A **recently processed tracking map** with 2-second TTL prevents duplicate processing:
 
@@ -553,7 +736,7 @@ Later, same change arrives via polling
   --> TRUE --> Skip (already applied)
 ```
 
-### 5.5 Reconnection Strategy
+### 6.5 Reconnection Strategy
 
 ```
 Connection lost
@@ -576,13 +759,13 @@ The `reconnectScheduled` flag prevents duplicate reconnect attempts when both `C
 
 ---
 
-## 6. Tombstone System
+## 7. Tombstone System
 
 **File**: `src/engine.ts`
 
 The engine uses **soft deletes** with a `deleted` boolean flag instead of hard deletes. This enables multi-device sync (all devices must learn about deletions) while preventing data resurrection.
 
-### 6.1 Soft Delete Flow
+### 7.1 Soft Delete Flow
 
 ```
 User deletes item on Device A
@@ -607,7 +790,7 @@ Device B receives soft delete:
   4. UI reactively removes item from display
 ```
 
-### 6.2 Tombstone Cleanup
+### 7.2 Tombstone Cleanup
 
 ```
 +------------------------------------------------------------------+
@@ -637,7 +820,7 @@ Configuration constants:
 - `TOMBSTONE_MAX_AGE_DAYS = 1` (local cleanup after 1 day)
 - `CLEANUP_INTERVAL_MS = 86400000` (server cleanup max once per 24 hours)
 
-### 6.3 Delete-Wins Guarantee
+### 7.3 Delete-Wins Guarantee
 
 When a conflict involves a deleted entity:
 
@@ -657,11 +840,11 @@ This is a deliberate design choice: **deletes are irreversible in conflict scena
 
 ---
 
-## 7. Network State Machine
+## 8. Network State Machine
 
 **File**: `src/stores/network.ts`
 
-### 7.1 State Diagram
+### 8.1 State Diagram
 
 ```
 +----------+     'offline' event     +-----------+
@@ -687,7 +870,7 @@ This is a deliberate design choice: **deletes are irreversible in conflict scena
 +----------+
 ```
 
-### 7.2 iOS PWA Special Handling
+### 8.2 iOS PWA Special Handling
 
 iOS Safari does not reliably fire `online`/`offline` events in PWA standalone mode. The network store listens for `visibilitychange` events as a fallback:
 
@@ -706,7 +889,7 @@ document.addEventListener('visibilitychange', () => {
 });
 ```
 
-### 7.3 Sequential Callback Execution
+### 8.3 Sequential Callback Execution
 
 Reconnect callbacks are executed **sequentially with async/await**, not concurrently. This ensures auth validation completes before sync is triggered:
 
@@ -728,11 +911,11 @@ Callback 3: Run full sync                (async, awaited)
 
 ---
 
-## 8. Egress Optimization
+## 9. Egress Optimization
 
 The engine is designed to minimize Supabase bandwidth (egress) consumption. Here is a summary of every optimization.
 
-### 8.1 Column Selection
+### 9.1 Column Selection
 
 **File**: `src/engine.ts`
 
@@ -748,11 +931,11 @@ const COLUMNS = {
 
 This prevents downloading columns that may be added to PostgreSQL but are not needed client-side.
 
-### 8.2 Queue Coalescing
+### 9.2 Queue Coalescing
 
 50 rapid increments become 1 UPDATE request. A create-then-delete sequence becomes 0 requests. This is the single largest egress reduction.
 
-### 8.3 Realtime-First Strategy
+### 9.3 Realtime-First Strategy
 
 ```typescript
 const skipPull = isRealtimeHealthy();
@@ -763,7 +946,7 @@ if (skipPull) {
 
 When the WebSocket connection is healthy, user-triggered syncs **skip the pull phase entirely**. Changes from other devices arrive via realtime instead of polling all entity tables.
 
-### 8.4 Cursor-Based Incremental Pull
+### 9.4 Cursor-Based Incremental Pull
 
 Only records modified since the last sync are fetched:
 
@@ -771,7 +954,7 @@ Only records modified since the last sync are fetched:
 SELECT ... FROM table WHERE updated_at > :cursor
 ```
 
-### 8.5 Visibility-Based Sync Throttling
+### 9.5 Visibility-Based Sync Throttling
 
 ```
 Tab hidden for < 5 minutes --> No sync on return
@@ -782,13 +965,13 @@ Constants:
 - `VISIBILITY_SYNC_MIN_AWAY_MS = 300000` (5 minutes)
 - `SYNC_INTERVAL_MS = 900000` (15-minute periodic sync)
 
-### 8.6 User Validation Caching
+### 9.6 User Validation Caching
 
 `getUser()` API call cached for 1 hour:
 - `USER_VALIDATION_INTERVAL_MS = 3600000`
 - Saves approximately 720 API calls/day for an active user
 
-### 8.7 Online Reconnect Cooldown
+### 9.7 Online Reconnect Cooldown
 
 ```
 ONLINE_RECONNECT_COOLDOWN_MS = 120000  // 2 minutes
@@ -796,7 +979,7 @@ ONLINE_RECONNECT_COOLDOWN_MS = 120000  // 2 minutes
 
 If a sync completed less than 2 minutes before coming back online, the reconnect sync is skipped.
 
-### 8.8 Egress Tracking
+### 9.8 Egress Tracking
 
 The engine tracks bytes transferred per table and per sync cycle:
 
@@ -813,9 +996,9 @@ Accessible via `window.__{prefix}Egress()` in debug mode (prefix is configurable
 
 ---
 
-## 9. Data Flow Diagrams
+## 10. Data Flow Diagrams
 
-### 9.1 Creating an Entity
+### 10.1 Creating an Entity
 
 ```
 User creates a new item (e.g., a task titled "Review report")
@@ -869,7 +1052,7 @@ runFullSync()
 Supabase broadcasts INSERT to other devices via Realtime
 ```
 
-### 9.2 Editing Across Devices
+### 10.2 Editing Across Devices
 
 ```
 Device A (phone):                    Device B (laptop):
@@ -913,7 +1096,7 @@ WHERE id='entity-uuid'                |
                           UI shows "Updated title"
 ```
 
-### 9.3 Handling Conflicts
+### 10.3 Handling Conflicts
 
 ```
 Device A (offline):                  Device B (online):
@@ -960,7 +1143,7 @@ runFullSync()                          |
   +---> PUSH again: name="Alpha" overwrites "Beta" on server
 ```
 
-### 9.4 Offline-to-Online Transition
+### 10.4 Offline-to-Online Transition
 
 ```
 OFFLINE STATE                          ONLINE TRANSITION
@@ -1002,9 +1185,9 @@ OFFLINE STATE                          ONLINE TRANSITION
 
 ---
 
-## 10. Debug & Observability
+## 11. Debug & Observability
 
-### 10.1 Debug Mode
+### 11.1 Debug Mode
 
 **File**: `src/debug.ts`
 
@@ -1016,7 +1199,7 @@ localStorage.setItem('{prefix}_debug_mode', 'true');
 
 The prefix is configurable when initializing the engine. When enabled, all `debugLog()`, `debugWarn()`, and `debugError()` calls produce console output. When disabled, they are no-ops (zero overhead).
 
-### 10.2 Console Debug Functions
+### 11.2 Console Debug Functions
 
 Available in debug mode via the browser console. Function names are prefixed with a configurable prefix (shown here as `__{prefix}`):
 
@@ -1027,7 +1210,7 @@ Available in debug mode via the browser console. Function names are prefixed wit
 | `window.__{prefix}Tombstones()` | Count of tombstones per table (local + server) |
 | `window.__{prefix}Tombstones({ cleanup: true, force: true })` | Manually trigger tombstone cleanup |
 
-### 10.3 Logging Prefixes
+### 11.3 Logging Prefixes
 
 All log messages use structured prefixes for filtering:
 
@@ -1040,7 +1223,7 @@ All log messages use structured prefixes for filtering:
 | `[Auth]` | Auth layer | Login, credential caching, session validation |
 | `[Network]` | Network store | Callback execution errors |
 
-### 10.4 Sync Status Store
+### 11.4 Sync Status Store
 
 **File**: `src/stores/sync.ts`
 
@@ -1057,7 +1240,7 @@ interface SyncStatus {
 }
 ```
 
-### 10.5 Egress Monitoring Output Example
+### 11.5 Egress Monitoring Output Example
 
 ```
 === EGRESS STATS ===
@@ -1092,6 +1275,10 @@ Total egress: 45.23 KB (312 records)
 | Device ID | `src/deviceId.ts` | Deterministic tiebreaker generation |
 | Auth | `src/supabase/auth.ts` | Supabase auth with offline credential caching |
 | Supabase Client | `src/supabase/client.ts` | Supabase client initialization |
+| Crypto Utils | `src/auth/crypto.ts` | SHA-256 hashing via Web Crypto API |
+| Single-User Auth | `src/auth/singleUser.ts` | Local PIN gate with anonymous Supabase auth |
+| Auth State Resolver | `src/auth/resolveAuthState.ts` | Dual-mode auth state resolution (multi-user & single-user) |
+| Admin Check | `src/auth/admin.ts` | Admin privilege check (always true in single-user mode) |
 | Offline Credentials | `src/auth/offlineCredentials.ts` | IndexedDB credential cache |
 | Offline Session | `src/auth/offlineSession.ts` | Offline session token management |
 | Auth State | `src/stores/authState.ts` | Tri-modal auth state store |
@@ -1115,7 +1302,7 @@ Total egress: 45.23 KB (312 records)
 | **Offline-first architecture** | Full CRUD with IndexedDB, seamless online/offline transitions |
 | **Intent-based outbox** | 4 operation types, aggressive coalescing (11 rules), cross-operation optimization |
 | **Three-tier conflict resolution** | Field-level merging, device ID tiebreakers, audit trail |
-| **Dual-mode authentication** | Supabase + offline credential cache, reconnection security |
+| **Tri-mode authentication** | Supabase + offline credential cache + single-user anonymous auth with local PIN gate |
 | **Realtime + polling hybrid** | WebSocket for instant sync, polling as fallback, deduplication |
 | **Tombstone lifecycle** | Soft deletes, multi-device propagation, timed hard-delete cleanup |
 | **Egress optimization** | Column selection, coalescing, realtime-first, cursor-based, validation caching |

@@ -4,6 +4,7 @@
  */
 import { getEngineConfig } from '../config';
 import { debugWarn, debugError } from '../debug';
+import { hashValue, isAlreadyHashed } from './crypto';
 const CREDENTIALS_ID = 'current_user';
 /**
  * Cache user credentials for offline login
@@ -21,11 +22,12 @@ export async function cacheOfflineCredentials(email, password, user, _session) {
     const profile = config.auth?.profileExtractor
         ? config.auth.profileExtractor(user.user_metadata || {})
         : (user.user_metadata || {});
+    const hashedPassword = await hashValue(password);
     const credentials = {
         id: CREDENTIALS_ID,
         userId: user.id,
         email: email,
-        password: password,
+        password: hashedPassword,
         profile,
         cachedAt: new Date().toISOString()
     };
@@ -76,7 +78,18 @@ export async function verifyOfflineCredentials(email, password, expectedUserId) 
         debugWarn('[Auth] No password stored in credentials');
         return { valid: false, reason: 'no_stored_password' };
     }
-    if (credentials.password !== password) {
+    // Compare passwords: if stored password is hashed, hash the input and compare;
+    // if legacy plaintext, compare directly for backwards compatibility
+    let passwordMatch;
+    if (isAlreadyHashed(credentials.password)) {
+        const hashedInput = await hashValue(password);
+        passwordMatch = credentials.password === hashedInput;
+    }
+    else {
+        // Legacy plaintext comparison
+        passwordMatch = credentials.password === password;
+    }
+    if (!passwordMatch) {
         debugWarn('[Auth] Password mismatch (stored length:', credentials.password.length, ', entered length:', password.length, ')');
         return { valid: false, reason: 'password_mismatch' };
     }
@@ -92,8 +105,9 @@ export async function updateOfflineCredentialsPassword(newPassword) {
         return;
     }
     const db = getEngineConfig().db;
+    const hashedPassword = await hashValue(newPassword);
     await db.table('offlineCredentials').update(CREDENTIALS_ID, {
-        password: newPassword,
+        password: hashedPassword,
         cachedAt: new Date().toISOString()
     });
 }

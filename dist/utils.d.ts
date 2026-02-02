@@ -2,6 +2,13 @@
  * Common utility functions for sync engine consumers.
  */
 /**
+ * Convert a snake_case string to a safe camelCase identifier.
+ * Strips invalid characters (keeps only alphanumeric and underscores),
+ * then converts snake_case to camelCase.
+ * e.g. 'goal_lists' → 'goalLists', 'goals' → 'goals', 'my-table!' → 'mytable'
+ */
+export declare function snakeToCamel(s: string): string;
+/**
  * Generate a UUID v4 (random UUID).
  */
 export declare function generateId(): string;

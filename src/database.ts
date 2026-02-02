@@ -24,7 +24,8 @@ const SYSTEM_TABLES: Record<string, string> = {
   syncQueue: '++id, table, entityId, timestamp',
   conflictHistory: '++id, entityId, entityType, timestamp',
   offlineCredentials: 'id',
-  offlineSession: 'id'
+  offlineSession: 'id',
+  singleUserConfig: 'id'
 };
 
 let managedDb: Dexie | null = null;

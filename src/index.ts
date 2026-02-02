@@ -31,6 +31,9 @@ export { isAdmin } from './auth/admin';
 // Offline login
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 
+// Single-user auth
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser } from './auth/singleUser';
+
 // Stores
 export { syncStatusStore } from './stores/sync';
 export type { SyncError, RealtimeState } from './stores/sync';
@@ -53,13 +56,13 @@ export type { AppConfig } from './runtime/runtimeConfig';
 export { debug, isDebugMode, setDebugMode } from './debug';
 
 // Utilities
-export { generateId, now, calculateNewOrder } from './utils';
+export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 
 // Svelte actions
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 
 // Types
-export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode } from './types';
+export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType } from './types';
 
 // Re-export Session type from Supabase so consumers don't need a direct dependency
 export type { Session } from '@supabase/supabase-js';

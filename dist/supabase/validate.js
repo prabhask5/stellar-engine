@@ -5,7 +5,7 @@
  * Used during setup flows to verify user-inputted URL and anon key.
  */
 import { createClient } from '@supabase/supabase-js';
-export async function validateSupabaseCredentials(url, anonKey) {
+export async function validateSupabaseCredentials(url, anonKey, testTable) {
     try {
         new URL(url);
     }
@@ -15,7 +15,7 @@ export async function validateSupabaseCredentials(url, anonKey) {
     try {
         const tempClient = createClient(url, anonKey);
         // Test REST API reachability by attempting a simple query
-        const { error } = await tempClient.from('focus_sessions').select('id').limit(1);
+        const { error } = await tempClient.from(testTable || '_health_check').select('id').limit(1);
         if (error) {
             // Bad credentials
             if (error.message?.includes('Invalid API key') || error.code === 'PGRST301') {

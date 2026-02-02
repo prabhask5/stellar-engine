@@ -11,7 +11,8 @@ const SYSTEM_TABLES = {
     syncQueue: '++id, table, entityId, timestamp',
     conflictHistory: '++id, entityId, entityType, timestamp',
     offlineCredentials: 'id',
-    offlineSession: 'id'
+    offlineSession: 'id',
+    singleUserConfig: 'id'
 };
 let managedDb = null;
 /**

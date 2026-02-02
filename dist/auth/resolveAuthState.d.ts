@@ -11,6 +11,8 @@ export interface AuthStateResult {
     session: Session | null;
     authMode: 'supabase' | 'offline' | 'none';
     offlineProfile: OfflineCredentials | null;
+    /** Whether single-user mode has been set up (only present when mode === 'single-user') */
+    singleUserSetUp?: boolean;
 }
 /**
  * Resolve the current authentication state.

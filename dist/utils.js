@@ -2,6 +2,15 @@
  * Common utility functions for sync engine consumers.
  */
 /**
+ * Convert a snake_case string to a safe camelCase identifier.
+ * Strips invalid characters (keeps only alphanumeric and underscores),
+ * then converts snake_case to camelCase.
+ * e.g. 'goal_lists' → 'goalLists', 'goals' → 'goals', 'my-table!' → 'mytable'
+ */
+export function snakeToCamel(s) {
+    return s.replace(/[^a-zA-Z0-9_]/g, '').replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+/**
  * Generate a UUID v4 (random UUID).
  */
 export function generateId() {
@@ -51,6 +60,12 @@ export function calculateNewOrder(items, fromIndex, toIndex) {
     }
     const prevOrder = items[prevIndex].order;
     const nextOrder = items[nextIndex].order;
-    return (prevOrder + nextOrder) / 2;
+    const midpoint = (prevOrder + nextOrder) / 2;
+    // Guard against floating-point precision exhaustion:
+    // if the midpoint collapses to either bound, nudge by a small epsilon
+    if (midpoint === prevOrder || midpoint === nextOrder) {
+        return prevOrder + Number.EPSILON * 100;
+    }
+    return midpoint;
 }
 //# sourceMappingURL=utils.js.map

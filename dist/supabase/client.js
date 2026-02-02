@@ -54,6 +54,13 @@ function clearCorruptedAuthData() {
 }
 // Add global handler for unhandled Supabase auth errors
 if (typeof window !== 'undefined') {
+    // Clear reload guard on successful startup (app loaded without crashing)
+    try {
+        sessionStorage.removeItem('__stellar_auth_reload');
+    }
+    catch {
+        // Ignore storage errors
+    }
     window.addEventListener('unhandledrejection', (event) => {
         const reason = event.reason;
         // Check if this is a Supabase auth error
@@ -66,8 +73,11 @@ if (typeof window !== 'undefined') {
                 try {
                     const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'));
                     keys.forEach((k) => localStorage.removeItem(k));
-                    // Reload the page to get a fresh state
-                    window.location.reload();
+                    // Guard against reload loop: only reload once per session
+                    if (!sessionStorage.getItem('__stellar_auth_reload')) {
+                        sessionStorage.setItem('__stellar_auth_reload', '1');
+                        window.location.reload();
+                    }
                 }
                 catch {
                     // Ignore storage errors

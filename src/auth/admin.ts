@@ -14,6 +14,8 @@ import { getEngineConfig } from '../config';
 export function isAdmin(user: User | null): boolean {
   try {
     const config = getEngineConfig();
+    // Single-user mode: always admin
+    if (config.auth?.mode === 'single-user') return true;
     if (config.auth?.adminCheck) {
       return config.auth.adminCheck(user);
     }

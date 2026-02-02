@@ -42,8 +42,9 @@ export interface SyncOperationItem {
   operationType: OperationType; // 'increment', 'set', 'create', 'delete'
   field?: string; // Field being modified (for increment/single-field set)
   value?: unknown; // Delta (increment), new value (set), or full payload (create)
-  timestamp: string; // ISO timestamp for backoff calculation
+  timestamp: string; // ISO timestamp of when the operation was created
   retries: number; // Number of failed sync attempts
+  lastRetryAt?: string; // ISO timestamp of last retry attempt (for backoff calculation)
 }
 
 // ============================================================
@@ -54,7 +55,7 @@ export interface OfflineCredentials {
   id: string; // 'current_user' - singleton pattern
   userId: string; // Supabase user ID
   email: string;
-  password: string; // Plaintext password (user's own password, stored locally)
+  password: string; // SHA-256 hashed password (legacy records may still be plaintext)
   profile: Record<string, unknown>; // Generic profile data (app-specific shape)
   cachedAt: string; // ISO timestamp when credentials were cached
 }
@@ -92,3 +93,20 @@ export interface ConflictHistoryEntry {
 export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 
 export type AuthMode = 'supabase' | 'offline' | 'none';
+
+// ============================================================
+// SINGLE-USER AUTHENTICATION TYPES
+// ============================================================
+
+export type SingleUserGateType = 'code' | 'password';
+
+export interface SingleUserConfig {
+  id: string;                    // 'config' — singleton
+  gateType: SingleUserGateType;
+  codeLength?: 4 | 6;           // only when gateType === 'code'
+  gateHash: string;              // SHA-256 of the code/password
+  profile: Record<string, unknown>; // { firstName, lastName }
+  supabaseUserId?: string;       // anonymous user's ID (set after first online setup)
+  setupAt: string;               // ISO timestamp
+  updatedAt: string;             // ISO timestamp
+}

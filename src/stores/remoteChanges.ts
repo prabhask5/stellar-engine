@@ -102,13 +102,14 @@ function createRemoteChangesStore() {
     cleanupInterval = setInterval(() => {
       const now = Date.now();
       update((state) => {
+        const newRecentChanges = new Map(state.recentChanges);
         // Remove old recent changes
-        for (const [key, change] of state.recentChanges) {
+        for (const [key, change] of newRecentChanges) {
           if (now - change.timestamp > ANIMATION_DURATION) {
-            state.recentChanges.delete(key);
+            newRecentChanges.delete(key);
           }
         }
-        return state;
+        return { ...state, recentChanges: newRecentChanges };
       });
     }, CLEANUP_INTERVAL);
   }
@@ -204,16 +205,18 @@ function createRemoteChangesStore() {
 
         if (activeEdit && activeEdit.formType === 'manual-save') {
           // Entity is being edited in a form with Save button - defer the change
-          const existing = state.deferredChanges.get(key) || [];
+          const newDeferredChanges = new Map(state.deferredChanges);
+          const existing = [...(newDeferredChanges.get(key) || [])];
           existing.push(change);
-          state.deferredChanges.set(key, existing);
+          newDeferredChanges.set(key, existing);
           deferred = true;
+          return { ...state, deferredChanges: newDeferredChanges };
         } else {
           // Apply immediately (or already applied) - record for animation
-          state.recentChanges.set(key, change);
+          const newRecentChanges = new Map(state.recentChanges);
+          newRecentChanges.set(key, change);
+          return { ...state, recentChanges: newRecentChanges };
         }
-
-        return state;
       });
 
       return { deferred, actionType };
@@ -245,8 +248,9 @@ function createRemoteChangesStore() {
 
       update((state) => {
         const key = `${entityType}:${entityId}`;
-        state.recentChanges.set(key, change);
-        return state;
+        const newRecentChanges = new Map(state.recentChanges);
+        newRecentChanges.set(key, change);
+        return { ...state, recentChanges: newRecentChanges };
       });
     },
 
@@ -262,14 +266,15 @@ function createRemoteChangesStore() {
     ): void {
       update((state) => {
         const key = `${entityType}:${entityId}`;
-        state.activeEdits.set(key, {
+        const newActiveEdits = new Map(state.activeEdits);
+        newActiveEdits.set(key, {
           entityId,
           entityType,
           formType,
           startedAt: Date.now(),
           fields
         });
-        return state;
+        return { ...state, activeEdits: newActiveEdits };
       });
     },
 
@@ -281,15 +286,17 @@ function createRemoteChangesStore() {
 
       update((state) => {
         const key = `${entityType}:${entityId}`;
-        state.activeEdits.delete(key);
+        const newActiveEdits = new Map(state.activeEdits);
+        newActiveEdits.delete(key);
 
+        const newDeferredChanges = new Map(state.deferredChanges);
         // Return deferred changes for processing
-        if (state.deferredChanges.has(key)) {
-          deferredChanges = state.deferredChanges.get(key) || [];
-          state.deferredChanges.delete(key);
+        if (newDeferredChanges.has(key)) {
+          deferredChanges = newDeferredChanges.get(key) || [];
+          newDeferredChanges.delete(key);
         }
 
-        return state;
+        return { ...state, activeEdits: newActiveEdits, deferredChanges: newDeferredChanges };
       });
 
       return deferredChanges;
@@ -314,8 +321,9 @@ function createRemoteChangesStore() {
     clearDeferredChanges(entityId: string, entityType: string): void {
       update((state) => {
         const key = `${entityType}:${entityId}`;
-        state.deferredChanges.delete(key);
-        return state;
+        const newDeferredChanges = new Map(state.deferredChanges);
+        newDeferredChanges.delete(key);
+        return { ...state, deferredChanges: newDeferredChanges };
       });
     },
 
@@ -375,8 +383,9 @@ function createRemoteChangesStore() {
     markPendingDelete(entityId: string, entityType: string): Promise<void> {
       update((state) => {
         const key = `${entityType}:${entityId}`;
-        state.pendingDeletes.set(key, Date.now());
-        return state;
+        const newPendingDeletes = new Map(state.pendingDeletes);
+        newPendingDeletes.set(key, Date.now());
+        return { ...state, pendingDeletes: newPendingDeletes };
       });
 
       // Return promise that resolves after animation duration
@@ -388,8 +397,9 @@ function createRemoteChangesStore() {
           setTimeout(() => {
             update((state) => {
               const key = `${entityType}:${entityId}`;
-              state.pendingDeletes.delete(key);
-              return state;
+              const newPendingDeletes = new Map(state.pendingDeletes);
+              newPendingDeletes.delete(key);
+              return { ...state, pendingDeletes: newPendingDeletes };
             });
           }, 100);
         }, DELETE_ANIMATION_DURATION);

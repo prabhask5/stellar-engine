@@ -1,6 +1,7 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
+import type { SingleUserGateType } from './types';
 import { type DatabaseConfig } from './database';
 export interface SyncEngineConfig {
     tables: TableConfig[];
@@ -12,6 +13,13 @@ export interface SyncEngineConfig {
     /** Engine creates and owns the Dexie instance when this is provided. */
     database?: DatabaseConfig;
     auth?: {
+        /** Auth mode: 'multi-user' (default) or 'single-user' (anonymous Supabase auth with local gate) */
+        mode?: 'multi-user' | 'single-user';
+        /** Single-user mode configuration */
+        singleUser?: {
+            gateType: SingleUserGateType;
+            codeLength?: 4 | 6;
+        };
         profileExtractor?: (userMetadata: Record<string, unknown>) => Record<string, unknown>;
         profileToMetadata?: (profile: Record<string, unknown>) => Record<string, unknown>;
         enableOfflineAuth?: boolean;
@@ -32,7 +40,6 @@ export interface SyncEngineConfig {
 }
 export interface TableConfig {
     supabaseName: string;
-    dexieTable: string;
     columns: string;
     ownershipFilter?: string;
     isSingleton?: boolean;
@@ -42,6 +49,11 @@ export interface TableConfig {
 }
 export declare function initEngine(config: SyncEngineConfig): void;
 export declare function getEngineConfig(): SyncEngineConfig;
+/**
+ * Get the Dexie (IndexedDB) table name for a TableConfig entry.
+ * Derives from supabaseName via snake_case → camelCase conversion.
+ */
+export declare function getDexieTableFor(table: TableConfig): string;
 /**
  * Get the Supabase-to-Dexie table mapping derived from config.
  */

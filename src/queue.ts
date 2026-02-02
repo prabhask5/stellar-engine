@@ -333,7 +333,7 @@ function shouldRetryItem(item: SyncOperationItem): boolean {
 
   // Exponential backoff for retries: 2^(retries-1) seconds (1s, 2s, 4s, 8s)
   const backoffMs = Math.pow(2, item.retries - 1) * 1000;
-  const lastAttempt = new Date(item.timestamp).getTime();
+  const lastAttempt = new Date(item.lastRetryAt || item.timestamp).getTime();
   const now = Date.now();
 
   return now - lastAttempt >= backoffMs;
@@ -383,10 +383,11 @@ export async function incrementRetry(id: number): Promise<void> {
   const db = getDb();
   const item = await db.table('syncQueue').get(id);
   if (item) {
-    // Update retry count and timestamp for exponential backoff calculation
+    // Update retry count and lastRetryAt for exponential backoff calculation
+    // Note: timestamp is preserved to maintain operation ordering
     await db.table('syncQueue').update(id, {
       retries: item.retries + 1,
-      timestamp: new Date().toISOString()
+      lastRetryAt: new Date().toISOString()
     });
   }
 }

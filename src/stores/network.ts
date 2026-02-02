@@ -16,6 +16,7 @@ function createNetworkStore(): Readable<boolean> & {
   let wasOffline = false;
   let currentValue = true; // Track current value to prevent redundant updates
   let initialized = false; // Prevent double-initialization
+  let reconnectPending = false; // Prevent duplicate reconnect callbacks (iOS PWA fires both online + visibilitychange)
 
   function setIfChanged(value: boolean) {
     if (value !== currentValue) {
@@ -66,11 +67,13 @@ function createNetworkStore(): Readable<boolean> & {
     window.addEventListener('online', () => {
       setIfChanged(true);
 
-      // If we were offline, trigger reconnect callbacks
-      if (wasOffline) {
+      // If we were offline, trigger reconnect callbacks (guard against duplicate firing)
+      if (wasOffline && !reconnectPending) {
         wasOffline = false;
+        reconnectPending = true;
         // Small delay to ensure network is stable
         setTimeout(() => {
+          reconnectPending = false;
           runCallbacksSequentially(reconnectCallbacks, 'Reconnect');
         }, 500);
       }
@@ -82,10 +85,12 @@ function createNetworkStore(): Readable<boolean> & {
         const nowOnline = navigator.onLine;
         setIfChanged(nowOnline); // Only update if actually changed
 
-        // If we're coming back online after being hidden
-        if (nowOnline && wasOffline) {
+        // If we're coming back online after being hidden (guard against duplicate firing)
+        if (nowOnline && wasOffline && !reconnectPending) {
           wasOffline = false;
+          reconnectPending = true;
           setTimeout(() => {
+            reconnectPending = false;
             runCallbacksSequentially(reconnectCallbacks, 'Reconnect');
           }, 500);
         }

@@ -11,12 +11,15 @@ import type { OfflineCredentials } from '../types';
 import { getSession, isSessionExpired } from '../supabase/auth';
 import { getValidOfflineSession, clearOfflineSession } from './offlineSession';
 import { getOfflineCredentials } from './offlineCredentials';
+import { getEngineConfig } from '../config';
 import { debugWarn, debugError } from '../debug';
 
 export interface AuthStateResult {
   session: Session | null;
   authMode: 'supabase' | 'offline' | 'none';
   offlineProfile: OfflineCredentials | null;
+  /** Whether single-user mode has been set up (only present when mode === 'single-user') */
+  singleUserSetUp?: boolean;
 }
 
 /**
@@ -29,6 +32,13 @@ export interface AuthStateResult {
  */
 export async function resolveAuthState(): Promise<AuthStateResult> {
   try {
+    // ── SINGLE-USER MODE ──────────────────────────────────────────
+    const engineConfig = getEngineConfig();
+    if (engineConfig.auth?.mode === 'single-user') {
+      return resolveSingleUserAuthState();
+    }
+
+    // ── MULTI-USER MODE (default) ─────────────────────────────────
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
     // Get session once and reuse (egress optimization)
@@ -78,5 +88,64 @@ export async function resolveAuthState(): Promise<AuthStateResult> {
       // Ignore storage errors
     }
     return { session: null, authMode: 'none', offlineProfile: null };
+  }
+}
+
+/**
+ * Resolve auth state for single-user mode.
+ *
+ * - If no config exists: user hasn't set up yet → authMode: 'none', singleUserSetUp: false
+ * - If config exists and valid session: → authMode: 'supabase', singleUserSetUp: true
+ * - If config exists, offline with cached session: → authMode: 'supabase', singleUserSetUp: true
+ * - If config exists, offline with offline session: → authMode: 'offline', singleUserSetUp: true
+ * - If config exists but no session: locked → authMode: 'none', singleUserSetUp: true
+ */
+async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
+  try {
+    const db = getEngineConfig().db;
+    if (!db) {
+      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    }
+
+    const config = await db.table('singleUserConfig').get('config');
+    if (!config) {
+      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    }
+
+    // Config exists — check session
+    const session = await getSession();
+    const hasValidSession = session && !isSessionExpired(session);
+
+    if (hasValidSession) {
+      return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
+    }
+
+    // Check for offline session
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      // Even expired cached Supabase session is usable offline
+      if (session) {
+        return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
+      }
+
+      const offlineSession = await getValidOfflineSession();
+      if (offlineSession) {
+        const offlineProfile: OfflineCredentials = {
+          id: 'current_user',
+          userId: offlineSession.userId,
+          email: '',
+          password: config.gateHash,
+          profile: config.profile,
+          cachedAt: new Date().toISOString()
+        };
+        return { session: null, authMode: 'offline', offlineProfile, singleUserSetUp: true };
+      }
+    }
+
+    // No valid session — locked
+    return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
+  } catch (e) {
+    debugError('[Auth] Failed to resolve single-user auth state:', e);
+    return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
   }
 }

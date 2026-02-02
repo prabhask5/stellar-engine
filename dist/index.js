@@ -17,6 +17,8 @@ export { resolveAuthState } from './auth/resolveAuthState';
 export { isAdmin } from './auth/admin';
 // Offline login
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
+// Single-user auth
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser } from './auth/singleUser';
 // Stores
 export { syncStatusStore } from './stores/sync';
 export { remoteChangesStore } from './stores/remoteChanges';
@@ -31,7 +33,7 @@ export { initConfig, getConfig, setConfig } from './runtime/runtimeConfig';
 // Debug
 export { debug, isDebugMode, setDebugMode } from './debug';
 // Utilities
-export { generateId, now, calculateNewOrder } from './utils';
+export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 // Svelte actions
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 // Supabase credential validation (server-side setup flows)

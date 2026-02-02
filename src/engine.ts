@@ -1,4 +1,4 @@
-import { getEngineConfig } from './config';
+import { getEngineConfig, getDexieTableFor } from './config';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
   getPendingSync,
@@ -61,7 +61,7 @@ function getSupabase() {
 }
 function getDexieTableName(supabaseName: string): string {
   const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
-  return table?.dexieTable || supabaseName;
+  return table ? getDexieTableFor(table) : supabaseName;
 }
 function getColumns(supabaseName: string): string {
   const table = getEngineConfig().tables.find(t => t.supabaseName === supabaseName);
@@ -450,7 +450,7 @@ export function scheduleSyncPush(): void {
     if (skipPull) {
       debugLog('[SYNC] Realtime healthy - push-only mode (skipping pull)');
     }
-    runFullSync(false, skipPull); // Show syncing indicator for user-triggered writes
+    runFullSync(false, skipPull).catch(e => debugError('[SYNC] Push-triggered sync failed:', e)); // Show syncing indicator for user-triggered writes
   }, getSyncDebounceMs());
 }
 
@@ -576,22 +576,29 @@ async function resetSyncCursor(): Promise<void> {
 async function forceFullSync(): Promise<void> {
   debugLog('[SYNC] Starting force full sync...');
 
-  const config = getEngineConfig();
-  const db = config.db!;
-
-  await resetSyncCursor();
-
-  // Clear local data (except sync queue - keep pending changes)
-  const entityTables = config.tables.map(t => db.table(t.dexieTable));
-  await db.transaction('rw', entityTables, async () => {
-    for (const t of entityTables) {
-      await t.clear();
-    }
-  });
-
-  debugLog('[SYNC] Local data cleared, pulling from server...');
+  // Acquire sync lock to prevent concurrent syncs
+  const acquired = await acquireSyncLock();
+  if (!acquired) {
+    debugWarn('[SYNC] Force full sync skipped - sync already in progress');
+    return;
+  }
 
   try {
+    const config = getEngineConfig();
+    const db = config.db!;
+
+    await resetSyncCursor();
+
+    // Clear local data (except sync queue - keep pending changes)
+    const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
+    await db.transaction('rw', entityTables, async () => {
+      for (const t of entityTables) {
+        await t.clear();
+      }
+    });
+
+    debugLog('[SYNC] Local data cleared, pulling from server...');
+
     syncStatusStore.setStatus('syncing');
     syncStatusStore.setSyncMessage('Downloading all data...');
 
@@ -607,6 +614,8 @@ async function forceFullSync(): Promise<void> {
     syncStatusStore.setStatus('error');
     syncStatusStore.setError('Full sync failed', String(error));
     throw error;
+  } finally {
+    releaseSyncLock();
   }
 }
 
@@ -629,7 +638,6 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   // This prevents re-fetching records we just pushed in this sync cycle
   const storedCursor = getLastSyncCursor(userId);
   const lastSync = minCursor && minCursor > storedCursor ? minCursor : storedCursor;
-  const pendingEntityIds = await getPendingEntityIds();
 
   debugLog(
     `[SYNC] Pulling changes since: ${lastSync} (stored: ${storedCursor}, min: ${minCursor || 'none'})`
@@ -646,7 +654,7 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   // Wrapped in timeout to prevent hanging if Supabase doesn't respond
   const results = await withTimeout(Promise.all(
     config.tables.map(table =>
-      supabase.from(table.supabaseName).select(table.columns).gt('updated_at', lastSync)
+      supabase.from(table.supabaseName).select(table.columns).gt('updated_at', lastSync).order('updated_at', { ascending: true }).order('id', { ascending: true })
     )
   ), 30_000, 'Pull remote changes');
 
@@ -669,6 +677,9 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
     remoteRecords: T[] | null,
     table: { get: (id: string) => Promise<T | undefined>; put: (entity: T) => Promise<unknown> }
   ): Promise<void> {
+    // Fetch pending entity IDs per-table to avoid stale data from earlier in the pull
+    const pendingEntityIds = await getPendingEntityIds();
+
     for (const remote of remoteRecords || []) {
       // Skip recently modified entities (protects against race conditions)
       // Note: We no longer skip entities with pending ops - conflict resolution handles them
@@ -729,7 +740,7 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   debugLog(`[SYNC] Pulled from server:`, pullSummary);
 
   // Apply changes to local DB with conflict handling
-  const entityTables = config.tables.map(t => db.table(t.dexieTable));
+  const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
   await db.transaction(
     'rw',
     [...entityTables, db.table('conflictHistory')],
@@ -739,7 +750,7 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
         await applyRemoteWithConflictResolution(
           tableNames[i],
           data,
-          db.table(config.tables[i].dexieTable)
+          db.table(getDexieTableFor(config.tables[i]))
         );
       }
     }
@@ -1454,7 +1465,7 @@ async function reconcileLocalWithRemote(): Promise<number> {
 
   for (const tableConfig of config.tables) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const allItems: any[] = await db.table(tableConfig.dexieTable).toArray();
+    const allItems: any[] = await db.table(getDexieTableFor(tableConfig)).toArray();
     for (const item of allItems) {
       if (item.updated_at && item.updated_at > cursor) {
         const { id: _id, ...payload } = item;
@@ -1503,7 +1514,7 @@ async function hydrateFromRemote(): Promise<void> {
   // Check if local DB has any data
   let hasLocalData = false;
   for (const table of config.tables) {
-    const count = await db.table(table.dexieTable).count();
+    const count = await db.table(getDexieTableFor(table)).count();
     if (count > 0) {
       hasLocalData = true;
       break;
@@ -1563,12 +1574,12 @@ async function hydrateFromRemote(): Promise<void> {
     }
 
     // Store everything locally
-    const entityTables = config.tables.map(t => db.table(t.dexieTable));
+    const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
     await db.transaction('rw', entityTables, async () => {
       for (let i = 0; i < config.tables.length; i++) {
         const data = results[i].data;
         if (data && data.length > 0) {
-          await db.table(config.tables[i].dexieTable).bulkPut(data);
+          await db.table(getDexieTableFor(config.tables[i])).bulkPut(data);
         }
       }
     });
@@ -1617,15 +1628,15 @@ async function cleanupLocalTombstones(): Promise<number> {
   let totalDeleted = 0;
 
   try {
-    const entityTables = config.tables.map(t => db.table(t.dexieTable));
+    const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
     await db.transaction('rw', entityTables, async () => {
       for (const tableConfig of config.tables) {
-        const table = db.table(tableConfig.dexieTable);
+        const table = db.table(getDexieTableFor(tableConfig));
         const count = await table
           .filter((item: Record<string, unknown>) => item.deleted === true && (item.updated_at as string) < cutoffStr)
           .delete();
         if (count > 0) {
-          debugLog(`[Tombstone] Cleaned ${count} old records from local ${tableConfig.dexieTable}`);
+          debugLog(`[Tombstone] Cleaned ${count} old records from local ${getDexieTableFor(tableConfig)}`);
           totalDeleted += count;
         }
       }
@@ -1725,7 +1736,7 @@ async function debugTombstones(options?: {
   let totalLocalEligible = 0;
 
   for (const tableConfig of config.tables) {
-    const table = db.table(tableConfig.dexieTable);
+    const table = db.table(getDexieTableFor(tableConfig));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allDeleted = await table.filter((item: any) => item.deleted === true).toArray();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1733,7 +1744,7 @@ async function debugTombstones(options?: {
 
     if (allDeleted.length > 0) {
       debugLog(
-        `  ${tableConfig.dexieTable}: ${allDeleted.length} tombstones (${eligible.length} eligible for cleanup)`
+        `  ${getDexieTableFor(tableConfig)}: ${allDeleted.length} tombstones (${eligible.length} eligible for cleanup)`
       );
       totalLocalTombstones += allDeleted.length;
       totalLocalEligible += eligible.length;
@@ -1891,7 +1902,7 @@ export async function startSyncEngine(): Promise<void> {
           startRealtimeSubscriptions(session.user.id);
         }
         // Run a sync to push any pending changes
-        runFullSync(false);
+        runFullSync(false).catch(e => debugError('[SYNC] Auth-triggered sync failed:', e));
       }
     }
 
@@ -1954,7 +1965,7 @@ export async function startSyncEngine(): Promise<void> {
         markAuthValidated();
         debugLog('[Engine] Auth validated on reconnect');
         // Trigger sync after successful auth validation
-        runFullSync(false);
+        runFullSync(false).catch(e => debugError('[SYNC] Reconnect sync failed:', e));
       } else {
         debugWarn('[Engine] Auth validation failed on reconnect');
         if (config.onAuthKicked) {
@@ -1990,7 +2001,7 @@ export async function startSyncEngine(): Promise<void> {
     if (timeSinceLastSync < getOnlineReconnectCooldownMs()) {
       debugLog(`[SYNC] Skipping online-reconnect sync (last sync ${Math.round(timeSinceLastSync / 1000)}s ago)`);
     } else {
-      runFullSync(false);
+      runFullSync(false).catch(e => debugError('[SYNC] Online-reconnect sync failed:', e));
     }
     // Always restart realtime subscriptions regardless of cooldown
     const userId = await getCurrentUserId();
@@ -2046,7 +2057,7 @@ export async function startSyncEngine(): Promise<void> {
       // Debounce to prevent rapid syncs when user quickly switches tabs
       visibilityDebounceTimeout = setTimeout(() => {
         visibilityDebounceTimeout = null;
-        runFullSync(true); // Quiet - no error shown if it fails
+        runFullSync(true).catch(e => debugError('[SYNC] Visibility sync failed:', e)); // Quiet - no error shown if it fails
       }, VISIBILITY_SYNC_DEBOUNCE_MS);
     }
   };
@@ -2087,7 +2098,7 @@ export async function startSyncEngine(): Promise<void> {
     // Only run periodic sync if tab is visible and online
     // Skip if realtime is healthy (reduces egress significantly)
     if (navigator.onLine && isTabVisible && !isRealtimeHealthy()) {
-      runFullSync(true); // Quiet background sync
+      runFullSync(true).catch(e => debugError('[SYNC] Periodic sync failed:', e)); // Quiet background sync
     }
 
     // Cleanup old tombstones, conflict history, failed sync items, and recently modified cache
@@ -2110,7 +2121,7 @@ export async function startSyncEngine(): Promise<void> {
 
   // Initial sync: hydrate if empty, otherwise push pending
   if (navigator.onLine) {
-    hydrateFromRemote();
+    hydrateFromRemote().catch(e => debugError('[SYNC] Initial hydration failed:', e));
   }
 
   // Run initial cleanup
@@ -2139,7 +2150,7 @@ export async function startSyncEngine(): Promise<void> {
       syncStatusStore.setStatus('idle');
       // Auto-retry after force-release
       if (navigator.onLine) {
-        runFullSync(true);
+        runFullSync(true).catch(e => debugError('[SYNC] Watchdog retry sync failed:', e));
       }
     }
   }, WATCHDOG_INTERVAL_MS);
@@ -2252,7 +2263,7 @@ export async function clearLocalCache(): Promise<void> {
   // Get user ID before clearing to remove their sync cursor
   const userId = await getCurrentUserId();
 
-  const entityTables = config.tables.map(t => db.table(t.dexieTable));
+  const entityTables = config.tables.map(t => db.table(getDexieTableFor(t)));
   const metaTables = [db.table('syncQueue'), db.table('conflictHistory')];
   await db.transaction('rw', [...entityTables, ...metaTables], async () => {
     for (const t of entityTables) {

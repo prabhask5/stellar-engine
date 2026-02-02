@@ -9,7 +9,8 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function validateSupabaseCredentials(
   url: string,
-  anonKey: string
+  anonKey: string,
+  testTable?: string
 ): Promise<{ valid: boolean; error?: string }> {
   try {
     new URL(url);
@@ -21,7 +22,7 @@ export async function validateSupabaseCredentials(
     const tempClient = createClient(url, anonKey);
 
     // Test REST API reachability by attempting a simple query
-    const { error } = await tempClient.from('focus_sessions').select('id').limit(1);
+    const { error } = await tempClient.from(testTable || '_health_check').select('id').limit(1);
 
     if (error) {
       // Bad credentials

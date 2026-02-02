@@ -147,19 +147,19 @@ export async function engineIncrement(table, id, field, amount, additionalFields
     const db = getDb();
     const dexieTable = getDexieTableName(table);
     const timestamp = now();
-    // Read current value
-    const current = await db.table(dexieTable).get(id);
-    if (!current)
-        return undefined;
-    const currentValue = current[field] || 0;
-    const newValue = currentValue + amount;
-    const updateFields = {
-        [field]: newValue,
-        updated_at: timestamp,
-        ...additionalFields
-    };
     let updated;
     await db.transaction('rw', [db.table(dexieTable), db.table('syncQueue')], async () => {
+        // Read current value inside transaction to prevent TOCTOU race
+        const current = await db.table(dexieTable).get(id);
+        if (!current)
+            return;
+        const currentValue = current[field] || 0;
+        const newValue = currentValue + amount;
+        const updateFields = {
+            [field]: newValue,
+            updated_at: timestamp,
+            ...additionalFields
+        };
         await db.table(dexieTable).update(id, updateFields);
         updated = await db.table(dexieTable).get(id);
         if (updated) {

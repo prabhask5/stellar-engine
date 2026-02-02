@@ -11,9 +11,9 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 | `@prabhask5/stellar-engine/auth` | Authentication functions |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions |
 | `@prabhask5/stellar-engine/types` | All type exports (including `Session` from Supabase) |
-| `@prabhask5/stellar-engine/utils` | Utility functions + debug |
+| `@prabhask5/stellar-engine/utils` | Utility functions + debug (`snakeToCamel`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
-| `@prabhask5/stellar-engine/config` | Runtime config |
+| `@prabhask5/stellar-engine/config` | Runtime config, `getDexieTableFor` |
 
 All exports are also available from the root `@prabhask5/stellar-engine` for backward compatibility.
 
@@ -66,7 +66,6 @@ initEngine({
   tables: [
     {
       supabaseName: 'tasks',
-      dexieTable: 'tasks',
       columns: 'id, user_id, name, completed, order, deleted, created_at, updated_at'
     }
   ],
@@ -109,7 +108,6 @@ interface SyncEngineConfig {
 ```ts
 interface TableConfig {
   supabaseName: string;                    // Supabase table name
-  dexieTable: string;                      // IndexedDB (Dexie) table name
   columns: string;                         // Supabase select columns
   ownershipFilter?: string;                // Column used for RLS ownership filtering
   isSingleton?: boolean;                   // One record per user (e.g., user settings)
@@ -118,6 +116,10 @@ interface TableConfig {
   onRemoteChange?: (table: string, record: Record<string, unknown>) => void;
 }
 ```
+
+The Dexie (IndexedDB) table name is **automatically derived** from `supabaseName` using `snakeToCamel()` conversion. For example, `supabaseName: 'goal_lists'` produces the Dexie table name `goalLists`. The `snakeToCamel()` function also strips invalid characters (non-alphanumeric except underscores) before converting. The `database.versions[].stores` config should use the camelCase names for IndexedDB index definitions.
+
+Use `getDexieTableFor(table)` (exported from `@prabhask5/stellar-engine/config`) to resolve the Dexie table name for a given Supabase table name at runtime.
 
 ---
 
@@ -901,6 +903,29 @@ interface AppConfig {
 }
 ```
 
+### `getDexieTableFor(table)`
+
+Resolve the Dexie (IndexedDB) table name for a given Supabase table name. Returns the camelCase name derived via `snakeToCamel()`.
+
+```ts
+function getDexieTableFor(table: string): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | `string` | The Supabase table name (e.g., `'goal_lists'`) |
+
+**Returns:** `string` -- The corresponding Dexie table name (e.g., `'goalLists'`).
+
+**Example:**
+
+```ts
+import { getDexieTableFor } from '@prabhask5/stellar-engine/config';
+
+getDexieTableFor('goal_lists'); // 'goalLists'
+getDexieTableFor('projects');   // 'projects'
+```
+
 ---
 
 ## Debug
@@ -961,6 +986,30 @@ function now(): string
 ```
 
 **Returns:** ISO timestamp string (e.g., `"2025-01-15T12:34:56.789Z"`).
+
+### `snakeToCamel(str)`
+
+Convert a `snake_case` string to `camelCase`. Also strips invalid characters (non-alphanumeric except underscores) before converting. Used internally to derive Dexie table names from `supabaseName`.
+
+```ts
+function snakeToCamel(str: string): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `str` | `string` | The snake_case string to convert |
+
+**Returns:** `string` -- The camelCase equivalent.
+
+**Examples:**
+
+```ts
+import { snakeToCamel } from '@prabhask5/stellar-engine/utils';
+
+snakeToCamel('goal_lists');    // 'goalLists'
+snakeToCamel('projects');      // 'projects'
+snakeToCamel('user_settings'); // 'userSettings'
+```
 
 ### `calculateNewOrder(items, fromIndex, toIndex)`
 

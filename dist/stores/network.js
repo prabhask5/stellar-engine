@@ -8,6 +8,7 @@ function createNetworkStore() {
     let wasOffline = false;
     let currentValue = true; // Track current value to prevent redundant updates
     let initialized = false; // Prevent double-initialization
+    let reconnectPending = false; // Prevent duplicate reconnect callbacks (iOS PWA fires both online + visibilitychange)
     function setIfChanged(value) {
         if (value !== currentValue) {
             currentValue = value;
@@ -50,11 +51,13 @@ function createNetworkStore() {
         // Listen for coming back online
         window.addEventListener('online', () => {
             setIfChanged(true);
-            // If we were offline, trigger reconnect callbacks
-            if (wasOffline) {
+            // If we were offline, trigger reconnect callbacks (guard against duplicate firing)
+            if (wasOffline && !reconnectPending) {
                 wasOffline = false;
+                reconnectPending = true;
                 // Small delay to ensure network is stable
                 setTimeout(() => {
+                    reconnectPending = false;
                     runCallbacksSequentially(reconnectCallbacks, 'Reconnect');
                 }, 500);
             }
@@ -64,10 +67,12 @@ function createNetworkStore() {
             if (document.visibilityState === 'visible') {
                 const nowOnline = navigator.onLine;
                 setIfChanged(nowOnline); // Only update if actually changed
-                // If we're coming back online after being hidden
-                if (nowOnline && wasOffline) {
+                // If we're coming back online after being hidden (guard against duplicate firing)
+                if (nowOnline && wasOffline && !reconnectPending) {
                     wasOffline = false;
+                    reconnectPending = true;
                     setTimeout(() => {
+                        reconnectPending = false;
                         runCallbacksSequentially(reconnectCallbacks, 'Reconnect');
                     }, 500);
                 }

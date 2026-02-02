@@ -39,7 +39,6 @@ initEngine({
   tables: [
     {
       supabaseName: 'projects',
-      dexieTable: 'projects',
       columns: 'id, name, created_at, updated_at, is_deleted, user_id',
     },
     // ...more tables
@@ -77,9 +76,9 @@ Import only what you need via subpath exports:
 | `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, etc.) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
 | `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, etc.) |
-| `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `debug`, etc.) |
+| `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
-| `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
+| `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
 
 The root export (`@prabhask5/stellar-engine`) re-exports everything for backward compatibility.
 
@@ -87,7 +86,7 @@ The root export (`@prabhask5/stellar-engine`) re-exports everything for backward
 
 **Supabase**
 
-Your Supabase project needs tables matching the `supabaseName` entries in your config. Each table should have at minimum:
+Your Supabase project needs tables matching the `supabaseName` entries in your config. The corresponding Dexie (IndexedDB) table name is automatically derived from `supabaseName` using `snakeToCamel()` conversion (e.g., `goal_lists` becomes `goalLists`). Each table should have at minimum:
 - `id` (uuid primary key)
 - `updated_at` (timestamptz) -- used as the sync cursor
 - `is_deleted` (boolean, default false) -- for soft-delete / tombstone support
@@ -97,7 +96,7 @@ Row-Level Security policies should scope reads and writes to the authenticated u
 
 **Dexie (IndexedDB)**
 
-When you provide a `database` config to `initEngine`, the engine creates and manages the Dexie instance for you. System tables (`syncQueue`, `conflictHistory`, `offlineCredentials`, `offlineSession`) are automatically merged into every schema version -- you only declare your application tables:
+When you provide a `database` config to `initEngine`, the engine creates and manages the Dexie instance for you. System tables (`syncQueue`, `conflictHistory`, `offlineCredentials`, `offlineSession`) are automatically merged into every schema version -- you only declare your application tables. Note that the store keys use the **camelCase** Dexie table names (auto-derived from `supabaseName` via `snakeToCamel()`):
 
 ```ts
 database: {
@@ -158,7 +157,7 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 |---|---|
 | `initEngine(config)` | Initialize the engine with table definitions, Supabase client, and Dexie instance. |
 | `getEngineConfig()` | Retrieve the current config (throws if not initialized). |
-| `SyncEngineConfig` / `TableConfig` | TypeScript interfaces for the config objects. |
+| `SyncEngineConfig` / `TableConfig` | TypeScript interfaces for the config objects. `TableConfig` uses `supabaseName` only; Dexie table names are auto-derived. |
 
 ### Engine lifecycle
 
@@ -252,6 +251,7 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `generateId()` | Generate a UUID. |
 | `now()` | Current ISO timestamp string. |
 | `calculateNewOrder(before, after)` | Fractional ordering helper for drag-and-drop reorder. |
+| `snakeToCamel(str)` | Convert a `snake_case` string to `camelCase` (also strips invalid characters). Used internally to derive Dexie table names from `supabaseName`. |
 | `getDeviceId()` | Stable per-device identifier (persisted in localStorage). |
 | `debugLog` / `debugWarn` / `debugError` | Prefixed console helpers (gated by `setDebugMode`). |
 

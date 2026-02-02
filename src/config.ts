@@ -1,11 +1,13 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
+import type { SingleUserGateType } from './types';
 import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { createDatabase, _setManagedDb, type DatabaseConfig } from './database';
+import { snakeToCamel } from './utils';
 
 export interface SyncEngineConfig {
   tables: TableConfig[];
@@ -19,6 +21,13 @@ export interface SyncEngineConfig {
   database?: DatabaseConfig;
 
   auth?: {
+    /** Auth mode: 'multi-user' (default) or 'single-user' (anonymous Supabase auth with local gate) */
+    mode?: 'multi-user' | 'single-user';
+    /** Single-user mode configuration */
+    singleUser?: {
+      gateType: SingleUserGateType;
+      codeLength?: 4 | 6; // required when gateType === 'code'
+    };
     profileExtractor?: (userMetadata: Record<string, unknown>) => Record<string, unknown>;
     profileToMetadata?: (profile: Record<string, unknown>) => Record<string, unknown>;
     enableOfflineAuth?: boolean;
@@ -42,7 +51,6 @@ export interface SyncEngineConfig {
 
 export interface TableConfig {
   supabaseName: string;
-  dexieTable: string;
   columns: string;
   ownershipFilter?: string;
   isSingleton?: boolean;
@@ -84,13 +92,21 @@ export function getEngineConfig(): SyncEngineConfig {
 
 
 /**
+ * Get the Dexie (IndexedDB) table name for a TableConfig entry.
+ * Derives from supabaseName via snake_case → camelCase conversion.
+ */
+export function getDexieTableFor(table: TableConfig): string {
+  return snakeToCamel(table.supabaseName);
+}
+
+/**
  * Get the Supabase-to-Dexie table mapping derived from config.
  */
 export function getTableMap(): Record<string, string> {
   const config = getEngineConfig();
   const map: Record<string, string> = {};
   for (const table of config.tables) {
-    map[table.supabaseName] = table.dexieTable;
+    map[table.supabaseName] = getDexieTableFor(table);
   }
   return map;
 }

@@ -7,6 +7,7 @@ import { getEngineConfig } from '../config';
 import type { OfflineCredentials } from '../types';
 import type { User, Session } from '@supabase/supabase-js';
 import { debugWarn, debugError } from '../debug';
+import { hashValue, isAlreadyHashed } from './crypto';
 
 const CREDENTIALS_ID = 'current_user';
 
@@ -34,11 +35,13 @@ export async function cacheOfflineCredentials(
     ? config.auth.profileExtractor(user.user_metadata || {})
     : (user.user_metadata || {});
 
+  const hashedPassword = await hashValue(password);
+
   const credentials: OfflineCredentials = {
     id: CREDENTIALS_ID,
     userId: user.id,
     email: email,
-    password: password,
+    password: hashedPassword,
     profile,
     cachedAt: new Date().toISOString()
   };
@@ -102,7 +105,18 @@ export async function verifyOfflineCredentials(
     return { valid: false, reason: 'no_stored_password' };
   }
 
-  if (credentials.password !== password) {
+  // Compare passwords: if stored password is hashed, hash the input and compare;
+  // if legacy plaintext, compare directly for backwards compatibility
+  let passwordMatch: boolean;
+  if (isAlreadyHashed(credentials.password)) {
+    const hashedInput = await hashValue(password);
+    passwordMatch = credentials.password === hashedInput;
+  } else {
+    // Legacy plaintext comparison
+    passwordMatch = credentials.password === password;
+  }
+
+  if (!passwordMatch) {
     debugWarn(
       '[Auth] Password mismatch (stored length:',
       credentials.password.length,
@@ -127,8 +141,9 @@ export async function updateOfflineCredentialsPassword(newPassword: string): Pro
   }
 
   const db = getEngineConfig().db!;
+  const hashedPassword = await hashValue(newPassword);
   await db.table('offlineCredentials').update(CREDENTIALS_ID, {
-    password: newPassword,
+    password: hashedPassword,
     cachedAt: new Date().toISOString()
   });
 }

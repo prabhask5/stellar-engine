@@ -42,6 +42,7 @@ export interface SyncOperationItem {
     value?: unknown;
     timestamp: string;
     retries: number;
+    lastRetryAt?: string;
 }
 export interface OfflineCredentials {
     id: string;
@@ -75,4 +76,15 @@ export interface ConflictHistoryEntry {
 }
 export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 export type AuthMode = 'supabase' | 'offline' | 'none';
+export type SingleUserGateType = 'code' | 'password';
+export interface SingleUserConfig {
+    id: string;
+    gateType: SingleUserGateType;
+    codeLength?: 4 | 6;
+    gateHash: string;
+    profile: Record<string, unknown>;
+    supabaseUserId?: string;
+    setupAt: string;
+    updatedAt: string;
+}
 //# sourceMappingURL=types.d.ts.map

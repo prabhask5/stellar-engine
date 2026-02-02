@@ -14,7 +14,7 @@ export declare function validateSupabaseCredentials(url: string, anonKey: string
  * Fires `SELECT id FROM <table> LIMIT 0` per table — returns zero rows (no data egress)
  * but validates the table exists and RLS allows access.
  *
- * If `auth.mode === 'single-user'`, also validates the `single_user_config` table.
+ * If device verification is enabled, also validates the `trusted_devices` table.
  */
 export declare function validateSchema(): Promise<{
     valid: boolean;

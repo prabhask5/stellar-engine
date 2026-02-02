@@ -18,7 +18,9 @@ export { isAdmin } from './auth/admin';
 // Offline login
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 // Single-user auth
-export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser } from './auth/singleUser';
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin } from './auth/singleUser';
+// Device verification
+export { isDeviceTrusted, trustCurrentDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';
 // Stores
 export { syncStatusStore } from './stores/sync';
 export { remoteChangesStore } from './stores/remoteChanges';

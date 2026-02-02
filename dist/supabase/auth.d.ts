@@ -3,6 +3,8 @@ export interface AuthResponse {
     user: User | null;
     session: Session | null;
     error: string | null;
+    deviceVerificationRequired?: boolean;
+    maskedEmail?: string;
 }
 export declare function signIn(email: string, password: string): Promise<AuthResponse>;
 export declare function signUp(email: string, password: string, profileData: Record<string, unknown>): Promise<AuthResponse>;

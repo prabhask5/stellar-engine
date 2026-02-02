@@ -81,10 +81,19 @@ export interface SingleUserConfig {
     id: string;
     gateType: SingleUserGateType;
     codeLength?: 4 | 6;
-    gateHash: string;
+    gateHash?: string;
+    email?: string;
     profile: Record<string, unknown>;
     supabaseUserId?: string;
     setupAt: string;
     updatedAt: string;
+}
+export interface TrustedDevice {
+    id: string;
+    userId: string;
+    deviceId: string;
+    deviceLabel?: string;
+    trustedAt: string;
+    lastUsedAt: string;
 }
 //# sourceMappingURL=types.d.ts.map

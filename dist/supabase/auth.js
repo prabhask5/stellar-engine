@@ -22,20 +22,41 @@ export async function signIn(email, password) {
         email,
         password
     });
+    if (error) {
+        return { user: data.user, session: data.session, error: error.message };
+    }
     // Cache credentials for offline use on successful login
-    if (!error && data.session && data.user) {
+    if (data.session && data.user) {
         try {
             await cacheOfflineCredentials(email, password, data.user, data.session);
         }
         catch (e) {
-            // Don't fail login if credential caching fails
             debugError('[Auth] Failed to cache offline credentials:', e);
+        }
+        // Check device verification for multi-user mode
+        const config = getEngineConfig();
+        if (config.auth?.deviceVerification?.enabled) {
+            const { isDeviceTrusted, touchTrustedDevice, sendDeviceVerification, maskEmail } = await import('../auth/deviceVerification');
+            const trusted = await isDeviceTrusted(data.user.id);
+            if (!trusted) {
+                // Untrusted device — sign out, send OTP
+                const maskedEmail = maskEmail(email);
+                await sendDeviceVerification(email);
+                return {
+                    user: data.user,
+                    session: null,
+                    error: null,
+                    deviceVerificationRequired: true,
+                    maskedEmail,
+                };
+            }
+            await touchTrustedDevice(data.user.id);
         }
     }
     return {
         user: data.user,
         session: data.session,
-        error: error?.message || null
+        error: null
     };
 }
 export async function signUp(email, password, profileData) {

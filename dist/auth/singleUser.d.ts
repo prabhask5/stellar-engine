@@ -1,11 +1,20 @@
 /**
  * Single-User Auth Module
  *
- * Implements a local gate (code or password) verified against a SHA-256 hash
- * stored in IndexedDB. Uses Supabase anonymous auth for session/token management
- * and RLS compliance. Falls back to offline auth when connectivity is unavailable.
+ * Uses Supabase email/password auth where the PIN *is* the password (padded).
+ * Replaces the previous anonymous auth + client-side SHA-256 hash approach.
+ *
+ * - Setup: signUp() with email + padded PIN
+ * - Unlock: signInWithPassword() with email + padded PIN
+ * - Device verification: signInWithOtp() for untrusted devices
+ * - Offline fallback: cached credentials in IndexedDB
  */
 import type { SingleUserConfig } from '../types';
+/**
+ * Pad a PIN to meet Supabase's minimum password length.
+ * e.g. "1234" → "1234_stellar" (12 chars, well above the 6-char minimum)
+ */
+export declare function padPin(pin: string): string;
 /**
  * Check if single-user mode has been set up (config exists in IndexedDB).
  */
@@ -18,18 +27,43 @@ export declare function getSingleUserInfo(): Promise<{
     profile: Record<string, unknown>;
     gateType: SingleUserConfig['gateType'];
     codeLength?: 4 | 6;
+    email?: string;
+    maskedEmail?: string;
 } | null>;
 /**
- * First-time setup: hash gate, create anonymous Supabase user (if online),
- * store config, and set auth state.
+ * First-time setup: create Supabase user with email/password auth.
+ *
+ * Uses signUp() which sends a confirmation email if emailConfirmation is enabled.
+ * The PIN is padded to meet Supabase's minimum password length.
+ *
+ * @returns confirmationRequired — true if the caller should show a "check your email" modal
  */
-export declare function setupSingleUser(gate: string, profile: Record<string, unknown>): Promise<{
+export declare function setupSingleUser(gate: string, profile: Record<string, unknown>, email: string): Promise<{
+    error: string | null;
+    confirmationRequired: boolean;
+}>;
+/**
+ * Complete setup after email confirmation succeeds.
+ * Called when the original tab receives AUTH_CONFIRMED via BroadcastChannel.
+ */
+export declare function completeSingleUserSetup(): Promise<{
     error: string | null;
 }>;
 /**
- * Unlock: verify gate hash, restore Supabase session or fall back to offline auth.
+ * Unlock: verify PIN via signInWithPassword, handle device verification.
+ *
+ * Returns deviceVerificationRequired if the device is untrusted.
  */
 export declare function unlockSingleUser(gate: string): Promise<{
+    error: string | null;
+    deviceVerificationRequired?: boolean;
+    maskedEmail?: string;
+}>;
+/**
+ * Complete device verification after OTP email link is clicked.
+ * Called when the original tab receives AUTH_CONFIRMED via BroadcastChannel.
+ */
+export declare function completeDeviceVerification(tokenHash?: string): Promise<{
     error: string | null;
 }>;
 /**
@@ -38,7 +72,7 @@ export declare function unlockSingleUser(gate: string): Promise<{
  */
 export declare function lockSingleUser(): Promise<void>;
 /**
- * Change the gate (code/password). Verifies old gate first.
+ * Change the gate (code/password). Verifies old gate via signInWithPassword.
  */
 export declare function changeSingleUserGate(oldGate: string, newGate: string): Promise<{
     error: string | null;

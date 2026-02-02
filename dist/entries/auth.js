@@ -3,5 +3,5 @@ export { signIn, signUp, signOut, changePassword, resendConfirmationEmail, getUs
 export { resolveAuthState } from '../auth/resolveAuthState';
 export { isAdmin } from '../auth/admin';
 export { signInOffline, getOfflineLoginInfo } from '../auth/offlineLogin';
-export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser } from '../auth/singleUser';
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin } from '../auth/singleUser';
 //# sourceMappingURL=auth.js.map

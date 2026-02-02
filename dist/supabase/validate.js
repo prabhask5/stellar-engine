@@ -44,14 +44,14 @@ export async function validateSupabaseCredentials(url, anonKey, testTable) {
  * Fires `SELECT id FROM <table> LIMIT 0` per table — returns zero rows (no data egress)
  * but validates the table exists and RLS allows access.
  *
- * If `auth.mode === 'single-user'`, also validates the `single_user_config` table.
+ * If device verification is enabled, also validates the `trusted_devices` table.
  */
 export async function validateSchema() {
     const config = getEngineConfig();
     const tableNames = config.tables.map(t => t.supabaseName);
-    // single-user mode requires the single_user_config table
-    if (config.auth?.mode === 'single-user') {
-        tableNames.push('single_user_config');
+    // device verification requires the trusted_devices table
+    if (config.auth?.deviceVerification?.enabled) {
+        tableNames.push('trusted_devices');
     }
     const missingTables = [];
     const errors = [];

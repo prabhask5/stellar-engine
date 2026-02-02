@@ -127,7 +127,10 @@ export async function setupSingleUser(
 
     // Build profile metadata for Supabase user_metadata
     const profileToMetadata = engineConfig.auth?.profileToMetadata;
-    const metadata = profileToMetadata ? profileToMetadata(profile) : profile;
+    const metadata = {
+      ...(profileToMetadata ? profileToMetadata(profile) : profile),
+      code_length: codeLength ?? 6,
+    };
 
     if (!isOffline) {
       // --- ONLINE SETUP ---
@@ -722,5 +725,175 @@ export async function resetSingleUser(): Promise<{ error: string | null }> {
   } catch (e) {
     debugError('[SingleUser] Reset error:', e);
     return { error: e instanceof Error ? e.message : 'Reset failed' };
+  }
+}
+
+// ============================================================
+// MULTI-DEVICE + EXTENSION SUPPORT
+// ============================================================
+
+/**
+ * Fetch remote gate config via the get_extension_config() RPC.
+ * Returns user info if a user exists in Supabase, null otherwise.
+ * Works without authentication (uses anon key).
+ */
+export async function fetchRemoteGateConfig(): Promise<{
+  email: string;
+  gateType: string;
+  codeLength: number;
+  profile: Record<string, unknown>;
+} | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_extension_config');
+    if (error) {
+      debugWarn('[SingleUser] fetchRemoteGateConfig RPC error:', error.message);
+      return null;
+    }
+    if (!data || !data.email) {
+      return null;
+    }
+    return {
+      email: data.email,
+      gateType: data.gateType || 'code',
+      codeLength: data.codeLength || 6,
+      profile: data.profile || {},
+    };
+  } catch (e) {
+    debugError('[SingleUser] fetchRemoteGateConfig error:', e);
+    return null;
+  }
+}
+
+/**
+ * Link a new device to an existing single-user account.
+ * Signs in with email + padded PIN, builds local config from user_metadata.
+ */
+export async function linkSingleUserDevice(
+  email: string,
+  pin: string
+): Promise<{ error: string | null; deviceVerificationRequired?: boolean; maskedEmail?: string }> {
+  try {
+    const engineConfig = getEngineConfig();
+    const singleUserOpts = engineConfig.auth?.singleUser;
+    const gateType = singleUserOpts?.gateType || 'code';
+    const codeLength = singleUserOpts?.codeLength;
+
+    const paddedPassword = padPin(pin);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password: paddedPassword,
+    });
+
+    if (error) {
+      debugWarn('[SingleUser] linkSingleUserDevice signIn failed:', error.message);
+      return { error: 'Incorrect code' };
+    }
+
+    const session = data.session!;
+    const user = data.user!;
+
+    // Build profile from user_metadata (reverse of profileToMetadata)
+    const profileExtractor = engineConfig.auth?.profileExtractor;
+    const userMeta = user.user_metadata || {};
+    const profile = profileExtractor ? profileExtractor(userMeta) : userMeta;
+
+    // Build and write local config
+    const gateHash = await hashValue(pin);
+    const now = new Date().toISOString();
+
+    const config: SingleUserConfig = {
+      id: CONFIG_ID,
+      gateType,
+      codeLength,
+      gateHash,
+      email,
+      profile,
+      supabaseUserId: user.id,
+      setupAt: now,
+      updatedAt: now,
+    };
+    await writeConfig(config);
+
+    // Check device verification
+    const deviceVerificationEnabled = engineConfig.auth?.deviceVerification?.enabled ?? false;
+    if (deviceVerificationEnabled) {
+      const trusted = await isDeviceTrusted(user.id);
+      if (!trusted) {
+        debugLog('[SingleUser] linkSingleUserDevice: untrusted device, sending OTP');
+        const { error: otpError } = await sendDeviceVerification(email);
+        if (otpError) {
+          debugError('[SingleUser] Failed to send device verification:', otpError);
+        }
+        return {
+          error: null,
+          deviceVerificationRequired: true,
+          maskedEmail: maskEmail(email),
+        };
+      }
+      await touchTrustedDevice(user.id);
+    }
+
+    // Cache offline credentials
+    try {
+      await cacheOfflineCredentials(email, pin, user, session);
+    } catch (e) {
+      debugWarn('[SingleUser] Failed to cache offline credentials on link:', e);
+    }
+
+    // Create offline session
+    try {
+      await createOfflineSession(user.id);
+    } catch (e) {
+      debugWarn('[SingleUser] Failed to create offline session on link:', e);
+    }
+
+    authState.setSupabaseAuth(session);
+    debugLog('[SingleUser] Device linked successfully, userId:', user.id);
+
+    return { error: null };
+  } catch (e) {
+    debugError('[SingleUser] linkSingleUserDevice error:', e);
+    return { error: e instanceof Error ? e.message : 'Failed to link device' };
+  }
+}
+
+/**
+ * Reset the remote single user via the reset_single_user() RPC.
+ * Also clears all local auth state (IndexedDB + localStorage).
+ */
+export async function resetSingleUserRemote(): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase.rpc('reset_single_user');
+    if (error) {
+      debugError('[SingleUser] resetSingleUserRemote RPC error:', error.message);
+      return { error: error.message };
+    }
+
+    // Clear local IndexedDB state
+    try {
+      const db = getDb();
+      await db.table('singleUserConfig').delete(CONFIG_ID);
+      await db.table('offlineCredentials').delete('current_user');
+      await db.table('offlineSession').delete('current_session');
+    } catch (e) {
+      debugWarn('[SingleUser] Failed to clear local state on remote reset:', e);
+    }
+
+    // Clear Supabase session from localStorage
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'));
+        keys.forEach((k) => localStorage.removeItem(k));
+      }
+    } catch {
+      // Ignore storage errors
+    }
+
+    debugLog('[SingleUser] Remote reset complete');
+    return { error: null };
+  } catch (e) {
+    debugError('[SingleUser] resetSingleUserRemote error:', e);
+    return { error: e instanceof Error ? e.message : 'Remote reset failed' };
   }
 }

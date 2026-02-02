@@ -11,6 +11,7 @@ import type { OfflineCredentials, SingleUserConfig } from '../types';
 import { getSession, isSessionExpired } from '../supabase/auth';
 import { getValidOfflineSession, clearOfflineSession } from './offlineSession';
 import { getOfflineCredentials } from './offlineCredentials';
+import { resetSingleUserRemote } from './singleUser';
 import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
@@ -134,6 +135,27 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
         await db.table('offlineSession').delete('current_session');
       } catch (e) {
         debugWarn('[Auth] Failed to clear legacy auth state:', e);
+      }
+      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    }
+
+    // codeLength migration: if stored config has a different codeLength than engine config,
+    // the user needs to re-setup with the new PIN length.
+    const expectedCodeLength = getEngineConfig().auth?.singleUser?.codeLength;
+    if (expectedCodeLength && config.codeLength && config.codeLength !== expectedCodeLength) {
+      debugLog('[Auth] codeLength mismatch detected:', config.codeLength, '→', expectedCodeLength);
+      try {
+        await resetSingleUserRemote();
+      } catch (e) {
+        debugWarn('[Auth] Failed to reset remote single user:', e);
+      }
+      // Clear local state
+      try {
+        await db.table('singleUserConfig').delete('config');
+        await db.table('offlineCredentials').delete('current_user');
+        await db.table('offlineSession').delete('current_session');
+      } catch (e) {
+        debugWarn('[Auth] Failed to clear local auth state:', e);
       }
       return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
     }

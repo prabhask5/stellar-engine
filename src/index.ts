@@ -32,7 +32,7 @@ export { isAdmin } from './auth/admin';
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 
 // Single-user auth
-export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange } from './auth/singleUser';
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from './auth/singleUser';
 
 // Device verification
 export { isDeviceTrusted, trustCurrentDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';

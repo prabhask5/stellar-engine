@@ -32,6 +32,7 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Admin](#admin)
 - [Offline Login](#offline-login)
 - [Single-User Auth](#single-user-auth)
+- [Device Verification](#device-verification)
 - [Stores](#stores)
 - [Realtime](#realtime)
 - [Supabase Client](#supabase-client)
@@ -246,7 +247,7 @@ async function validateSupabaseCredentials(
 
 > **Subpath:** `@prabhask5/stellar-engine` (root)
 
-Validates that all configured Supabase tables exist and are accessible. Runs `SELECT id FROM <table> LIMIT 0` per table (zero data egress). If `auth.mode === 'single-user'`, also validates the `single_user_config` table. Called automatically by `startSyncEngine()` on first run when online — can also be called manually.
+Validates that all configured Supabase tables exist and are accessible. Runs `SELECT id FROM <table> LIMIT 0` per table (zero data egress). If `auth.deviceVerification?.enabled`, also validates the `trusted_devices` table. Called automatically by `startSyncEngine()` on first run when online — can also be called manually.
 
 ```ts
 async function validateSchema(): Promise<{
@@ -708,13 +709,13 @@ async function getOfflineLoginInfo(): Promise<{
 
 ## Single-User Auth
 
-Single-user mode replaces email/password authentication with a local gate (PIN code or password) verified against a SHA-256 hash stored in IndexedDB. Behind the scenes, the engine uses Supabase anonymous auth (`signInAnonymously()`) to obtain a real user ID for Row-Level Security compliance. The gate is purely a local access control mechanism — Supabase never sees the code or password.
+Single-user mode uses **real Supabase email/password auth** where the user provides an email during setup and a PIN code (or password) that is padded and used as the Supabase password. The PIN is verified server-side by Supabase — no client-side hash comparison. This gives server-side rate limiting, real user identity, and proper RLS enforcement.
 
-This mode is designed for personal apps where there is one user per device/deployment and no account creation or email verification is needed.
+This mode is designed for personal apps where there is one user per device/deployment.
 
 **Requirements:**
-- Enable **"Allow anonymous sign-ins"** in your Supabase project under Authentication > Settings.
-- Create a `single_user_config` table in Supabase (see README for full SQL). This table is used by the engine for multi-device config sync. The engine validates its existence on startup.
+- If `deviceVerification.enabled`, create a `trusted_devices` table in Supabase (see README for full SQL).
+- If `emailConfirmation.enabled`, configure Supabase email templates in your Supabase project under Authentication > Email Templates.
 
 **Configuration:**
 
@@ -724,7 +725,10 @@ initEngine({
   auth: {
     mode: 'single-user',
     singleUser: { gateType: 'code', codeLength: 4 },
+    emailConfirmation: { enabled: true },
+    deviceVerification: { enabled: true, trustDurationDays: 90 },
     enableOfflineAuth: true,
+    confirmRedirectPath: '/confirm',
     profileExtractor: (meta) => ({ firstName: meta.first_name, lastName: meta.last_name }),
     profileToMetadata: (p) => ({ first_name: p.firstName, last_name: p.lastName }),
   },
@@ -767,57 +771,54 @@ if (info) {
 }
 ```
 
-### `setupSingleUser(gate, profile)`
+### `setupSingleUser(gate, profile, email)`
 
-First-time setup. Hashes the gate value, creates an anonymous Supabase user (if online), stores the configuration in IndexedDB, and sets auth state.
+First-time setup. Calls `supabase.auth.signUp()` with the email and padded PIN as password. Stores config in IndexedDB. If `emailConfirmation.enabled`, returns `{ confirmationRequired: true }` — the app should show a confirmation modal.
 
 ```ts
 async function setupSingleUser(
   gate: string,
-  profile: Record<string, unknown>
-): Promise<{ error: string | null }>
+  profile: Record<string, unknown>,
+  email: string
+): Promise<{ error: string | null; confirmationRequired: boolean }>
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `gate` | `string` | The PIN code or password |
 | `profile` | `Record<string, unknown>` | User profile (e.g., `{ firstName, lastName }`) |
-
-**Online flow:** Calls `signInAnonymously()`, writes profile to Supabase `user_metadata`, caches offline credentials, creates an offline session fallback, and sets `authMode: 'supabase'`.
-
-**Offline flow:** Stores config without a `supabaseUserId`, creates an offline session with a temporary UUID, and sets `authMode: 'offline'`. On next connectivity, the engine completes setup by calling `signInAnonymously()`.
+| `email` | `string` | Email address for Supabase email/password auth |
 
 **Example:**
 
 ```ts
 import { setupSingleUser } from '@prabhask5/stellar-engine/auth';
 
-const { error } = await setupSingleUser('1234', {
+const { error, confirmationRequired } = await setupSingleUser('1234', {
   firstName: 'Alice',
   lastName: 'Smith',
-});
+}, 'alice@example.com');
 if (error) console.error(error);
+if (confirmationRequired) {
+  // Show email confirmation modal
+}
 ```
 
 ### `unlockSingleUser(gate)`
 
-Unlock the app by verifying the gate against the stored hash. Restores the Supabase session or falls back to offline auth.
+Verify PIN via `supabase.auth.signInWithPassword()`. If `deviceVerification.enabled` and the current device is not trusted, signs out and sends OTP, returning `{ deviceVerificationRequired: true, maskedEmail }`. Falls back to offline hash verification when offline.
 
 ```ts
 async function unlockSingleUser(
   gate: string
-): Promise<{ error: string | null }>
+): Promise<{ error: string | null; deviceVerificationRequired?: boolean; maskedEmail?: string }>
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `gate` | `string` | The PIN code or password to verify |
 
-**Returns:** `{ error: null }` on success, or `{ error: string }` if the gate is incorrect or setup is incomplete.
-
-**Online flow:** Verifies gate hash, restores existing Supabase session or creates a new anonymous session, sets `authMode: 'supabase'`.
-
-**Offline flow:** Verifies gate hash, checks for a cached Supabase session in localStorage, falls back to offline session if none available, sets `authMode: 'supabase'` or `'offline'`.
+**Returns:** `{ error: null }` on success, or `{ error: string }` if the gate is incorrect or setup is incomplete. If device verification is required, returns `{ deviceVerificationRequired: true, maskedEmail }` instead of completing sign-in.
 
 ### `lockSingleUser()`
 
@@ -838,7 +839,7 @@ await lockSingleUser();
 
 ### `changeSingleUserGate(oldGate, newGate)`
 
-Change the gate (code or password). Verifies the old gate first.
+Change the gate (code or password). Uses `signInWithPassword()` to verify the old gate and `supabase.auth.updateUser()` to change the password.
 
 ```ts
 async function changeSingleUserGate(
@@ -874,6 +875,115 @@ Full reset: clears the single-user config from IndexedDB, signs out of Supabase,
 
 ```ts
 async function resetSingleUser(): Promise<{ error: string | null }>
+```
+
+### `completeSingleUserSetup()`
+
+Called after email confirmation succeeds (e.g., when the confirm page broadcasts `AUTH_CONFIRMED`).
+
+```ts
+async function completeSingleUserSetup(): Promise<{ error: string | null }>
+```
+
+### `completeDeviceVerification(tokenHash?)`
+
+Called after device OTP verification succeeds. Trusts the current device and restores auth state.
+
+```ts
+async function completeDeviceVerification(
+  tokenHash?: string
+): Promise<{ error: string | null }>
+```
+
+### `padPin(pin)`
+
+Pad a PIN to meet Supabase's minimum password length. Must match across all clients (app + extension).
+
+```ts
+function padPin(pin: string): string
+```
+
+---
+
+## Device Verification
+
+Optional device trust system that requires email OTP verification on untrusted devices. Enable via `auth.deviceVerification.enabled`.
+
+### `isDeviceTrusted(userId)`
+
+```ts
+async function isDeviceTrusted(userId: string): Promise<boolean>
+```
+
+### `trustCurrentDevice(userId)`
+
+```ts
+async function trustCurrentDevice(userId: string): Promise<void>
+```
+
+### `getTrustedDevices(userId)`
+
+```ts
+async function getTrustedDevices(userId: string): Promise<TrustedDevice[]>
+```
+
+### `removeTrustedDevice(id)`
+
+```ts
+async function removeTrustedDevice(id: string): Promise<void>
+```
+
+### `sendDeviceVerification(email)`
+
+Sign out and send OTP to the email for device verification.
+
+```ts
+async function sendDeviceVerification(email: string): Promise<{ error: string | null }>
+```
+
+### `verifyDeviceCode(tokenHash)`
+
+Verify an OTP token for device verification.
+
+```ts
+async function verifyDeviceCode(tokenHash: string): Promise<{ error: string | null }>
+```
+
+### `maskEmail(email)`
+
+Mask an email for display (e.g., "pr••••@gmail.com").
+
+```ts
+function maskEmail(email: string): string
+```
+
+### `getDeviceLabel()`
+
+Get a human-readable label for the current device (e.g., "Chrome on macOS").
+
+```ts
+function getDeviceLabel(): string
+```
+
+### `getCurrentDeviceId()`
+
+Get the current device's stable ID.
+
+```ts
+function getCurrentDeviceId(): string
+```
+
+### `TrustedDevice`
+
+```ts
+interface TrustedDevice {
+  id: string;
+  userId: string;
+  deviceId: string;
+  deviceLabel: string | null;
+  trustedAt: string;
+  lastUsedAt: string;
+}
 ```
 
 ---
@@ -1458,10 +1568,11 @@ interface SingleUserConfig {
   id: string;                          // Always 'config' (singleton)
   gateType: SingleUserGateType;        // 'code' or 'password'
   codeLength?: 4 | 6;                  // Only when gateType is 'code'
-  gateHash: string;                    // SHA-256 hex of the gate value
-  profile: Record<string, unknown>;    // App-specific profile (e.g., { firstName, lastName })
-  supabaseUserId?: string;             // Anonymous user ID (set after first online setup)
-  setupAt: string;                     // ISO timestamp of initial setup
-  updatedAt: string;                   // ISO timestamp of last update
+  gateHash?: string;                   // SHA-256 hex (deprecated — kept for offline fallback)
+  email?: string;                      // Real email for Supabase email/password auth
+  profile: Record<string, unknown>;    // App-specific profile
+  supabaseUserId?: string;             // User ID (set after first online setup)
+  setupAt: string;
+  updatedAt: string;
 }
 ```

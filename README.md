@@ -13,7 +13,7 @@ A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** 
 - **Intent-based sync operations** -- operations preserve intent (`increment`, `set`, `create`, `delete`) instead of just final state, enabling smarter coalescing and conflict handling.
 - **Three-tier conflict resolution** -- field-level diffing, numeric merge fields, and configurable exclusion lists let you resolve conflicts precisely rather than with blanket last-write-wins.
 - **Offline authentication** -- credential caching and offline session tokens let users sign in and work without connectivity; sessions reconcile automatically on reconnect.
-- **Single-user auth mode** -- for personal apps, replace email/password with a local PIN code or password gate backed by Supabase anonymous auth. Setup, unlock, lock, and gate change are all handled by the engine with full offline support.
+- **Single-user auth mode** -- for personal apps, use a simplified PIN code or password gate backed by real Supabase email/password auth. The user provides an email during setup; the PIN is padded to meet Supabase's minimum password length and verified server-side. Setup, unlock, lock, and gate change are all handled by the engine with full offline support.
 - **Realtime subscriptions** -- Supabase Realtime channels push remote changes into local state instantly, with duplicate-delivery guards to prevent re-processing.
 - **Operation coalescing** -- batches of rapid local writes (e.g., 50 individual increments) are compressed into a single outbound operation, reducing sync traffic dramatically.
 - **Tombstone management** -- soft deletes are propagated cleanly, and stale tombstones are garbage-collected after a configurable retention period.
@@ -68,7 +68,7 @@ if (auth.authMode !== 'none') await startSyncEngine();
 
 ### Single-user mode
 
-For personal apps with a PIN code gate instead of email/password:
+For personal apps with a PIN code gate backed by real Supabase email/password auth:
 
 ```ts
 import { initEngine, startSyncEngine, supabase } from '@prabhask5/stellar-engine';
@@ -84,6 +84,8 @@ initEngine({
     mode: 'single-user',
     singleUser: { gateType: 'code', codeLength: 4 },
     enableOfflineAuth: true,
+    // emailConfirmation: { enabled: true },       // require email confirmation on setup
+    // deviceVerification: { enabled: true },       // require OTP verification on new devices
   },
 });
 
@@ -91,9 +93,13 @@ await initConfig();
 const auth = await resolveAuthState();
 
 if (!auth.singleUserSetUp) {
-  // Show setup screen → call setupSingleUser(code, profile)
+  // Show setup screen → call setupSingleUser(code, profile, email)
+  // Returns { error, confirmationRequired }
+  // If confirmationRequired, prompt user to check email then call completeSingleUserSetup()
 } else if (auth.authMode === 'none') {
   // Show unlock screen → call unlockSingleUser(code)
+  // Returns { error, deviceVerificationRequired?, maskedEmail? }
+  // If deviceVerificationRequired, prompt for OTP then call completeDeviceVerification(tokenHash?)
 } else {
   await startSyncEngine();
 }
@@ -107,7 +113,7 @@ Import only what you need via subpath exports:
 |---|---|
 | `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials`, `validateSchema` |
 | `@prabhask5/stellar-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
-| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, etc.) |
+| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, `completeSingleUserSetup`, `completeDeviceVerification`, `padPin`, etc.) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
 | `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, `SingleUserConfig`, etc.) |
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
@@ -130,34 +136,28 @@ Row-Level Security policies should scope reads and writes to the authenticated u
 
 **Single-user mode additional requirements:**
 
-Single-user mode requires a `single_user_config` table in Supabase for multi-device config sync:
+Single-user mode uses real Supabase email/password auth where the PIN is padded to meet Supabase's minimum password length. The user provides an email during setup, and the PIN is verified server-side.
+
+If `deviceVerification` is enabled in the auth config, you need a `trusted_devices` table:
 
 ```sql
-CREATE TABLE single_user_config (
+CREATE TABLE trusted_devices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  gate_type text NOT NULL DEFAULT 'code',
-  code_length integer,
-  gate_hash text NOT NULL,
-  profile jsonb NOT NULL DEFAULT '{}',
-  setup_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  is_deleted boolean NOT NULL DEFAULT false,
-  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  device_id text NOT NULL,
+  device_label text,
+  trusted_at timestamptz DEFAULT now() NOT NULL,
+  last_used_at timestamptz DEFAULT now() NOT NULL,
+  UNIQUE(user_id, device_id)
 );
-
--- Enable RLS
-ALTER TABLE single_user_config ENABLE ROW LEVEL SECURITY;
-
--- RLS policy: authenticated users (anonymous sessions) can manage their own row
-CREATE POLICY "Users can manage their own config"
-  ON single_user_config FOR ALL
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+ALTER TABLE trusted_devices ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own devices" ON trusted_devices FOR ALL
+  USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 ```
 
-You must also enable **"Allow anonymous sign-ins"** in your Supabase project under Authentication > Settings.
+If `emailConfirmation` is enabled, Supabase email templates must be configured.
 
-**Schema validation:** The engine automatically validates that all configured tables (and `single_user_config` in single-user mode) exist in Supabase on the first sync. Missing tables are reported via `syncStatusStore` and the debug console.
+**Schema validation:** The engine automatically validates that all configured tables (and `trusted_devices` when `deviceVerification.enabled`) exist in Supabase on the first sync. Missing tables are reported via `syncStatusStore` and the debug console.
 
 **Dexie (IndexedDB)**
 
@@ -260,18 +260,21 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 
 ### Single-user auth
 
-For personal apps that don't need email/password accounts. Uses a local PIN code or password gate with Supabase anonymous auth behind the scenes. Enable by setting `auth.mode: 'single-user'` in the engine config. Requires "Allow anonymous sign-ins" enabled in Supabase Authentication settings.
+For personal apps that use a simplified PIN or password gate. Uses real Supabase email/password auth where the PIN is padded to meet minimum password length. Enable by setting `auth.mode: 'single-user'` in the engine config.
 
 | Export | Description |
 |---|---|
 | `isSingleUserSetUp()` | Check if initial setup is complete. |
 | `getSingleUserInfo()` | Get display info (profile, gate type) for the unlock screen. |
-| `setupSingleUser(gate, profile)` | First-time setup: create gate, anonymous Supabase user, and store config. |
-| `unlockSingleUser(gate)` | Verify gate and restore session (online or offline). |
+| `setupSingleUser(gate, profile, email)` | First-time setup: create gate, Supabase email/password user, and store config. Returns `{ error, confirmationRequired }`. |
+| `unlockSingleUser(gate)` | Verify gate and restore session (online or offline). Returns `{ error, deviceVerificationRequired?, maskedEmail? }`. |
+| `completeSingleUserSetup()` | Called after the user confirms their email (when `emailConfirmation` is enabled). |
+| `completeDeviceVerification(tokenHash?)` | Called after the user completes device OTP verification (when `deviceVerification` is enabled). |
 | `lockSingleUser()` | Stop sync and reset auth state without destroying data. |
 | `changeSingleUserGate(oldGate, newGate)` | Change the PIN code or password. |
 | `updateSingleUserProfile(profile)` | Update profile in IndexedDB and Supabase metadata. |
 | `resetSingleUser()` | Full reset: clear config, sign out, wipe local data. |
+| `padPin(pin)` | Pad a PIN to meet Supabase's minimum password length requirement. |
 
 ### Queue
 

@@ -32,7 +32,10 @@ export { isAdmin } from './auth/admin';
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 
 // Single-user auth
-export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser } from './auth/singleUser';
+export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, padPin } from './auth/singleUser';
+
+// Device verification
+export { isDeviceTrusted, trustCurrentDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';
 
 // Stores
 export { syncStatusStore } from './stores/sync';
@@ -62,7 +65,7 @@ export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 
 // Types
-export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType } from './types';
+export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice } from './types';
 
 // Re-export Session type from Supabase so consumers don't need a direct dependency
 export type { Session } from '@supabase/supabase-js';

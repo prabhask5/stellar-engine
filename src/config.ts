@@ -35,6 +35,15 @@ export interface SyncEngineConfig {
     confirmRedirectPath?: string;
     /** Check if a user has admin privileges */
     adminCheck?: (user: User | null) => boolean;
+    /** Device verification for untrusted devices (requires email OTP) */
+    deviceVerification?: {
+      enabled: boolean;
+      trustDurationDays?: number;  // default: 90
+    };
+    /** Whether signup requires email confirmation */
+    emailConfirmation?: {
+      enabled: boolean;
+    };
   };
 
   /** Called when Supabase auth state changes (SIGNED_IN, SIGNED_OUT, etc.) */

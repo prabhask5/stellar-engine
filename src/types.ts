@@ -104,9 +104,19 @@ export interface SingleUserConfig {
   id: string;                    // 'config' — singleton
   gateType: SingleUserGateType;
   codeLength?: 4 | 6;           // only when gateType === 'code'
-  gateHash: string;              // SHA-256 of the code/password
+  gateHash?: string;             // SHA-256 of the code/password (deprecated — kept for offline fallback)
+  email?: string;                // Real email for Supabase email/password auth
   profile: Record<string, unknown>; // { firstName, lastName }
-  supabaseUserId?: string;       // anonymous user's ID (set after first online setup)
+  supabaseUserId?: string;       // user's ID (set after first online setup)
   setupAt: string;               // ISO timestamp
   updatedAt: string;             // ISO timestamp
+}
+
+export interface TrustedDevice {
+  id: string;
+  userId: string;
+  deviceId: string;
+  deviceLabel?: string;
+  trustedAt: string;
+  lastUsedAt: string;
 }

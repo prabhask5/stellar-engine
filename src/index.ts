@@ -68,4 +68,4 @@ export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSessi
 export type { Session } from '@supabase/supabase-js';
 
 // Supabase credential validation (server-side setup flows)
-export { validateSupabaseCredentials } from './supabase/validate';
+export { validateSupabaseCredentials, validateSchema } from './supabase/validate';

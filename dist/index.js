@@ -37,5 +37,5 @@ export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 // Svelte actions
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 // Supabase credential validation (server-side setup flows)
-export { validateSupabaseCredentials } from './supabase/validate';
+export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
 //# sourceMappingURL=index.js.map

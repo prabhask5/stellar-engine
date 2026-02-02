@@ -29,5 +29,5 @@ export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType } from './types';
 export type { Session } from '@supabase/supabase-js';
-export { validateSupabaseCredentials } from './supabase/validate';
+export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
 //# sourceMappingURL=index.d.ts.map

@@ -10,6 +10,7 @@ import { getSession } from './supabase/auth';
 import { supabase as supabaseProxy } from './supabase/client';
 import { getOfflineCredentials } from './auth/offlineCredentials';
 import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
+import { validateSchema } from './supabase/validate';
 // ============================================================
 // LOCAL-FIRST SYNC ENGINE
 //
@@ -68,6 +69,7 @@ function getPrefix() {
 // Track if we were recently offline (for auth validation on reconnect)
 let wasOffline = false;
 let authValidatedAfterReconnect = true; // Start as true (no validation needed initially)
+let _schemaValidated = false; // One-time schema validation flag
 /**
  * Clear all pending sync operations (used when auth is invalid)
  * SECURITY: Called when offline credentials are found to be invalid
@@ -1761,6 +1763,21 @@ export async function startSyncEngine() {
             syncStatusStore.setSyncMessage(`${failedResult.count} change(s) failed to sync`);
         }
     }, getSyncIntervalMs());
+    // One-time schema validation (only when online, only first run)
+    if (navigator.onLine && !_schemaValidated) {
+        _schemaValidated = true;
+        validateSchema().then(result => {
+            if (!result.valid) {
+                const msg = `Missing or inaccessible Supabase tables: ${result.missingTables.length > 0 ? result.missingTables.join(', ') : 'see errors'}`;
+                debugError('[SYNC]', msg);
+                for (const err of result.errors) {
+                    debugError('[SYNC]', err);
+                }
+                syncStatusStore.setStatus('error');
+                syncStatusStore.setError(msg, 'Create the required tables in your Supabase project. See stellar-engine README for the required SQL schema.');
+            }
+        }).catch(() => { });
+    }
     // Initial sync: hydrate if empty, otherwise push pending
     if (navigator.onLine) {
         hydrateFromRemote().catch(e => debugError('[SYNC] Initial hydration failed:', e));
@@ -1883,6 +1900,7 @@ export async function stopSyncEngine() {
     }
     releaseSyncLock();
     _hasHydrated = false;
+    _schemaValidated = false;
 }
 // Clear local cache (for logout)
 export async function clearLocalCache() {

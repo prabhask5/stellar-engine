@@ -105,7 +105,7 @@ Import only what you need via subpath exports:
 
 | Subpath | Contents |
 |---|---|
-| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
+| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials`, `validateSchema` |
 | `@prabhask5/stellar-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
 | `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, etc.) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
@@ -127,6 +127,37 @@ Your Supabase project needs tables matching the `supabaseName` entries in your c
 - An ownership column (e.g., `user_id`) if you use `ownershipFilter`
 
 Row-Level Security policies should scope reads and writes to the authenticated user.
+
+**Single-user mode additional requirements:**
+
+Single-user mode requires a `single_user_config` table in Supabase for multi-device config sync:
+
+```sql
+CREATE TABLE single_user_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  gate_type text NOT NULL DEFAULT 'code',
+  code_length integer,
+  gate_hash text NOT NULL,
+  profile jsonb NOT NULL DEFAULT '{}',
+  setup_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  is_deleted boolean NOT NULL DEFAULT false,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+-- Enable RLS
+ALTER TABLE single_user_config ENABLE ROW LEVEL SECURITY;
+
+-- RLS policy: authenticated users (anonymous sessions) can manage their own row
+CREATE POLICY "Users can manage their own config"
+  ON single_user_config FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+```
+
+You must also enable **"Allow anonymous sign-ins"** in your Supabase project under Authentication > Settings.
+
+**Schema validation:** The engine automatically validates that all configured tables (and `single_user_config` in single-user mode) exist in Supabase on the first sync. Missing tables are reported via `syncStatusStore` and the debug console.
 
 **Dexie (IndexedDB)**
 

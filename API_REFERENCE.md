@@ -166,7 +166,7 @@ interface DatabaseVersionConfig {
 
 ### `startSyncEngine()`
 
-Start the sync engine. Sets up event listeners for online/offline, visibility changes, periodic sync, realtime subscriptions, and initial data hydration. Safe to call multiple times (cleans up previous listeners).
+Start the sync engine. Sets up event listeners for online/offline, visibility changes, periodic sync, realtime subscriptions, and initial data hydration. Safe to call multiple times (cleans up previous listeners). On first call (when online), runs one-time schema validation via `validateSchema()`.
 
 ```ts
 async function startSyncEngine(): Promise<void>
@@ -241,6 +241,24 @@ async function validateSupabaseCredentials(
 | `anonKey` | `string` | Supabase anonymous key |
 
 **Returns:** `{ valid: true }` if credentials work, or `{ valid: false, error: string }`.
+
+### `validateSchema()`
+
+> **Subpath:** `@prabhask5/stellar-engine` (root)
+
+Validates that all configured Supabase tables exist and are accessible. Runs `SELECT id FROM <table> LIMIT 0` per table (zero data egress). If `auth.mode === 'single-user'`, also validates the `single_user_config` table. Called automatically by `startSyncEngine()` on first run when online — can also be called manually.
+
+```ts
+async function validateSchema(): Promise<{
+  valid: boolean;
+  missingTables: string[];
+  errors: string[];
+}>
+```
+
+**Returns:** `{ valid: true, missingTables: [], errors: [] }` if all tables are accessible. Otherwise, `valid` is `false` and `missingTables` lists tables that don't exist, while `errors` includes human-readable messages for all issues (missing tables, RLS denials, etc.).
+
+**Behavior:** Does not throw. Logs errors via the debug system. When called from `startSyncEngine()`, sets `syncStatusStore` to `'error'` with a descriptive message if validation fails.
 
 ---
 
@@ -694,7 +712,9 @@ Single-user mode replaces email/password authentication with a local gate (PIN c
 
 This mode is designed for personal apps where there is one user per device/deployment and no account creation or email verification is needed.
 
-**Requirements:** Enable "Allow anonymous sign-ins" in your Supabase project under Authentication > Settings.
+**Requirements:**
+- Enable **"Allow anonymous sign-ins"** in your Supabase project under Authentication > Settings.
+- Create a `single_user_config` table in Supabase (see README for full SQL). This table is used by the engine for multi-device config sync. The engine validates its existence on startup.
 
 **Configuration:**
 

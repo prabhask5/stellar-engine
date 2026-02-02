@@ -186,6 +186,12 @@ interface SingleUserConfig {
 
 The `supabaseUserId` is deferred when setup happens offline; it is populated on the first online unlock when an anonymous Supabase session is created.
 
+#### Supabase `single_user_config` Table
+
+In addition to the local IndexedDB table, single-user mode requires a corresponding **`single_user_config` table in Supabase**. This is an engine-managed table used for multi-device config synchronization — it allows the gate hash, profile, and gate type to remain in sync across devices sharing the same anonymous Supabase user.
+
+The engine treats `single_user_config` like any other synced table (push/pull via the outbox), but it is not listed in the app's `tables` config because it is internally managed. When `auth.mode === 'single-user'`, the engine automatically includes this table in schema validation at startup.
+
 ### 2.3 Shared Hash Utility
 
 **File**: `src/auth/crypto.ts`

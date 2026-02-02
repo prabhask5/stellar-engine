@@ -7,12 +7,13 @@
  */
 
 import type { Session } from '@supabase/supabase-js';
-import type { OfflineCredentials } from '../types';
+import type { OfflineCredentials, SingleUserConfig } from '../types';
 import { getSession, isSessionExpired } from '../supabase/auth';
 import { getValidOfflineSession, clearOfflineSession } from './offlineSession';
 import { getOfflineCredentials } from './offlineCredentials';
 import { getEngineConfig } from '../config';
-import { debugWarn, debugError } from '../debug';
+import { supabase } from '../supabase/client';
+import { debugLog, debugWarn, debugError } from '../debug';
 
 export interface AuthStateResult {
   session: Session | null;
@@ -107,7 +108,14 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
     }
 
-    const config = await db.table('singleUserConfig').get('config');
+    let config = await db.table('singleUserConfig').get('config') as SingleUserConfig | null;
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+
+    // Multi-device: if no local config but online, check Supabase
+    if (!config && !isOffline) {
+      config = await fetchAndCacheRemoteConfig(db);
+    }
+
     if (!config) {
       return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
     }
@@ -117,11 +125,13 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
     const hasValidSession = session && !isSessionExpired(session);
 
     if (hasValidSession) {
+      // Ensure Supabase single_user_config is populated (for existing users who
+      // set up before the Supabase write was added, and for extension access)
+      ensureRemoteConfig(config).catch(() => {});
       return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
     }
 
     // Check for offline session
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     if (isOffline) {
       // Even expired cached Supabase session is usable offline
       if (session) {
@@ -147,5 +157,79 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
   } catch (e) {
     debugError('[Auth] Failed to resolve single-user auth state:', e);
     return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+  }
+}
+
+/**
+ * Multi-device support: fetch config from Supabase and cache locally.
+ * Called when a new device has no local config but is online.
+ */
+async function fetchAndCacheRemoteConfig(db: import('dexie').default): Promise<SingleUserConfig | null> {
+  try {
+    // Need a session to query — sign in anonymously
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      const { error } = await supabase.auth.signInAnonymously();
+      if (error) {
+        debugWarn('[Auth] Anonymous sign-in failed during remote config fetch:', error.message);
+        return null;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('single_user_config')
+      .select('gate_type, code_length, gate_hash, profile')
+      .eq('id', 'config')
+      .single();
+
+    if (error || !data) return null;
+
+    const engineConfig = getEngineConfig();
+    const singleUserOpts = engineConfig.auth?.singleUser;
+
+    const config: SingleUserConfig = {
+      id: 'config',
+      gateType: data.gate_type as SingleUserConfig['gateType'],
+      codeLength: (data.code_length as 4 | 6) ?? singleUserOpts?.codeLength,
+      gateHash: data.gate_hash as string,
+      profile: (data.profile as Record<string, unknown>) || {},
+      setupAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    await db.table('singleUserConfig').put(config);
+    debugLog('[Auth] Fetched remote config and cached locally (multi-device)');
+    return config;
+  } catch (e) {
+    debugWarn('[Auth] Failed to fetch remote config:', e);
+    return null;
+  }
+}
+
+/**
+ * Ensure Supabase single_user_config is populated.
+ * Syncs from local IndexedDB if the Supabase row is missing.
+ */
+async function ensureRemoteConfig(config: SingleUserConfig): Promise<void> {
+  try {
+    const { data } = await supabase
+      .from('single_user_config')
+      .select('id')
+      .eq('id', 'config')
+      .single();
+
+    if (data) return; // Already exists
+
+    // Missing — sync from local
+    await supabase.from('single_user_config').upsert({
+      id: 'config',
+      gate_type: config.gateType,
+      code_length: config.codeLength,
+      gate_hash: config.gateHash,
+      profile: config.profile,
+    });
+    debugLog('[Auth] Synced local config to Supabase (ensureRemoteConfig)');
+  } catch (e) {
+    debugWarn('[Auth] Failed to ensure remote config:', e);
   }
 }

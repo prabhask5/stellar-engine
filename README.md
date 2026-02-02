@@ -13,6 +13,7 @@ A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** 
 - **Intent-based sync operations** -- operations preserve intent (`increment`, `set`, `create`, `delete`) instead of just final state, enabling smarter coalescing and conflict handling.
 - **Three-tier conflict resolution** -- field-level diffing, numeric merge fields, and configurable exclusion lists let you resolve conflicts precisely rather than with blanket last-write-wins.
 - **Offline authentication** -- credential caching and offline session tokens let users sign in and work without connectivity; sessions reconcile automatically on reconnect.
+- **Single-user auth mode** -- for personal apps, replace email/password with a local PIN code or password gate backed by Supabase anonymous auth. Setup, unlock, lock, and gate change are all handled by the engine with full offline support.
 - **Realtime subscriptions** -- Supabase Realtime channels push remote changes into local state instantly, with duplicate-delivery guards to prevent re-processing.
 - **Operation coalescing** -- batches of rapid local writes (e.g., 50 individual increments) are compressed into a single outbound operation, reducing sync traffic dramatically.
 - **Tombstone management** -- soft deletes are propagated cleanly, and stale tombstones are garbage-collected after a configurable retention period.
@@ -65,6 +66,39 @@ const auth = await resolveAuthState();
 if (auth.authMode !== 'none') await startSyncEngine();
 ```
 
+### Single-user mode
+
+For personal apps with a PIN code gate instead of email/password:
+
+```ts
+import { initEngine, startSyncEngine, supabase } from '@prabhask5/stellar-engine';
+import { initConfig } from '@prabhask5/stellar-engine/config';
+import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
+
+initEngine({
+  prefix: 'myapp',
+  supabase,
+  tables: [/* ... */],
+  database: {/* ... */},
+  auth: {
+    mode: 'single-user',
+    singleUser: { gateType: 'code', codeLength: 4 },
+    enableOfflineAuth: true,
+  },
+});
+
+await initConfig();
+const auth = await resolveAuthState();
+
+if (!auth.singleUserSetUp) {
+  // Show setup screen → call setupSingleUser(code, profile)
+} else if (auth.authMode === 'none') {
+  // Show unlock screen → call unlockSingleUser(code)
+} else {
+  await startSyncEngine();
+}
+```
+
 ## Subpath exports
 
 Import only what you need via subpath exports:
@@ -73,9 +107,9 @@ Import only what you need via subpath exports:
 |---|---|
 | `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials` |
 | `@prabhask5/stellar-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
-| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, etc.) |
+| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, etc.) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
-| `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, etc.) |
+| `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, `SingleUserConfig`, etc.) |
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
 | `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
@@ -96,7 +130,7 @@ Row-Level Security policies should scope reads and writes to the authenticated u
 
 **Dexie (IndexedDB)**
 
-When you provide a `database` config to `initEngine`, the engine creates and manages the Dexie instance for you. System tables (`syncQueue`, `conflictHistory`, `offlineCredentials`, `offlineSession`) are automatically merged into every schema version -- you only declare your application tables. Note that the store keys use the **camelCase** Dexie table names (auto-derived from `supabaseName` via `snakeToCamel()`):
+When you provide a `database` config to `initEngine`, the engine creates and manages the Dexie instance for you. System tables (`syncQueue`, `conflictHistory`, `offlineCredentials`, `offlineSession`, `singleUserConfig`) are automatically merged into every schema version -- you only declare your application tables. Note that the store keys use the **camelCase** Dexie table names (auto-derived from `supabaseName` via `snakeToCamel()`):
 
 ```ts
 database: {
@@ -192,6 +226,21 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 |---|---|
 | `cacheOfflineCredentials` / `getOfflineCredentials` / `verifyOfflineCredentials` / `clearOfflineCredentials` | Store and verify credentials locally for offline sign-in. |
 | `createOfflineSession` / `getValidOfflineSession` / `clearOfflineSession` | Manage offline session tokens in IndexedDB. |
+
+### Single-user auth
+
+For personal apps that don't need email/password accounts. Uses a local PIN code or password gate with Supabase anonymous auth behind the scenes. Enable by setting `auth.mode: 'single-user'` in the engine config. Requires "Allow anonymous sign-ins" enabled in Supabase Authentication settings.
+
+| Export | Description |
+|---|---|
+| `isSingleUserSetUp()` | Check if initial setup is complete. |
+| `getSingleUserInfo()` | Get display info (profile, gate type) for the unlock screen. |
+| `setupSingleUser(gate, profile)` | First-time setup: create gate, anonymous Supabase user, and store config. |
+| `unlockSingleUser(gate)` | Verify gate and restore session (online or offline). |
+| `lockSingleUser()` | Stop sync and reset auth state without destroying data. |
+| `changeSingleUserGate(oldGate, newGate)` | Change the PIN code or password. |
+| `updateSingleUserProfile(profile)` | Update profile in IndexedDB and Supabase metadata. |
+| `resetSingleUser()` | Full reset: clear config, sign out, wipe local data. |
 
 ### Queue
 

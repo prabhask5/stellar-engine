@@ -31,6 +31,7 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Auth Lifecycle](#auth-lifecycle)
 - [Admin](#admin)
 - [Offline Login](#offline-login)
+- [Single-User Auth](#single-user-auth)
 - [Stores](#stores)
 - [Realtime](#realtime)
 - [Supabase Client](#supabase-client)
@@ -86,6 +87,11 @@ interface SyncEngineConfig {
   supabase?: SupabaseClient;               // Pre-created Supabase client (backward compat)
   database?: DatabaseConfig;               // Engine creates and owns the Dexie instance
   auth?: {
+    mode?: 'multi-user' | 'single-user';   // Default: 'multi-user'
+    singleUser?: {                          // Required when mode is 'single-user'
+      gateType: SingleUserGateType;         // 'code' or 'password'
+      codeLength?: 4 | 6;                   // Required when gateType is 'code'
+    };
     profileExtractor?: (userMetadata: Record<string, unknown>) => Record<string, unknown>;
     profileToMetadata?: (profile: Record<string, unknown>) => Record<string, unknown>;
     enableOfflineAuth?: boolean;
@@ -623,8 +629,11 @@ interface AuthStateResult {
   session: Session | null;
   authMode: 'supabase' | 'offline' | 'none';
   offlineProfile: OfflineCredentials | null;
+  singleUserSetUp?: boolean;              // Only present when mode is 'single-user'
 }
 ```
+
+When `auth.mode` is `'single-user'`, the `singleUserSetUp` field indicates whether the user has completed initial setup. If `false`, the app should show a setup screen. If `true` and `authMode` is `'none'`, the user is locked and should see an unlock screen.
 
 ---
 
@@ -632,7 +641,7 @@ interface AuthStateResult {
 
 ### `isAdmin(user)`
 
-Check if a user has admin privileges. Delegates to `config.auth.adminCheck` if provided, otherwise returns `false`.
+Check if a user has admin privileges. In single-user mode (`auth.mode === 'single-user'`), always returns `true`. Otherwise delegates to `config.auth.adminCheck` if provided, or returns `false`.
 
 ```ts
 function isAdmin(user: User | null): boolean
@@ -675,6 +684,176 @@ async function getOfflineLoginInfo(): Promise<{
   firstName?: string;
   lastName?: string;
 } | null>
+```
+
+---
+
+## Single-User Auth
+
+Single-user mode replaces email/password authentication with a local gate (PIN code or password) verified against a SHA-256 hash stored in IndexedDB. Behind the scenes, the engine uses Supabase anonymous auth (`signInAnonymously()`) to obtain a real user ID for Row-Level Security compliance. The gate is purely a local access control mechanism — Supabase never sees the code or password.
+
+This mode is designed for personal apps where there is one user per device/deployment and no account creation or email verification is needed.
+
+**Requirements:** Enable "Allow anonymous sign-ins" in your Supabase project under Authentication > Settings.
+
+**Configuration:**
+
+```ts
+initEngine({
+  // ...
+  auth: {
+    mode: 'single-user',
+    singleUser: { gateType: 'code', codeLength: 4 },
+    enableOfflineAuth: true,
+    profileExtractor: (meta) => ({ firstName: meta.first_name, lastName: meta.last_name }),
+    profileToMetadata: (p) => ({ first_name: p.firstName, last_name: p.lastName }),
+  },
+});
+```
+
+### `isSingleUserSetUp()`
+
+Check if single-user mode has been set up (i.e., a `SingleUserConfig` record exists in IndexedDB).
+
+```ts
+async function isSingleUserSetUp(): Promise<boolean>
+```
+
+**Returns:** `true` if setup is complete, `false` otherwise.
+
+### `getSingleUserInfo()`
+
+Get non-sensitive display info about the configured single user. Returns `null` if not set up.
+
+```ts
+async function getSingleUserInfo(): Promise<{
+  profile: Record<string, unknown>;
+  gateType: SingleUserGateType;
+  codeLength?: 4 | 6;
+} | null>
+```
+
+**Returns:** Profile data and gate configuration, or `null`.
+
+**Example:**
+
+```ts
+import { getSingleUserInfo } from '@prabhask5/stellar-engine/auth';
+
+const info = await getSingleUserInfo();
+if (info) {
+  console.log(`Welcome back, ${info.profile.firstName}`);
+  // info.gateType === 'code', info.codeLength === 4
+}
+```
+
+### `setupSingleUser(gate, profile)`
+
+First-time setup. Hashes the gate value, creates an anonymous Supabase user (if online), stores the configuration in IndexedDB, and sets auth state.
+
+```ts
+async function setupSingleUser(
+  gate: string,
+  profile: Record<string, unknown>
+): Promise<{ error: string | null }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `gate` | `string` | The PIN code or password |
+| `profile` | `Record<string, unknown>` | User profile (e.g., `{ firstName, lastName }`) |
+
+**Online flow:** Calls `signInAnonymously()`, writes profile to Supabase `user_metadata`, caches offline credentials, creates an offline session fallback, and sets `authMode: 'supabase'`.
+
+**Offline flow:** Stores config without a `supabaseUserId`, creates an offline session with a temporary UUID, and sets `authMode: 'offline'`. On next connectivity, the engine completes setup by calling `signInAnonymously()`.
+
+**Example:**
+
+```ts
+import { setupSingleUser } from '@prabhask5/stellar-engine/auth';
+
+const { error } = await setupSingleUser('1234', {
+  firstName: 'Alice',
+  lastName: 'Smith',
+});
+if (error) console.error(error);
+```
+
+### `unlockSingleUser(gate)`
+
+Unlock the app by verifying the gate against the stored hash. Restores the Supabase session or falls back to offline auth.
+
+```ts
+async function unlockSingleUser(
+  gate: string
+): Promise<{ error: string | null }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `gate` | `string` | The PIN code or password to verify |
+
+**Returns:** `{ error: null }` on success, or `{ error: string }` if the gate is incorrect or setup is incomplete.
+
+**Online flow:** Verifies gate hash, restores existing Supabase session or creates a new anonymous session, sets `authMode: 'supabase'`.
+
+**Offline flow:** Verifies gate hash, checks for a cached Supabase session in localStorage, falls back to offline session if none available, sets `authMode: 'supabase'` or `'offline'`.
+
+### `lockSingleUser()`
+
+Lock the app. Stops the sync engine and resets auth state to `'none'`. Does **not** sign out of Supabase, destroy the session, or clear local data — so unlocking is fast.
+
+```ts
+async function lockSingleUser(): Promise<void>
+```
+
+**Example:**
+
+```ts
+import { lockSingleUser } from '@prabhask5/stellar-engine/auth';
+
+await lockSingleUser();
+// Redirect to login/unlock screen
+```
+
+### `changeSingleUserGate(oldGate, newGate)`
+
+Change the gate (code or password). Verifies the old gate first.
+
+```ts
+async function changeSingleUserGate(
+  oldGate: string,
+  newGate: string
+): Promise<{ error: string | null }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `oldGate` | `string` | Current code or password |
+| `newGate` | `string` | New code or password |
+
+**Returns:** `{ error: null }` on success, or `{ error: string }` if the old gate is incorrect.
+
+### `updateSingleUserProfile(profile)`
+
+Update the user's profile in IndexedDB and Supabase `user_metadata`.
+
+```ts
+async function updateSingleUserProfile(
+  profile: Record<string, unknown>
+): Promise<{ error: string | null }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `profile` | `Record<string, unknown>` | Updated profile fields (e.g., `{ firstName, lastName }`) |
+
+### `resetSingleUser()`
+
+Full reset: clears the single-user config from IndexedDB, signs out of Supabase, and clears all local data. After reset, the app should show the setup screen again.
+
+```ts
+async function resetSingleUser(): Promise<{ error: string | null }>
 ```
 
 ---
@@ -1242,4 +1421,27 @@ type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 
 ```ts
 type AuthMode = 'supabase' | 'offline' | 'none';
+```
+
+### `SingleUserGateType`
+
+```ts
+type SingleUserGateType = 'code' | 'password';
+```
+
+### `SingleUserConfig`
+
+Configuration record stored in IndexedDB for single-user mode. Singleton with `id: 'config'`.
+
+```ts
+interface SingleUserConfig {
+  id: string;                          // Always 'config' (singleton)
+  gateType: SingleUserGateType;        // 'code' or 'password'
+  codeLength?: 4 | 6;                  // Only when gateType is 'code'
+  gateHash: string;                    // SHA-256 hex of the gate value
+  profile: Record<string, unknown>;    // App-specific profile (e.g., { firstName, lastName })
+  supabaseUserId?: string;             // Anonymous user ID (set after first online setup)
+  setupAt: string;                     // ISO timestamp of initial setup
+  updatedAt: string;                   // ISO timestamp of last update
+}
 ```

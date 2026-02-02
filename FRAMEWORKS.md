@@ -26,13 +26,14 @@ Dexie.js is a wrapper library around IndexedDB that provides a friendlier API. R
 
 ### System Tables Used by the Engine
 
-The engine requires four system tables in the consumer application's Dexie database. These are local-only and never synced to the server:
+The engine requires five system tables in the consumer application's Dexie database. These are local-only and never synced to the server:
 
 | Table | Schema | Purpose |
 |-------|--------|---------|
 | `syncQueue` | `++id, table, entityId, timestamp` | **Outbox** for pending sync operations. Auto-incrementing ID ensures FIFO ordering. Stores intent-based operations (create/set/increment/delete) that are pushed to the server in background. |
 | `offlineCredentials` | `id` | **Singleton** (`id = 'current_user'`). Caches user email, password, and profile for offline login and reconnect credential validation. |
 | `offlineSession` | `id` | **Singleton** (`id = 'current_session'`). Stores an offline session token (UUID) so the app can authenticate users locally when the network is unavailable. |
+| `singleUserConfig` | `id` | **Singleton** (`id = 'config'`). Stores single-user mode configuration: gate hash (SHA-256), gate type, profile, and Supabase anonymous user ID. Only used when `auth.mode` is `'single-user'`. |
 | `conflictHistory` | `++id, entityId, entityType, timestamp` | **Diagnostic log** of field-level conflict resolutions. Records which fields conflicted, the local/remote values, the resolved value, and the strategy used. Automatically cleaned up after 30 days. |
 
 ### The Repository Pattern
@@ -75,7 +76,7 @@ The engine exports queue helpers for all four operation types:
 
 ### Schema Versioning
 
-The engine does not manage the consumer's Dexie schema versions. Consumer applications define their own `this.version(N).stores({...})` chain, including both their entity tables and the four system tables listed above. When adding a new entity table or modifying indexes, the consumer bumps the version number and provides an upgrade function. Dexie handles the migration automatically when the database is opened.
+The engine does not manage the consumer's Dexie schema versions. Consumer applications define their own `this.version(N).stores({...})` chain, including both their entity tables and the five system tables listed above. When adding a new entity table or modifying indexes, the consumer bumps the version number and provides an upgrade function. Dexie handles the migration automatically when the database is opened.
 
 ### Transactions
 
@@ -166,6 +167,7 @@ The engine provides a full auth module (`src/supabase/auth.ts`) with:
 - **Corrupted data cleanup** -- on startup, any malformed Supabase auth data in localStorage (keys starting with `sb-`) is detected and cleared. An unhandled rejection handler catches runtime auth errors and auto-recovers.
 - **iOS PWA detection** -- detects standalone mode (`navigator.standalone` or `display-mode: standalone` media query) and applies enhanced auth persistence. iOS can evict localStorage data when the PWA is backgrounded; the engine logs these events for debugging.
 - **Offline credential caching** -- on successful login, credentials are cached in IndexedDB (`offlineCredentials` table). On reconnect after offline use, credentials are re-validated before sync is allowed.
+- **Single-user anonymous auth** -- in single-user mode, the engine uses `signInAnonymously()` to get a real Supabase user ID for RLS compliance. The PIN code or password is verified locally against a SHA-256 hash in IndexedDB and is never sent to the server. Requires "Allow anonymous sign-ins" enabled in Supabase Authentication settings.
 - **Session management** -- `getSession()`, `isSessionExpired()`, offline session fallback from localStorage.
 - **Profile management** -- configurable `profileExtractor` and `profileToMetadata` functions in engine config for app-specific profile shapes.
 
@@ -493,6 +495,7 @@ The engine exports all public types from `src/index.ts` for consumer application
 - `SyncEngineConfig`, `TableConfig` -- engine initialization configuration
 - `SyncOperationItem`, `OperationType` -- outbox operation types
 - `OfflineCredentials`, `OfflineSession` -- offline auth types
+- `SingleUserConfig`, `SingleUserGateType` -- single-user mode types
 - `ConflictHistoryEntry` -- conflict resolution records
 - `SyncStatus`, `AuthMode` -- status enums
 - `AppConfig` -- runtime configuration shape

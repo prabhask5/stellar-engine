@@ -221,12 +221,19 @@ export async function removeTrustedDevice(id: string): Promise<void> {
 
 /**
  * Send a device verification OTP email.
- * Signs out first (untrusted device flow), then sends OTP.
+ *
+ * Keeps the session alive (needed for cross-device polling) and stores
+ * this device's ID in user_metadata so the confirm page can trust it.
  */
 export async function sendDeviceVerification(email: string): Promise<{ error: string | null }> {
   try {
-    // Sign out first — untrusted device should not retain a session
-    await supabase.auth.signOut();
+    // Store the pending device info in user_metadata so the confirm page
+    // can trust THIS device even if the link is opened on a different one.
+    const deviceId = getDeviceId();
+    const deviceLabel = getDeviceLabel();
+    await supabase.auth.updateUser({
+      data: { pending_device_id: deviceId, pending_device_label: deviceLabel },
+    });
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -243,6 +250,61 @@ export async function sendDeviceVerification(email: string): Promise<{ error: st
   } catch (e) {
     debugError('[DeviceVerification] Send OTP error:', e);
     return { error: e instanceof Error ? e.message : 'Failed to send verification email' };
+  }
+}
+
+/**
+ * Trust the pending device stored in user_metadata.
+ *
+ * Called from the confirm page after a device OTP is verified. This trusts
+ * the ORIGINATING device (the one that entered the PIN and triggered
+ * verification), not the device opening the confirmation link.
+ */
+export async function trustPendingDevice(): Promise<void> {
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+      debugWarn('[DeviceVerification] trustPendingDevice: no user');
+      return;
+    }
+
+    const pendingDeviceId = user.user_metadata?.pending_device_id;
+    const pendingDeviceLabel = user.user_metadata?.pending_device_label;
+
+    if (!pendingDeviceId) {
+      // No pending device — fall back to trusting the current device (same-browser case)
+      await trustCurrentDevice(user.id);
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    // Trust the originating device
+    const { error: upsertError } = await supabase
+      .from('trusted_devices')
+      .upsert({
+        user_id: user.id,
+        device_id: pendingDeviceId,
+        device_label: pendingDeviceLabel || 'Unknown device',
+        trusted_at: now,
+        last_used_at: now,
+      }, { onConflict: 'user_id,device_id' });
+
+    if (upsertError) {
+      debugError('[DeviceVerification] trustPendingDevice upsert failed:', upsertError.message);
+    } else {
+      debugLog('[DeviceVerification] Pending device trusted:', pendingDeviceLabel);
+    }
+
+    // Also trust the current device (the one opening the confirmation link)
+    await trustCurrentDevice(user.id);
+
+    // Clear pending device from metadata
+    await supabase.auth.updateUser({
+      data: { pending_device_id: null, pending_device_label: null },
+    });
+  } catch (e) {
+    debugError('[DeviceVerification] trustPendingDevice error:', e);
   }
 }
 

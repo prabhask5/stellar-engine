@@ -39,11 +39,21 @@ export declare function getTrustedDevices(userId: string): Promise<TrustedDevice
 export declare function removeTrustedDevice(id: string): Promise<void>;
 /**
  * Send a device verification OTP email.
- * Signs out first (untrusted device flow), then sends OTP.
+ *
+ * Keeps the session alive (needed for cross-device polling) and stores
+ * this device's ID in user_metadata so the confirm page can trust it.
  */
 export declare function sendDeviceVerification(email: string): Promise<{
     error: string | null;
 }>;
+/**
+ * Trust the pending device stored in user_metadata.
+ *
+ * Called from the confirm page after a device OTP is verified. This trusts
+ * the ORIGINATING device (the one that entered the PIN and triggered
+ * verification), not the device opening the confirmation link.
+ */
+export declare function trustPendingDevice(): Promise<void>;
 /**
  * Verify a device verification OTP token hash (from email link).
  */

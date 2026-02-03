@@ -67,6 +67,14 @@ export declare function completeDeviceVerification(tokenHash?: string): Promise<
     error: string | null;
 }>;
 /**
+ * Poll whether this device has been trusted (e.g. after OTP verified on another device).
+ *
+ * Requires an active session (sendDeviceVerification keeps the session alive).
+ * The confirm page calls trustPendingDevice() which trusts the originating device,
+ * so this check will pass once verification is complete on any device.
+ */
+export declare function pollDeviceVerification(): Promise<boolean>;
+/**
  * Lock: stop sync engine, reset auth state to 'none'.
  * Does NOT destroy session, data, or sign out of Supabase.
  */

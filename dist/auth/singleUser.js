@@ -424,6 +424,24 @@ export async function completeDeviceVerification(tokenHash) {
     }
 }
 /**
+ * Poll whether this device has been trusted (e.g. after OTP verified on another device).
+ *
+ * Requires an active session (sendDeviceVerification keeps the session alive).
+ * The confirm page calls trustPendingDevice() which trusts the originating device,
+ * so this check will pass once verification is complete on any device.
+ */
+export async function pollDeviceVerification() {
+    try {
+        const { data: { user }, error } = await supabase.auth.getUser();
+        if (error || !user)
+            return false;
+        return isDeviceTrusted(user.id);
+    }
+    catch {
+        return false;
+    }
+}
+/**
  * Lock: stop sync engine, reset auth state to 'none'.
  * Does NOT destroy session, data, or sign out of Supabase.
  */

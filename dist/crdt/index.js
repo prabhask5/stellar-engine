@@ -13,7 +13,7 @@ export { initCrdtDoc, getCrdtDoc, destroyCrdtDoc, waitForCrdtSync, getActiveCrdt
 // Realtime sync
 export { connectCrdtRealtime, disconnectCrdtRealtime, saveCrdtCheckpoint, loadCrdtFromRemote, getCrdtSyncState, isCrdtRealtimeConnected } from './sync';
 // Awareness (presence)
-export { initAwareness, getAwareness, destroyAwareness } from './awareness';
+export { initAwareness, getAwareness, destroyAwareness, updateAwarenessCursor, getRemoteAwarenessUsers } from './awareness';
 export { Awareness } from 'y-protocols/awareness';
 // Offline cache
 export { cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache, ensureCrdtOfflineData, getCrdtOfflineCacheSize, getActiveCrdtDocSize, getOfflineCacheStats, getStorageEstimate, formatBytes } from './offline';

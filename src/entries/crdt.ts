@@ -26,6 +26,8 @@ export {
   initAwareness,
   getAwareness,
   destroyAwareness,
+  updateAwarenessCursor,
+  getRemoteAwarenessUsers,
   Awareness,
 
   // Offline cache
@@ -44,6 +46,9 @@ export {
 export type {
   CrdtDocConfig,
   AwarenessUser,
+  AwarenessRole,
+  AwarenessScope,
+  RemoteUser,
   CrdtSyncState,
   CrdtBroadcastPayload
 } from '../crdt/types';

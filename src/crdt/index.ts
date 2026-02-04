@@ -30,7 +30,13 @@ export {
 } from './sync';
 
 // Awareness (presence)
-export { initAwareness, getAwareness, destroyAwareness } from './awareness';
+export {
+  initAwareness,
+  getAwareness,
+  destroyAwareness,
+  updateAwarenessCursor,
+  getRemoteAwarenessUsers
+} from './awareness';
 export { Awareness } from 'y-protocols/awareness';
 
 // Offline cache

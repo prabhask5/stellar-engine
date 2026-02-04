@@ -5,7 +5,7 @@
  * (cursor positions, active users, etc.) via Supabase broadcast.
  */
 import { Awareness } from 'y-protocols/awareness';
-import type { AwarenessUser } from './types';
+import type { AwarenessUser, RemoteUser } from './types';
 /**
  * Initialize awareness (presence) for a CRDT document.
  *
@@ -32,4 +32,23 @@ export declare function getAwareness(docId: string): Awareness | undefined;
  * @param docId - Document/note ID
  */
 export declare function destroyAwareness(docId: string): Promise<void>;
+/**
+ * Update the local user's cursor position in awareness.
+ *
+ * @param docId - Document/note ID
+ * @param cursor - Cursor position (blockId + offset), or null to clear
+ */
+export declare function updateAwarenessCursor(docId: string, cursor: {
+    blockId: string;
+    offset: number;
+} | null): void;
+/**
+ * Get all remote users currently present on a document.
+ *
+ * Returns awareness state from all clients except the local one.
+ *
+ * @param docId - Document/note ID
+ * @returns Array of remote user presence states
+ */
+export declare function getRemoteAwarenessUsers(docId: string): RemoteUser[];
 //# sourceMappingURL=awareness.d.ts.map

@@ -12,7 +12,7 @@ import { getDeviceId } from '../deviceId';
 import { getEngineConfig } from '../config';
 import { supabase } from '../supabase/client';
 import { getCrdtDoc } from './doc';
-import type { AwarenessUser } from './types';
+import type { AwarenessUser, RemoteUser } from './types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 /** Active awareness instances: docId → { awareness, channel, cleanup } */
@@ -206,4 +206,56 @@ export async function destroyAwareness(docId: string): Promise<void> {
 
   entry.awareness.destroy();
   activeAwareness.delete(docId);
+}
+
+/**
+ * Update the local user's cursor position in awareness.
+ *
+ * @param docId - Document/note ID
+ * @param cursor - Cursor position (blockId + offset), or null to clear
+ */
+export function updateAwarenessCursor(
+  docId: string,
+  cursor: { blockId: string; offset: number } | null
+): void {
+  const entry = activeAwareness.get(docId);
+  if (!entry) return;
+
+  const currentState = entry.awareness.getLocalState();
+  if (!currentState) return;
+
+  const currentUser = currentState.user as AwarenessUser | undefined;
+  if (!currentUser) return;
+
+  entry.awareness.setLocalStateField('user', { ...currentUser, cursor });
+}
+
+/**
+ * Get all remote users currently present on a document.
+ *
+ * Returns awareness state from all clients except the local one.
+ *
+ * @param docId - Document/note ID
+ * @returns Array of remote user presence states
+ */
+export function getRemoteAwarenessUsers(docId: string): RemoteUser[] {
+  const entry = activeAwareness.get(docId);
+  if (!entry) return [];
+
+  const doc = getCrdtDoc(docId);
+  if (!doc) return [];
+
+  const localClientId = doc.clientID;
+  const states = entry.awareness.getStates();
+  const remoteUsers: RemoteUser[] = [];
+
+  states.forEach((state, clientId) => {
+    if (clientId === localClientId) return;
+    const user = state.user as AwarenessUser | undefined;
+    if (user) {
+      remoteUsers.push({ clientId, user });
+    }
+  });
+
+  return remoteUsers;
 }

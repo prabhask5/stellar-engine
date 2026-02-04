@@ -10,15 +10,28 @@ export interface CrdtDocConfig {
     /** Whether to auto-connect to Supabase Realtime on init */
     autoConnect?: boolean;
 }
+/** User role for presence identification */
+export type AwarenessRole = 'owner' | 'shared';
+/** Share scope for shared users */
+export type AwarenessScope = 'READ' | 'WRITE' | 'COMMENT';
 /** User info for awareness (presence) */
 export interface AwarenessUser {
     name: string;
     color: string;
+    /** Role: 'owner' for main user, 'shared' for shared users */
+    role: AwarenessRole;
+    /** Share scope — only relevant for shared users */
+    scope?: AwarenessScope;
     /** Optional cursor position within a block */
     cursor?: {
         blockId: string;
         offset: number;
     } | null;
+}
+/** A remote user's presence state (includes Yjs client ID) */
+export interface RemoteUser {
+    clientId: number;
+    user: AwarenessUser;
 }
 /** Internal state for a managed CRDT document */
 export interface CrdtDocState {

@@ -7,7 +7,7 @@ initCrdtDoc, getCrdtDoc, destroyCrdtDoc, waitForCrdtSync, getActiveCrdtDocIds,
 // Realtime sync
 connectCrdtRealtime, disconnectCrdtRealtime, saveCrdtCheckpoint, loadCrdtFromRemote, getCrdtSyncState, isCrdtRealtimeConnected, 
 // Awareness (presence)
-initAwareness, getAwareness, destroyAwareness, Awareness, 
+initAwareness, getAwareness, destroyAwareness, updateAwarenessCursor, getRemoteAwarenessUsers, Awareness, 
 // Offline cache
 cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache, ensureCrdtOfflineData, getCrdtOfflineCacheSize, getActiveCrdtDocSize, getOfflineCacheStats, getStorageEstimate, formatBytes } from '../crdt/index';
 //# sourceMappingURL=crdt.js.map

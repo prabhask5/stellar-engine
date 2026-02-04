@@ -40,7 +40,8 @@ export {
   getActiveCrdtDocSize,
   getOfflineCacheStats,
   getStorageEstimate,
-  formatBytes
+  formatBytes,
+  extractCrdtText
 } from '../crdt/index';
 
 export type {

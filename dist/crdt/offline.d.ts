@@ -78,4 +78,14 @@ export declare function getStorageEstimate(): Promise<{
  */
 export declare function formatBytes(bytes: number): string;
 export declare function loadCrdtFromOfflineCache(docId: string): Promise<Y.Doc | null>;
+/**
+ * Extract plain text from a note's CRDT blocks.
+ *
+ * Reads block content from the active doc, offline cache, or Supabase remote.
+ * Returns concatenated text content with HTML tags stripped.
+ *
+ * @param docId - Document/note ID
+ * @returns Plain text content of all blocks, or empty string
+ */
+export declare function extractCrdtText(docId: string): Promise<string>;
 //# sourceMappingURL=offline.d.ts.map

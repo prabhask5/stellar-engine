@@ -11,5 +11,5 @@ export { initCrdtDoc, getCrdtDoc, destroyCrdtDoc, waitForCrdtSync, getActiveCrdt
 export { connectCrdtRealtime, disconnectCrdtRealtime, saveCrdtCheckpoint, loadCrdtFromRemote, getCrdtSyncState, isCrdtRealtimeConnected } from './sync';
 export { initAwareness, getAwareness, destroyAwareness, updateAwarenessCursor, getRemoteAwarenessUsers } from './awareness';
 export { Awareness } from 'y-protocols/awareness';
-export { cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache, ensureCrdtOfflineData, getCrdtOfflineCacheSize, getActiveCrdtDocSize, getOfflineCacheStats, getStorageEstimate, formatBytes } from './offline';
+export { cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache, ensureCrdtOfflineData, getCrdtOfflineCacheSize, getActiveCrdtDocSize, getOfflineCacheStats, getStorageEstimate, formatBytes, extractCrdtText } from './offline';
 //# sourceMappingURL=index.d.ts.map

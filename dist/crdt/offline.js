@@ -288,4 +288,66 @@ export async function loadCrdtFromOfflineCache(docId) {
         return null;
     }
 }
+/**
+ * Extract plain text from a note's CRDT blocks.
+ *
+ * Reads block content from the active doc, offline cache, or Supabase remote.
+ * Returns concatenated text content with HTML tags stripped.
+ *
+ * @param docId - Document/note ID
+ * @returns Plain text content of all blocks, or empty string
+ */
+export async function extractCrdtText(docId) {
+    let doc = getCrdtDoc(docId);
+    let shouldDestroy = false;
+    // Try active doc first, then offline cache, then remote
+    if (!doc) {
+        const cached = await loadCrdtFromOfflineCache(docId);
+        if (cached) {
+            doc = cached;
+            shouldDestroy = true;
+        }
+        else {
+            // Fetch from Supabase
+            try {
+                const { data, error } = await supabase
+                    .from('note_content')
+                    .select('yjs_state')
+                    .eq('note_id', docId)
+                    .eq('deleted', false)
+                    .maybeSingle();
+                if (error || !data?.yjs_state)
+                    return '';
+                const binary = atob(data.yjs_state);
+                const state = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    state[i] = binary.charCodeAt(i);
+                }
+                doc = new Y.Doc();
+                Y.applyUpdate(doc, state, 'search-extract');
+                shouldDestroy = true;
+            }
+            catch {
+                return '';
+            }
+        }
+    }
+    try {
+        const blocksArray = doc.getArray('blocks');
+        const texts = [];
+        for (const yMap of blocksArray.toArray()) {
+            const content = yMap.get('content');
+            if (content) {
+                // Strip HTML tags to get plain text
+                texts.push(content.replace(/<[^>]*>/g, ''));
+            }
+        }
+        return texts.join(' ');
+    }
+    finally {
+        if (shouldDestroy) {
+            doc.destroy();
+        }
+    }
+}
 //# sourceMappingURL=offline.js.map

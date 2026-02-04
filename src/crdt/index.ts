@@ -50,5 +50,6 @@ export {
   getActiveCrdtDocSize,
   getOfflineCacheStats,
   getStorageEstimate,
-  formatBytes
+  formatBytes,
+  extractCrdtText
 } from './offline';

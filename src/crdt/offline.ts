@@ -176,15 +176,133 @@ export async function isCrdtCachedOffline(docId: string): Promise<boolean> {
  * @param docId - Document/note ID
  * @returns A Y.Doc with the cached state, or null if not cached
  */
+/**
+ * Bridge offline cache to active CRDT doc.
+ * If the active doc is empty but we have cached data, apply the cached state.
+ */
+export async function ensureCrdtOfflineData(docId: string): Promise<boolean> {
+  const doc = getCrdtDoc(docId);
+  if (!doc) return false;
+  const sv = Y.encodeStateVector(doc);
+  if (sv.length > 1) return false; // Doc already has content
+  const cachedDoc = await loadCrdtFromOfflineCache(docId);
+  if (!cachedDoc) return false;
+  Y.applyUpdate(doc, Y.encodeStateAsUpdate(cachedDoc), 'offline-cache');
+  cachedDoc.destroy();
+  debugLog('[CRDT Offline] Bridged offline cache to active doc:', docId);
+  return true;
+}
+
+/**
+ * Get the byte size of a single cached note's CRDT data. Returns 0 if not cached.
+ */
+export async function getCrdtOfflineCacheSize(docId: string): Promise<number> {
+  try {
+    const db = await openOfflineDb();
+    const tx = db.transaction(getObjectStoreName(), 'readonly');
+    const store = tx.objectStore(getObjectStoreName());
+
+    const result = await new Promise<{ yjs_state: number[] } | undefined>((resolve, reject) => {
+      const request = store.get(docId);
+      request.onsuccess = () => resolve(request.result as { yjs_state: number[] } | undefined);
+      request.onerror = () => reject(request.error);
+    });
+
+    db.close();
+    return result?.yjs_state?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Get the byte size of the CRDT doc currently active (for the note the user is viewing).
+ */
+export function getActiveCrdtDocSize(docId: string): number {
+  const doc = getCrdtDoc(docId);
+  if (!doc) return 0;
+  return Y.encodeStateAsUpdate(doc).length;
+}
+
+/**
+ * Get all cached documents with their sizes.
+ */
+export async function getOfflineCacheStats(): Promise<{
+  entries: Array<{ id: string; sizeBytes: number; cachedAt: string }>;
+  totalBytes: number;
+}> {
+  try {
+    const db = await openOfflineDb();
+    const tx = db.transaction(getObjectStoreName(), 'readonly');
+    const store = tx.objectStore(getObjectStoreName());
+
+    const entries: Array<{ id: string; sizeBytes: number; cachedAt: string }> = [];
+    let totalBytes = 0;
+
+    await new Promise<void>((resolve, reject) => {
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          const value = cursor.value as { id: string; yjs_state: number[]; cached_at: string };
+          const sizeBytes = value.yjs_state?.length ?? 0;
+          entries.push({ id: value.id, sizeBytes, cachedAt: value.cached_at });
+          totalBytes += sizeBytes;
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
+
+    db.close();
+    return { entries, totalBytes };
+  } catch {
+    return { entries: [], totalBytes: 0 };
+  }
+}
+
+/**
+ * Get device storage estimate (IndexedDB quota and usage).
+ */
+export async function getStorageEstimate(): Promise<{
+  usage: number;
+  quota: number;
+  percentUsed: number;
+} | null> {
+  if (!navigator.storage?.estimate) return null;
+  const est = await navigator.storage.estimate();
+  return {
+    usage: est.usage ?? 0,
+    quota: est.quota ?? 0,
+    percentUsed: est.quota ? ((est.usage ?? 0) / est.quota) * 100 : 0
+  };
+}
+
+/**
+ * Format byte count to human-readable string.
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export async function loadCrdtFromOfflineCache(docId: string): Promise<Y.Doc | null> {
   try {
     const db = await openOfflineDb();
     const tx = db.transaction(getObjectStoreName(), 'readonly');
     const store = tx.objectStore(getObjectStoreName());
 
-    const result = await new Promise<{ id: string; yjs_state: number[]; cached_at: string } | undefined>((resolve, reject) => {
+    const result = await new Promise<
+      { id: string; yjs_state: number[]; cached_at: string } | undefined
+    >((resolve, reject) => {
       const request = store.get(docId);
-      request.onsuccess = () => resolve(request.result as { id: string; yjs_state: number[]; cached_at: string } | undefined);
+      request.onsuccess = () =>
+        resolve(
+          request.result as { id: string; yjs_state: number[]; cached_at: string } | undefined
+        );
       request.onerror = () => reject(request.error);
     });
 

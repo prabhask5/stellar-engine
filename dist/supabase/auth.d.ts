@@ -68,7 +68,7 @@ export declare function resendConfirmationEmail(email: string): Promise<{
  * Verify OTP token (for email confirmation).
  * Absorbs confirm page's direct Supabase call.
  */
-export declare function verifyOtp(tokenHash: string, type: 'signup' | 'email' | 'email_change'): Promise<{
+export declare function verifyOtp(tokenHash: string, type: 'signup' | 'email' | 'email_change' | 'magiclink'): Promise<{
     error: string | null;
 }>;
 /**

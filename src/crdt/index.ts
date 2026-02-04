@@ -30,11 +30,7 @@ export {
 } from './sync';
 
 // Awareness (presence)
-export {
-  initAwareness,
-  getAwareness,
-  destroyAwareness
-} from './awareness';
+export { initAwareness, getAwareness, destroyAwareness } from './awareness';
 export { Awareness } from 'y-protocols/awareness';
 
 // Offline cache
@@ -42,5 +38,11 @@ export {
   cacheCrdtForOffline,
   removeCrdtOfflineCache,
   isCrdtCachedOffline,
-  loadCrdtFromOfflineCache
+  loadCrdtFromOfflineCache,
+  ensureCrdtOfflineData,
+  getCrdtOfflineCacheSize,
+  getActiveCrdtDocSize,
+  getOfflineCacheStats,
+  getStorageEstimate,
+  formatBytes
 } from './offline';

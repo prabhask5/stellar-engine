@@ -399,10 +399,24 @@ export async function completeDeviceVerification(tokenHash) {
             if (error)
                 return { error };
         }
-        // After OTP verification, session should be available
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError || !session) {
-            return { error: 'Session not found after verification' };
+        // After OTP verification, the session may have changed in another tab.
+        // refreshSession() forces Supabase to re-read from storage and validate,
+        // ensuring we pick up cross-tab session changes from verifyOtp().
+        let session = null;
+        try {
+            const { data } = await supabase.auth.refreshSession();
+            session = data.session;
+        }
+        catch {
+            // refreshSession can fail if token is truly gone
+        }
+        if (!session) {
+            // Fall back to getSession in case refreshSession failed but session exists
+            const { data, error: sessionError } = await supabase.auth.getSession();
+            session = data.session;
+            if (sessionError || !session) {
+                return { error: 'Session not found after verification' };
+            }
         }
         const user = session.user;
         // Trust the device
@@ -442,8 +456,23 @@ export async function completeDeviceVerification(tokenHash) {
  */
 export async function pollDeviceVerification() {
     try {
-        const { data: { user }, error } = await supabase.auth.getUser();
-        if (error || !user)
+        let user = null;
+        // Try getUser first (uses access token from current session)
+        const { data, error } = await supabase.auth.getUser();
+        if (!error && data.user) {
+            user = data.user;
+        }
+        // If getUser failed, try refreshing the session (cross-tab session may have changed)
+        if (!user) {
+            try {
+                const { data: refreshData } = await supabase.auth.refreshSession();
+                user = refreshData.user;
+            }
+            catch {
+                // Session truly invalid
+            }
+        }
+        if (!user)
             return false;
         return isDeviceTrusted(user.id);
     }

@@ -32,7 +32,13 @@ export {
   cacheCrdtForOffline,
   removeCrdtOfflineCache,
   isCrdtCachedOffline,
-  loadCrdtFromOfflineCache
+  loadCrdtFromOfflineCache,
+  ensureCrdtOfflineData,
+  getCrdtOfflineCacheSize,
+  getActiveCrdtDocSize,
+  getOfflineCacheStats,
+  getStorageEstimate,
+  formatBytes
 } from '../crdt/index';
 
 export type {

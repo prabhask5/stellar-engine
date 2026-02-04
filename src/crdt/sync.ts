@@ -21,13 +21,16 @@ import type { CrdtBroadcastPayload, CrdtSyncState } from './types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 /** Active sync channels: docId → channel state */
-const activeChannels: Map<string, {
-  channel: RealtimeChannel;
-  syncState: CrdtSyncState;
-  updateHandler: (update: Uint8Array, origin: unknown) => void;
-  checkpointTimer: ReturnType<typeof setTimeout> | null;
-  visibilityHandler: (() => void) | null;
-}> = new Map();
+const activeChannels: Map<
+  string,
+  {
+    channel: RealtimeChannel;
+    syncState: CrdtSyncState;
+    updateHandler: (update: Uint8Array, origin: unknown) => void;
+    checkpointTimer: ReturnType<typeof setTimeout> | null;
+    visibilityHandler: (() => void) | null;
+  }
+> = new Map();
 
 /** Debounce delay for checkpoint saves (ms) */
 const CHECKPOINT_DEBOUNCE_MS = 5000;
@@ -86,16 +89,17 @@ export async function saveCrdtCheckpoint(docId: string): Promise<void> {
     const state = Y.encodeStateAsUpdate(doc);
     const base64State = uint8ArrayToBase64(state);
 
-    const { error } = await supabase
-      .from('note_content')
-      .upsert({
+    const { error } = await supabase.from('note_content').upsert(
+      {
         note_id: docId,
         yjs_state: base64State,
         updated_at: new Date().toISOString(),
         device_id: getDeviceId()
-      }, {
+      },
+      {
         onConflict: 'note_id'
-      });
+      }
+    );
 
     if (error) {
       debugError('[CRDT Sync] Checkpoint save failed:', error);
@@ -248,7 +252,11 @@ export function connectCrdtRealtime(docId: string): void {
               docId
             } satisfies CrdtBroadcastPayload
           });
-          debugLog('[CRDT Sync] Sent state vector response for:', docId, `(sv: ${sv.length} bytes)`);
+          debugLog(
+            '[CRDT Sync] Sent state vector response for:',
+            docId,
+            `(sv: ${sv.length} bytes)`
+          );
         } catch (e) {
           debugError('[CRDT Sync] Error sending state vector response:', e);
         }
@@ -271,7 +279,11 @@ export function connectCrdtRealtime(docId: string): void {
   // Listen for local doc updates and broadcast them
   const updateHandler = (update: Uint8Array, origin: unknown) => {
     // Don't re-broadcast updates that came from remote
-    if (origin === 'remote-broadcast' || origin === 'remote-load' || origin === 'remote-state-sync') {
+    if (
+      origin === 'remote-broadcast' ||
+      origin === 'remote-load' ||
+      origin === 'remote-state-sync'
+    ) {
       return;
     }
 

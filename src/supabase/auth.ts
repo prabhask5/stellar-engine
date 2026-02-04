@@ -8,12 +8,7 @@ import {
   updateOfflineCredentialsProfile
 } from '../auth/offlineCredentials';
 import { clearOfflineSession } from '../auth/offlineSession';
-import {
-  preCheckLogin,
-  onLoginSuccess,
-  onLoginFailure,
-  resetLoginGuard
-} from '../auth/loginGuard';
+import { preCheckLogin, onLoginSuccess, onLoginFailure, resetLoginGuard } from '../auth/loginGuard';
 import type { PreCheckStrategy } from '../auth/loginGuard';
 import { hashValue, isAlreadyHashed } from '../auth/crypto';
 import { debugWarn, debugError } from '../debug';
@@ -461,7 +456,7 @@ export async function resendConfirmationEmail(email: string): Promise<{ error: s
  */
 export async function verifyOtp(
   tokenHash: string,
-  type: 'signup' | 'email' | 'email_change'
+  type: 'signup' | 'email' | 'email_change' | 'magiclink'
 ): Promise<{ error: string | null }> {
   const { error } = await supabase.auth.verifyOtp({
     token_hash: tokenHash,

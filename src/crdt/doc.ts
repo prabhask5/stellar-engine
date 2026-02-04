@@ -12,7 +12,10 @@ import { getEngineConfig } from '../config';
 import type { CrdtDocConfig, CrdtDocState } from './types';
 
 /** Active documents map: docId → { doc, persistence, state } */
-const activeDocs: Map<string, { doc: Y.Doc; persistence: IndexeddbPersistence; state: CrdtDocState }> = new Map();
+const activeDocs: Map<
+  string,
+  { doc: Y.Doc; persistence: IndexeddbPersistence; state: CrdtDocState }
+> = new Map();
 
 function getDbName(docId: string, config?: CrdtDocConfig): string {
   const prefix = config?.dbPrefix || getEngineConfig().prefix;

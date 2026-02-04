@@ -65,9 +65,7 @@ export async function saveCrdtCheckpoint(docId) {
         debugLog('[CRDT Sync] Saving checkpoint for:', docId);
         const state = Y.encodeStateAsUpdate(doc);
         const base64State = uint8ArrayToBase64(state);
-        const { error } = await supabase
-            .from('note_content')
-            .upsert({
+        const { error } = await supabase.from('note_content').upsert({
             note_id: docId,
             yjs_state: base64State,
             updated_at: new Date().toISOString(),
@@ -240,7 +238,9 @@ export function connectCrdtRealtime(docId) {
     // Listen for local doc updates and broadcast them
     const updateHandler = (update, origin) => {
         // Don't re-broadcast updates that came from remote
-        if (origin === 'remote-broadcast' || origin === 'remote-load' || origin === 'remote-state-sync') {
+        if (origin === 'remote-broadcast' ||
+            origin === 'remote-load' ||
+            origin === 'remote-state-sync') {
             return;
         }
         if (!syncState.connected) {

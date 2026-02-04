@@ -9,5 +9,5 @@ connectCrdtRealtime, disconnectCrdtRealtime, saveCrdtCheckpoint, loadCrdtFromRem
 // Awareness (presence)
 initAwareness, getAwareness, destroyAwareness, Awareness, 
 // Offline cache
-cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache } from '../crdt/index';
+cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache, ensureCrdtOfflineData, getCrdtOfflineCacheSize, getActiveCrdtDocSize, getOfflineCacheStats, getStorageEstimate, formatBytes } from '../crdt/index';
 //# sourceMappingURL=crdt.js.map

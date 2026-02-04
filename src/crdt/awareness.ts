@@ -16,11 +16,14 @@ import type { AwarenessUser } from './types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 /** Active awareness instances: docId → { awareness, channel, cleanup } */
-const activeAwareness: Map<string, {
-  awareness: Awareness;
-  channel: RealtimeChannel;
-  cleanup: (() => void)[];
-}> = new Map();
+const activeAwareness: Map<
+  string,
+  {
+    awareness: Awareness;
+    channel: RealtimeChannel;
+    cleanup: (() => void)[];
+  }
+> = new Map();
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -82,19 +85,26 @@ export function initAwareness(docId: string, userInfo: AwarenessUser): Awareness
   });
 
   // Listen for remote awareness updates
-  channel.on('broadcast', { event: 'awareness' }, (payload: { payload: { data: string; deviceId: string } }) => {
-    if (payload.payload.deviceId === deviceId) return;
+  channel.on(
+    'broadcast',
+    { event: 'awareness' },
+    (payload: { payload: { data: string; deviceId: string } }) => {
+      if (payload.payload.deviceId === deviceId) return;
 
-    try {
-      const update = base64ToUint8Array(payload.payload.data);
-      awarenessProtocol.applyAwarenessUpdate(awareness, update, 'remote');
-    } catch (e) {
-      debugError('[CRDT Awareness] Error applying remote update:', e);
+      try {
+        const update = base64ToUint8Array(payload.payload.data);
+        awarenessProtocol.applyAwarenessUpdate(awareness, update, 'remote');
+      } catch (e) {
+        debugError('[CRDT Awareness] Error applying remote update:', e);
+      }
     }
-  });
+  );
 
   // Broadcast local awareness changes
-  const onUpdate = ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }, origin: unknown) => {
+  const onUpdate = (
+    { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
+    origin: unknown
+  ) => {
     if (origin === 'remote') return;
 
     const changedClients = added.concat(updated).concat(removed);

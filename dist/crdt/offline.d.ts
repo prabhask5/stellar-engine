@@ -41,5 +41,41 @@ export declare function isCrdtCachedOffline(docId: string): Promise<boolean>;
  * @param docId - Document/note ID
  * @returns A Y.Doc with the cached state, or null if not cached
  */
+/**
+ * Bridge offline cache to active CRDT doc.
+ * If the active doc is empty but we have cached data, apply the cached state.
+ */
+export declare function ensureCrdtOfflineData(docId: string): Promise<boolean>;
+/**
+ * Get the byte size of a single cached note's CRDT data. Returns 0 if not cached.
+ */
+export declare function getCrdtOfflineCacheSize(docId: string): Promise<number>;
+/**
+ * Get the byte size of the CRDT doc currently active (for the note the user is viewing).
+ */
+export declare function getActiveCrdtDocSize(docId: string): number;
+/**
+ * Get all cached documents with their sizes.
+ */
+export declare function getOfflineCacheStats(): Promise<{
+    entries: Array<{
+        id: string;
+        sizeBytes: number;
+        cachedAt: string;
+    }>;
+    totalBytes: number;
+}>;
+/**
+ * Get device storage estimate (IndexedDB quota and usage).
+ */
+export declare function getStorageEstimate(): Promise<{
+    usage: number;
+    quota: number;
+    percentUsed: number;
+} | null>;
+/**
+ * Format byte count to human-readable string.
+ */
+export declare function formatBytes(bytes: number): string;
 export declare function loadCrdtFromOfflineCache(docId: string): Promise<Y.Doc | null>;
 //# sourceMappingURL=offline.d.ts.map

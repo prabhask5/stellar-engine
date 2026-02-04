@@ -40,6 +40,10 @@
     "./crdt": {
       "types": "./dist/entries/crdt.d.ts",
       "import": "./dist/entries/crdt.js"
+    },
+    "./email": {
+      "types": "./dist/entries/email.d.ts",
+      "import": "./dist/entries/email.js"
     }
   },
   "files": [
@@ -67,6 +71,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
     "dexie": "^4.2.1",
+    "nodemailer": "^6.9.0",
     "y-indexeddb": "^9.0.12",
     "y-protocols": "^1.0.6",
     "yjs": "^13.6.20"
@@ -81,6 +86,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@types/nodemailer": "^6.4.0",
     "eslint": "^9.39.2",
     "globals": "^17.3.0",
     "knip": "^5.82.1",

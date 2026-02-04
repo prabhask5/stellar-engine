@@ -18,6 +18,7 @@ A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** 
 - **Operation coalescing** -- batches of rapid local writes (e.g., 50 individual increments) are compressed into a single outbound operation, reducing sync traffic dramatically.
 - **Tombstone management** -- soft deletes are propagated cleanly, and stale tombstones are garbage-collected after a configurable retention period.
 - **Egress optimization** -- column-level select lists and ownership filters ensure only the data your client needs is fetched from Supabase.
+- **Email** -- optional SMTP email sending for share link invitations and notifications, with credential validation.
 
 ## Quick start
 
@@ -105,6 +106,31 @@ if (!auth.singleUserSetUp) {
 }
 ```
 
+### Email (optional)
+
+Send emails via SMTP for share link invitations:
+
+```ts
+import { sendEmail, validateSmtpCredentials } from '@prabhask5/stellar-engine/email';
+
+// Validate SMTP credentials
+const { valid, error } = await validateSmtpCredentials({
+  smtpHost: 'smtp.example.com',
+  smtpPort: 587,
+  smtpUser: 'user@example.com',
+  smtpPass: 'password',
+  fromEmail: 'noreply@example.com',
+  fromName: 'My App'
+});
+
+// Send an email
+const result = await sendEmail(config, {
+  to: 'recipient@example.com',
+  subject: 'You have been invited',
+  html: '<p>Click here to view the shared note.</p>'
+});
+```
+
 ## Subpath exports
 
 Import only what you need via subpath exports:
@@ -119,6 +145,7 @@ Import only what you need via subpath exports:
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
 | `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
+| `@prabhask5/stellar-engine/email` | Email sending (`sendEmail`, `validateSmtpCredentials`) |
 
 The root export (`@prabhask5/stellar-engine`) re-exports everything for backward compatibility.
 

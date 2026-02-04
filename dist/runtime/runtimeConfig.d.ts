@@ -8,6 +8,14 @@ export interface AppConfig {
     supabaseUrl: string;
     supabaseAnonKey: string;
     configured: boolean;
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpUser?: string;
+    smtpPass?: string;
+    fromEmail?: string;
+    fromName?: string;
+    emailConfigured?: boolean;
+    shareTokenSecret?: string;
 }
 export declare function _setConfigPrefix(prefix: string): void;
 /**

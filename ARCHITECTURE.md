@@ -12,6 +12,7 @@
 9. [Egress Optimization](#9-egress-optimization)
 10. [Data Flow Diagrams](#10-data-flow-diagrams)
 11. [Debug & Observability](#11-debug--observability)
+12. [Email System](#12-email-system)
 
 ---
 
@@ -1381,3 +1382,75 @@ Total egress: 45.23 KB (312 records)
 | **Egress optimization** | Column selection, coalescing, realtime-first, cursor-based, validation caching |
 | **Mutex-protected sync** | Promise-based lock with stale detection, operation timeouts |
 | **Network state machine** | iOS PWA visibility handling, sequential reconnect callbacks |
+| **Email system** | SMTP sending, credential validation, HMAC token generation for secure share links |
+
+---
+
+## 12. Email System
+
+**Files**: `src/email/sendEmail.ts`, `src/email/validateSmtp.ts`
+
+The engine provides an optional email module for server-side SMTP email sending. This is used by consuming applications (e.g., Infinite Notes) to send private share link invitations with HMAC tokens.
+
+### 12.1 Architecture Diagram
+
+```
++------------------------------------------------------------------+
+|  EMAIL SYSTEM                                                     |
+|                                                                   |
+|  App API Route                                                    |
+|       |                                                           |
+|       v                                                           |
+|  sendEmail(config, params)                                        |
+|       |                                                           |
+|       +---> Create nodemailer transporter from EmailConfig        |
+|       |       - host, port, user, pass                            |
+|       |       - secure: true if port 465                          |
+|       |                                                           |
+|       +---> transporter.sendMail()                                |
+|       |       - from: "Name <email>"                              |
+|       |       - to, subject, html, text                           |
+|       |                                                           |
+|       +---> Return { success, error }                             |
+|                                                                   |
+|  HMAC Token Flow (consuming app):                                 |
+|       |                                                           |
+|       v                                                           |
+|  generateShareToken(linkId, email, secret)                        |
+|       |                                                           |
+|       +---> HMAC-SHA256(linkId + ":" + email, secret)             |
+|       +---> Returns hex digest                                    |
+|       |                                                           |
+|       v                                                           |
+|  Email contains: /share/{id}?token={hmac}&email={email}           |
+|       |                                                           |
+|       v                                                           |
+|  verifyShareToken(linkId, email, token, secret)                   |
+|       +---> Recompute HMAC, timingSafeEqual comparison            |
+|       +---> Returns boolean                                       |
++------------------------------------------------------------------+
+```
+
+### 12.2 Credential Validation
+
+**File**: `src/email/validateSmtp.ts`
+
+```
+validateSmtpCredentials(config)
+  |
+  +---> Create nodemailer transporter
+  +---> transporter.verify()
+  |       |
+  |       +---> SUCCESS: { valid: true }
+  |       +---> FAILURE: { valid: false, error: message }
+```
+
+Matches the same `{ valid, error }` pattern as `validateSupabaseCredentials`.
+
+### 12.3 Security Design
+
+- **HMAC tokens are deterministic**: No database storage needed
+- **Tokens are email-specific**: Each recipient gets a unique URL
+- **Timing-safe comparison**: `crypto.timingSafeEqual` prevents timing attacks
+- **SMTP password**: Stored as encrypted Vercel env var, never returned to client
+- **SHARE_TOKEN_SECRET**: Auto-generated during setup, stored as env var

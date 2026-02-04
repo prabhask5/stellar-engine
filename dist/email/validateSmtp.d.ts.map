@@ -1,0 +1,1 @@
+{"version":3,"file":"validateSmtp.d.ts","sourceRoot":"","sources":["../../src/email/validateSmtp.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAGH,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,aAAa,CAAC;AAE/C;;;;;GAKG;AACH,wBAAsB,uBAAuB,CAC3C,MAAM,EAAE,WAAW,GAClB,OAAO,CAAC;IAAE,KAAK,EAAE,OAAO,CAAC;IAAC,KAAK,CAAC,EAAE,MAAM,CAAA;CAAE,CAAC,CAkB7C"}

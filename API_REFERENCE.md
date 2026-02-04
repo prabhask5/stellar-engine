@@ -14,6 +14,7 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 | `@prabhask5/stellar-engine/utils` | Utility functions + debug (`snakeToCamel`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
 | `@prabhask5/stellar-engine/config` | Runtime config, `getDexieTableFor` |
+| `@prabhask5/stellar-engine/email` | `sendEmail`, `validateSmtpCredentials` |
 
 All exports are also available from the root `@prabhask5/stellar-engine` for backward compatibility.
 
@@ -37,6 +38,7 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Realtime](#realtime)
 - [Supabase Client](#supabase-client)
 - [Runtime Config](#runtime-config)
+- [Email](#email)
 - [Debug](#debug)
 - [Utilities](#utilities)
 - [Svelte Actions](#svelte-actions)
@@ -1366,6 +1368,16 @@ interface AppConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   configured: boolean;
+  // Optional email config
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPass?: string;
+  fromEmail?: string;
+  fromName?: string;
+  emailConfigured?: boolean;
+  // HMAC secret for token generation
+  shareTokenSecret?: string;
 }
 ```
 
@@ -1390,6 +1402,93 @@ import { getDexieTableFor } from '@prabhask5/stellar-engine/config';
 
 getDexieTableFor('goal_lists'); // 'goalLists'
 getDexieTableFor('projects');   // 'projects'
+```
+
+---
+
+## Email
+
+Server-side email sending via SMTP. Requires the `nodemailer` dependency (included). Import from `@prabhask5/stellar-engine/email`.
+
+### `sendEmail(config, params)`
+
+Send an email via SMTP. Never throws — errors are returned in the result object.
+
+```ts
+async function sendEmail(
+  config: EmailConfig,
+  params: SendEmailParams
+): Promise<{ success: boolean; error?: string }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config` | `EmailConfig` | SMTP server configuration |
+| `params` | `SendEmailParams` | Email content (to, subject, html, text) |
+
+**Returns:** `{ success: true }` on success, `{ success: false, error }` on failure.
+
+**Example:**
+
+```ts
+import { sendEmail } from '@prabhask5/stellar-engine/email';
+
+const result = await sendEmail(
+  {
+    smtpHost: 'smtp.example.com',
+    smtpPort: 587,
+    smtpUser: 'user@example.com',
+    smtpPass: 'password',
+    fromEmail: 'noreply@example.com',
+    fromName: 'My App'
+  },
+  {
+    to: 'recipient@example.com',
+    subject: 'Hello',
+    html: '<p>Welcome!</p>',
+    text: 'Welcome!'
+  }
+);
+```
+
+### `validateSmtpCredentials(config)`
+
+Test SMTP connectivity by attempting to connect and authenticate. Matches the `{ valid, error }` pattern used by `validateSupabaseCredentials`.
+
+```ts
+async function validateSmtpCredentials(
+  config: EmailConfig
+): Promise<{ valid: boolean; error?: string }>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config` | `EmailConfig` | SMTP server configuration |
+
+**Returns:** `{ valid: true }` if the connection succeeds, `{ valid: false, error }` otherwise.
+
+### `EmailConfig`
+
+```ts
+interface EmailConfig {
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPass: string;
+  fromEmail: string;
+  fromName: string;
+}
+```
+
+### `SendEmailParams`
+
+```ts
+interface SendEmailParams {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}
 ```
 
 ---

@@ -9,6 +9,16 @@ export interface AppConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   configured: boolean;
+  // Optional email config
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPass?: string;
+  fromEmail?: string;
+  fromName?: string;
+  emailConfigured?: boolean;
+  // HMAC secret for token generation
+  shareTokenSecret?: string;
 }
 
 let _prefix = 'stellar';

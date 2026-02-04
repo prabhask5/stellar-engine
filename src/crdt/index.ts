@@ -44,11 +44,3 @@ export {
   isCrdtCachedOffline,
   loadCrdtFromOfflineCache
 } from './offline';
-
-// Types
-export type {
-  CrdtDocConfig,
-  AwarenessUser,
-  CrdtSyncState,
-  CrdtBroadcastPayload
-} from './types';

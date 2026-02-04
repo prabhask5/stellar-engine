@@ -12,5 +12,4 @@ export { connectCrdtRealtime, disconnectCrdtRealtime, saveCrdtCheckpoint, loadCr
 export { initAwareness, getAwareness, destroyAwareness } from './awareness';
 export { Awareness } from 'y-protocols/awareness';
 export { cacheCrdtForOffline, removeCrdtOfflineCache, isCrdtCachedOffline, loadCrdtFromOfflineCache } from './offline';
-export type { CrdtDocConfig, AwarenessUser, CrdtSyncState, CrdtBroadcastPayload } from './types';
 //# sourceMappingURL=index.d.ts.map

@@ -518,7 +518,7 @@ async function engineGetOrCreate(
 
 ### `signIn(email, password)`
 
-Sign in with email and password via Supabase. Caches credentials for offline use on success.
+Sign in with email and password. When cached credentials exist, wrong passwords are rejected locally without hitting Supabase. If no cached credentials exist, rate limiting with exponential backoff is applied. Caches credentials for offline use on success.
 
 ```ts
 async function signIn(email: string, password: string): Promise<AuthResponse>
@@ -529,7 +529,7 @@ async function signIn(email: string, password: string): Promise<AuthResponse>
 | `email` | `string` | User email |
 | `password` | `string` | User password |
 
-**Returns:** `AuthResponse`
+**Returns:** `AuthResponse` — includes `retryAfterMs` when rate-limited.
 
 ### `signUp(email, password, profileData)`
 
@@ -567,7 +567,7 @@ async function signOut(options?: {
 
 ### `changePassword(currentPassword, newPassword)`
 
-Change the user's password. Verifies the current password first. Updates offline credential cache.
+Change the user's password. Verifies the current password locally against cached credentials when available, falling back to Supabase verification if no cache exists. Updates offline credential cache.
 
 ```ts
 async function changePassword(
@@ -670,8 +670,11 @@ interface AuthResponse {
   user: User | null;
   session: Session | null;
   error: string | null;
+  retryAfterMs?: number;
 }
 ```
+
+`retryAfterMs` is set when the login guard's rate limiting is active (no cached credentials and too many recent failed attempts). Callers can use this value to show a countdown or disable the login button.
 
 ---
 
@@ -764,6 +767,29 @@ async function getOfflineLoginInfo(): Promise<{
   firstName?: string;
   lastName?: string;
 } | null>
+```
+
+---
+
+## Login Guard
+
+The login guard provides local credential pre-checking and rate limiting to minimize unnecessary Supabase auth requests. It is used internally by `signIn()`, `unlockSingleUser()`, and `linkSingleUserDevice()`.
+
+**How it works:**
+
+- When cached credentials exist (offline credentials hash for multi-user, `gateHash` for single-user), passwords are verified locally first. Wrong passwords are rejected without making a Supabase call.
+- When no cached credentials exist (new device, first login), exponential backoff rate limiting is applied (1s base, 30s max, 2x multiplier). The `retryAfterMs` field in the response indicates how long to wait.
+- If a user changes their password on another device, the local hash will no longer match. After 5 consecutive local rejections, the cached hash is invalidated and the system falls through to rate-limited Supabase authentication. On successful Supabase login, the new hash is cached immediately.
+- If a locally-matched password is rejected by Supabase (stale hash), the cached hash is invalidated so future attempts use Supabase directly.
+
+**State is in-memory only** — it resets on page refresh.
+
+### `resetLoginGuard()`
+
+Reset all login guard state (counters and rate limiting). Called automatically by `signOut()`. Consumers should call this if implementing custom sign-out flows.
+
+```ts
+function resetLoginGuard(): void
 ```
 
 ---
@@ -867,19 +893,24 @@ if (confirmationRequired) {
 
 ### `unlockSingleUser(gate)`
 
-Verify PIN via `supabase.auth.signInWithPassword()`. If `deviceVerification.enabled` and the current device is not trusted, signs out and sends OTP, returning `{ deviceVerificationRequired: true, maskedEmail }`. Falls back to offline hash verification when offline.
+Verify PIN via local `gateHash` pre-check, then `supabase.auth.signInWithPassword()`. Wrong PINs are rejected locally without hitting Supabase when a `gateHash` is cached. If `deviceVerification.enabled` and the current device is not trusted, signs out and sends OTP, returning `{ deviceVerificationRequired: true, maskedEmail }`. Falls back to offline hash verification when offline.
 
 ```ts
 async function unlockSingleUser(
   gate: string
-): Promise<{ error: string | null; deviceVerificationRequired?: boolean; maskedEmail?: string }>
+): Promise<{
+  error: string | null;
+  deviceVerificationRequired?: boolean;
+  maskedEmail?: string;
+  retryAfterMs?: number;
+}>
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `gate` | `string` | The PIN code or password to verify |
 
-**Returns:** `{ error: null }` on success, or `{ error: string }` if the gate is incorrect or setup is incomplete. If device verification is required, returns `{ deviceVerificationRequired: true, maskedEmail }` instead of completing sign-in.
+**Returns:** `{ error: null }` on success, or `{ error: string }` if the gate is incorrect or setup is incomplete. Includes `retryAfterMs` when rate-limited. If device verification is required, returns `{ deviceVerificationRequired: true, maskedEmail }` instead of completing sign-in.
 
 ### `lockSingleUser()`
 
@@ -900,7 +931,7 @@ await lockSingleUser();
 
 ### `changeSingleUserGate(oldGate, newGate)`
 
-Change the gate (code or password). Uses `signInWithPassword()` to verify the old gate and `supabase.auth.updateUser()` to change the password.
+Change the gate (code or password). Verifies the old gate locally against the cached `gateHash` when available, falling back to `signInWithPassword()` if no hash is cached. Uses `supabase.auth.updateUser()` to change the password.
 
 ```ts
 async function changeSingleUserGate(
@@ -997,6 +1028,29 @@ async function completeDeviceVerification(
   tokenHash?: string
 ): Promise<{ error: string | null }>
 ```
+
+### `linkSingleUserDevice(email, pin)`
+
+Link a new device to an existing single-user account. Signs in with email + padded PIN, builds local config from `user_metadata`. Rate limiting with exponential backoff is applied since no local hash exists on a new device.
+
+```ts
+async function linkSingleUserDevice(
+  email: string,
+  pin: string
+): Promise<{
+  error: string | null;
+  deviceVerificationRequired?: boolean;
+  maskedEmail?: string;
+  retryAfterMs?: number;
+}>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `email` | `string` | The account email |
+| `pin` | `string` | The PIN code or password |
+
+**Returns:** `{ error: null }` on success. Includes `retryAfterMs` when rate-limited.
 
 ### `padPin(pin)`
 

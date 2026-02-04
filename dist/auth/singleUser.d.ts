@@ -58,6 +58,7 @@ export declare function unlockSingleUser(gate: string): Promise<{
     error: string | null;
     deviceVerificationRequired?: boolean;
     maskedEmail?: string;
+    retryAfterMs?: number;
 }>;
 /**
  * Complete device verification after OTP email link is clicked.
@@ -132,6 +133,7 @@ export declare function linkSingleUserDevice(email: string, pin: string): Promis
     error: string | null;
     deviceVerificationRequired?: boolean;
     maskedEmail?: string;
+    retryAfterMs?: number;
 }>;
 /**
  * Reset the remote single user via the reset_single_user() RPC.

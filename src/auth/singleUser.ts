@@ -27,6 +27,8 @@ import { authState } from '../stores/authState';
 import { syncStatusStore } from '../stores/sync';
 import { getSession } from '../supabase/auth';
 import { debugLog, debugWarn, debugError } from '../debug';
+import { preCheckLogin, onLoginSuccess, onLoginFailure } from './loginGuard';
+import type { PreCheckStrategy } from './loginGuard';
 
 const CONFIG_ID = 'config';
 
@@ -311,7 +313,12 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
  */
 export async function unlockSingleUser(
   gate: string
-): Promise<{ error: string | null; deviceVerificationRequired?: boolean; maskedEmail?: string }> {
+): Promise<{
+  error: string | null;
+  deviceVerificationRequired?: boolean;
+  maskedEmail?: string;
+  retryAfterMs?: number;
+}> {
   try {
     const config = await readConfig();
     if (!config) {
@@ -323,6 +330,14 @@ export async function unlockSingleUser(
 
     if (!isOffline && config.email) {
       // --- ONLINE UNLOCK via Supabase signInWithPassword ---
+
+      // Pre-check credentials locally before calling Supabase
+      const preCheck = await preCheckLogin(gate, 'single-user');
+      if (!preCheck.proceed) {
+        return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
+      }
+
+      const strategy: PreCheckStrategy = preCheck.strategy;
       const paddedPassword = padPin(gate);
 
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -331,9 +346,13 @@ export async function unlockSingleUser(
       });
 
       if (error) {
+        await onLoginFailure(strategy, 'single-user');
         debugWarn('[SingleUser] signInWithPassword failed:', error.message);
         return { error: 'Incorrect code' };
       }
+
+      // Successful Supabase login
+      onLoginSuccess();
 
       const session = data.session!;
       const user = data.user!;
@@ -548,14 +567,23 @@ export async function changeSingleUserGate(
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
     if (!isOffline && config.email) {
-      // Online: verify old gate via Supabase, then update password
-      const { error: verifyError } = await supabase.auth.signInWithPassword({
-        email: config.email,
-        password: padPin(oldGate)
-      });
+      // Online: verify old gate locally if possible, fall back to Supabase
+      if (config.gateHash) {
+        // Local hash check
+        const oldHash = await hashValue(oldGate);
+        if (oldHash !== config.gateHash) {
+          return { error: 'Current code is incorrect' };
+        }
+      } else {
+        // No local hash — fall back to Supabase verification
+        const { error: verifyError } = await supabase.auth.signInWithPassword({
+          email: config.email,
+          password: padPin(oldGate)
+        });
 
-      if (verifyError) {
-        return { error: 'Current code is incorrect' };
+        if (verifyError) {
+          return { error: 'Current code is incorrect' };
+        }
       }
 
       // Update password in Supabase
@@ -816,12 +844,23 @@ export async function fetchRemoteGateConfig(): Promise<{
 export async function linkSingleUserDevice(
   email: string,
   pin: string
-): Promise<{ error: string | null; deviceVerificationRequired?: boolean; maskedEmail?: string }> {
+): Promise<{
+  error: string | null;
+  deviceVerificationRequired?: boolean;
+  maskedEmail?: string;
+  retryAfterMs?: number;
+}> {
   try {
     const engineConfig = getEngineConfig();
     const singleUserOpts = engineConfig.auth?.singleUser;
     const gateType = singleUserOpts?.gateType || 'code';
     const codeLength = singleUserOpts?.codeLength;
+
+    // Pre-check with rate limiting (new device → no-cache strategy)
+    const preCheck = await preCheckLogin(pin, 'single-user', email);
+    if (!preCheck.proceed) {
+      return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
+    }
 
     const paddedPassword = padPin(pin);
 
@@ -831,9 +870,13 @@ export async function linkSingleUserDevice(
     });
 
     if (error) {
+      await onLoginFailure('no-cache', 'single-user');
       debugWarn('[SingleUser] linkSingleUserDevice signIn failed:', error.message);
       return { error: 'Incorrect code' };
     }
+
+    // Successful Supabase login
+    onLoginSuccess();
 
     const session = data.session!;
     const user = data.user!;

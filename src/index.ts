@@ -46,6 +46,9 @@ export type { AuthStateResult } from './auth/resolveAuthState';
 // Admin
 export { isAdmin } from './auth/admin';
 
+// Login guard
+export { resetLoginGuard } from './auth/loginGuard';
+
 // Offline login
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 

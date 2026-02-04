@@ -12,6 +12,7 @@ export type { AuthResponse } from './supabase/auth';
 export { resolveAuthState } from './auth/resolveAuthState';
 export type { AuthStateResult } from './auth/resolveAuthState';
 export { isAdmin } from './auth/admin';
+export { resetLoginGuard } from './auth/loginGuard';
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from './auth/singleUser';
 export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';

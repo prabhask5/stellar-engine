@@ -1,6 +1,8 @@
 import { supabase } from './client';
-import { cacheOfflineCredentials, clearOfflineCredentials, updateOfflineCredentialsPassword, updateOfflineCredentialsProfile } from '../auth/offlineCredentials';
+import { cacheOfflineCredentials, clearOfflineCredentials, getOfflineCredentials, updateOfflineCredentialsPassword, updateOfflineCredentialsProfile } from '../auth/offlineCredentials';
 import { clearOfflineSession } from '../auth/offlineSession';
+import { preCheckLogin, onLoginSuccess, onLoginFailure, resetLoginGuard } from '../auth/loginGuard';
+import { hashValue, isAlreadyHashed } from '../auth/crypto';
 import { debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
 import { syncStatusStore } from '../stores/sync';
@@ -18,13 +20,27 @@ function getConfirmRedirectUrl() {
     return '/confirm';
 }
 export async function signIn(email, password) {
+    // Pre-check credentials locally before calling Supabase
+    const preCheck = await preCheckLogin(password, 'multi-user', email);
+    if (!preCheck.proceed) {
+        return {
+            user: null,
+            session: null,
+            error: preCheck.error,
+            retryAfterMs: preCheck.retryAfterMs
+        };
+    }
+    const strategy = preCheck.strategy;
     const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password
     });
     if (error) {
+        await onLoginFailure(strategy, 'multi-user');
         return { user: data.user, session: data.session, error: error.message };
     }
+    // Successful Supabase login
+    onLoginSuccess();
     // Cache credentials for offline use on successful login
     if (data.session && data.user) {
         try {
@@ -124,9 +140,11 @@ export async function signOut(options) {
     catch {
         // Ignore storage errors
     }
-    // 8. Reset sync status store
+    // 8. Reset login guard state
+    resetLoginGuard();
+    // 9. Reset sync status store
     syncStatusStore.reset();
-    // 9. Reset auth state store
+    // 10. Reset auth state store
     authState.reset();
     return { error: error?.message || null };
 }
@@ -256,13 +274,31 @@ export async function changePassword(currentPassword, newPassword) {
     if (!user?.email) {
         return { error: 'No authenticated user found' };
     }
-    // Verify current password by attempting to sign in
-    const { error: verifyError } = await supabase.auth.signInWithPassword({
-        email: user.email,
-        password: currentPassword
-    });
-    if (verifyError) {
-        return { error: 'Current password is incorrect' };
+    // Verify current password: prefer local hash check, fall back to Supabase
+    const creds = await getOfflineCredentials();
+    if (creds && creds.password && creds.email === user.email) {
+        // Local verification against cached hash
+        let passwordMatch;
+        if (isAlreadyHashed(creds.password)) {
+            const hashedInput = await hashValue(currentPassword);
+            passwordMatch = creds.password === hashedInput;
+        }
+        else {
+            passwordMatch = creds.password === currentPassword;
+        }
+        if (!passwordMatch) {
+            return { error: 'Current password is incorrect' };
+        }
+    }
+    else {
+        // No cached credentials — fall back to Supabase verification
+        const { error: verifyError } = await supabase.auth.signInWithPassword({
+            email: user.email,
+            password: currentPassword
+        });
+        if (verifyError) {
+            return { error: 'Current password is incorrect' };
+        }
     }
     // Update password
     const { error } = await supabase.auth.updateUser({

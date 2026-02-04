@@ -19,6 +19,7 @@ import { authState } from '../stores/authState';
 import { syncStatusStore } from '../stores/sync';
 import { getSession } from '../supabase/auth';
 import { debugLog, debugWarn, debugError } from '../debug';
+import { preCheckLogin, onLoginSuccess, onLoginFailure } from './loginGuard';
 const CONFIG_ID = 'config';
 // ============================================================
 // HELPERS
@@ -273,15 +274,24 @@ export async function unlockSingleUser(gate) {
         const engineConfig = getEngineConfig();
         if (!isOffline && config.email) {
             // --- ONLINE UNLOCK via Supabase signInWithPassword ---
+            // Pre-check credentials locally before calling Supabase
+            const preCheck = await preCheckLogin(gate, 'single-user');
+            if (!preCheck.proceed) {
+                return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
+            }
+            const strategy = preCheck.strategy;
             const paddedPassword = padPin(gate);
             const { data, error } = await supabase.auth.signInWithPassword({
                 email: config.email,
                 password: paddedPassword
             });
             if (error) {
+                await onLoginFailure(strategy, 'single-user');
                 debugWarn('[SingleUser] signInWithPassword failed:', error.message);
                 return { error: 'Incorrect code' };
             }
+            // Successful Supabase login
+            onLoginSuccess();
             const session = data.session;
             const user = data.user;
             // Update supabaseUserId if needed
@@ -468,13 +478,23 @@ export async function changeSingleUserGate(oldGate, newGate) {
         }
         const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
         if (!isOffline && config.email) {
-            // Online: verify old gate via Supabase, then update password
-            const { error: verifyError } = await supabase.auth.signInWithPassword({
-                email: config.email,
-                password: padPin(oldGate)
-            });
-            if (verifyError) {
-                return { error: 'Current code is incorrect' };
+            // Online: verify old gate locally if possible, fall back to Supabase
+            if (config.gateHash) {
+                // Local hash check
+                const oldHash = await hashValue(oldGate);
+                if (oldHash !== config.gateHash) {
+                    return { error: 'Current code is incorrect' };
+                }
+            }
+            else {
+                // No local hash — fall back to Supabase verification
+                const { error: verifyError } = await supabase.auth.signInWithPassword({
+                    email: config.email,
+                    password: padPin(oldGate)
+                });
+                if (verifyError) {
+                    return { error: 'Current code is incorrect' };
+                }
             }
             // Update password in Supabase
             const { error: updateError } = await supabase.auth.updateUser({
@@ -707,15 +727,23 @@ export async function linkSingleUserDevice(email, pin) {
         const singleUserOpts = engineConfig.auth?.singleUser;
         const gateType = singleUserOpts?.gateType || 'code';
         const codeLength = singleUserOpts?.codeLength;
+        // Pre-check with rate limiting (new device → no-cache strategy)
+        const preCheck = await preCheckLogin(pin, 'single-user', email);
+        if (!preCheck.proceed) {
+            return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
+        }
         const paddedPassword = padPin(pin);
         const { data, error } = await supabase.auth.signInWithPassword({
             email,
             password: paddedPassword
         });
         if (error) {
+            await onLoginFailure('no-cache', 'single-user');
             debugWarn('[SingleUser] linkSingleUserDevice signIn failed:', error.message);
             return { error: 'Incorrect code' };
         }
+        // Successful Supabase login
+        onLoginSuccess();
         const session = data.session;
         const user = data.user;
         // Build profile from user_metadata (reverse of profileToMetadata)

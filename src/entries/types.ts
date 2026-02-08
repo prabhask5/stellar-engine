@@ -14,9 +14,7 @@ export type {
   SyncStatus,
   AuthMode,
   SingleUserConfig,
-  SingleUserGateType,
-  SyncableEntity,
-  UserOwnedEntity
+  SingleUserGateType
 } from '../types';
 export type { SyncError, RealtimeState } from '../stores/sync';
 export type { RemoteActionType } from '../stores/remoteChanges';

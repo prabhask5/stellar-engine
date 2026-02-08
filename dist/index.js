@@ -35,7 +35,7 @@ export { supabase } from './supabase/client';
 // Runtime config
 export { initConfig, getConfig, setConfig } from './runtime/runtimeConfig';
 // Debug
-export { debug, debugLog, debugWarn, debugError, isDebugMode, setDebugMode } from './debug';
+export { debug, isDebugMode, setDebugMode } from './debug';
 // Utilities
 export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 // Svelte actions

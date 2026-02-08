@@ -105,7 +105,7 @@ export { initConfig, getConfig, setConfig } from './runtime/runtimeConfig';
 export type { AppConfig } from './runtime/runtimeConfig';
 
 // Debug
-export { debug, debugLog, debugWarn, debugError, isDebugMode, setDebugMode } from './debug';
+export { debug, isDebugMode, setDebugMode } from './debug';
 
 // Utilities
 export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
@@ -124,9 +124,7 @@ export type {
   AuthMode,
   SingleUserConfig,
   SingleUserGateType,
-  TrustedDevice,
-  SyncableEntity,
-  UserOwnedEntity
+  TrustedDevice
 } from './types';
 
 // Re-export Session type from Supabase so consumers don't need a direct dependency

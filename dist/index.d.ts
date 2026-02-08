@@ -26,10 +26,10 @@ export { onRealtimeDataUpdate } from './realtime';
 export { supabase } from './supabase/client';
 export { initConfig, getConfig, setConfig } from './runtime/runtimeConfig';
 export type { AppConfig } from './runtime/runtimeConfig';
-export { debug, debugLog, debugWarn, debugError, isDebugMode, setDebugMode } from './debug';
+export { debug, isDebugMode, setDebugMode } from './debug';
 export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
-export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice, SyncableEntity, UserOwnedEntity } from './types';
+export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice } from './types';
 export type { Session } from '@supabase/supabase-js';
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
 //# sourceMappingURL=index.d.ts.map

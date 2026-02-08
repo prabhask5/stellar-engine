@@ -11,7 +11,6 @@ The `@prabhask5/stellar-engine` package is an offline-first, local-first sync en
 3. [Sync System (Custom Sync Engine)](#3-sync-system-custom-sync-engine)
 4. [Svelte (Optional Peer Dependency)](#4-svelte-optional-peer-dependency)
 5. [TypeScript (Language)](#5-typescript-language)
-6. [Yjs / CRDT (Collaborative Editing)](#6-yjs--crdt-collaborative-editing)
 
 ---
 
@@ -506,59 +505,3 @@ The engine exports all public types from `src/index.ts` for consumer application
 - `AuthResponse` -- auth operation results
 
 Consumer apps use these types to implement their repositories, configure the engine, and build type-safe UI integrations.
-
----
-
-## 6. Yjs / CRDT (Collaborative Editing)
-
-### What is a CRDT?
-
-A CRDT (Conflict-free Replicated Data Type) is a data structure that can be modified independently on multiple devices and merged automatically without conflicts. Unlike the engine's row-level sync system (which uses last-write-wins with intent preservation), CRDTs resolve conflicts at the **character level** — two users can edit the same paragraph simultaneously and both edits are preserved.
-
-### What is Yjs?
-
-Yjs is a high-performance CRDT implementation for JavaScript. It provides shared data types (`Y.Doc`, `Y.Array`, `Y.Map`, `Y.Text`) that can be modified independently and merged. Yjs is the de facto standard for collaborative editing in web applications, used by tools like Notion, Tiptap, and BlockNote.
-
-The engine wraps Yjs and manages its entire lifecycle — applications import all Yjs functionality from `@prabhask5/stellar-engine/crdt` and never depend on `yjs` directly.
-
-### Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `yjs` | Core CRDT implementation — shared document types and merge algorithms |
-| `y-indexeddb` | IndexedDB persistence provider — automatically saves Y.Doc state to IndexedDB for local durability |
-| `y-protocols` | Protocol implementations — specifically the Awareness protocol for user presence |
-
-All three are bundled dependencies of the engine (not peer dependencies).
-
-### How the Engine Uses Yjs
-
-The engine provides four layers on top of raw Yjs:
-
-**1. Document Lifecycle** (`src/crdt/doc.ts`): Manages a map of active `Y.Doc` instances. `initCrdtDoc()` creates a document and attaches `IndexeddbPersistence` so the document state is automatically saved to the browser's IndexedDB. `destroyCrdtDoc()` cleans up all resources. Applications never create `Y.Doc` instances directly.
-
-**2. Realtime Sync** (`src/crdt/sync.ts`): Uses **Supabase Broadcast** (WebSocket message passing) to sync Yjs updates between clients. This is different from the row-level sync engine, which uses `postgres_changes` (database change notifications). Broadcast is used because Yjs updates are binary data that cannot be represented as row changes. The sync layer handles:
-- Broadcasting local `Y.Doc` updates to other clients
-- Receiving and applying remote updates
-- Echo suppression via `device_id`
-- Reconnection with state vector exchange (peers share full state on reconnect)
-- Debounced checkpoint saves (full Y.Doc state → `note_content` Supabase table)
-
-**3. Awareness/Presence** (`src/crdt/awareness.ts`): Implements the Yjs Awareness protocol for user presence. Each client broadcasts its state (name, color, role, cursor position) via a separate Supabase Broadcast channel. Other clients receive these updates and can display cursors, user avatars, and "who's viewing" indicators. Awareness runs on a separate channel from document sync to avoid interference.
-
-**4. Offline Cache** (`src/crdt/offline.ts`): Provides explicit offline caching separate from `y-indexeddb`. While `y-indexeddb` automatically persists documents that are currently open, the offline cache stores documents the user has explicitly marked for offline access. It also provides `extractCrdtText()` for search indexing — extracting plain text from Yjs block structures without needing the document editor.
-
-### Relationship to the Row-Level Sync Engine
-
-The CRDT system and the row-level sync engine (sections 3–5 in ARCHITECTURE.md) serve different purposes and operate independently:
-
-| Aspect | Row-Level Sync | CRDT Sync |
-|--------|---------------|-----------|
-| **Data granularity** | Entire rows (entities) | Characters within documents |
-| **Conflict resolution** | Three-tier, field-level (last-write-wins) | Automatic CRDT merge (all edits preserved) |
-| **Transport** | Supabase REST API + postgres_changes | Supabase Broadcast (raw WebSocket) |
-| **Storage** | Entity tables (one row per entity) | `note_content` table (one row per document, binary blob) |
-| **Offline** | Full CRUD with outbox pattern | Read-only offline cache; edits sync when online |
-| **Use case** | Structured data (tasks, settings, metadata) | Rich text / block-based document content |
-
-In a typical application, the row-level sync handles note metadata (title, parent, order, favorites) while the CRDT system handles the note's actual content (blocks of text, images, embeds).

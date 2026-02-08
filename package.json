@@ -44,10 +44,6 @@
     "./email": {
       "types": "./dist/entries/email.d.ts",
       "import": "./dist/entries/email.js"
-    },
-    "./kit": {
-      "types": "./dist/entries/kit.d.ts",
-      "import": "./dist/entries/kit.js"
     }
   },
   "files": [
@@ -81,20 +77,15 @@
     "yjs": "^13.6.20"
   },
   "peerDependencies": {
-    "svelte": "^5.0.0",
-    "@sveltejs/kit": "^2.0.0"
+    "svelte": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "svelte": {
-      "optional": true
-    },
-    "@sveltejs/kit": {
       "optional": true
     }
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@sveltejs/kit": "^2.21.0",
     "@types/nodemailer": "^6.4.0",
     "eslint": "^9.39.2",
     "globals": "^17.3.0",

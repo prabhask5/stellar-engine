@@ -1,1 +1,0 @@
-{"version":3,"file":"configEndpoint.d.ts","sourceRoot":"","sources":["../../src/kit/configEndpoint.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAEH,UAAU,qBAAqB;IAC7B,6EAA6E;IAC7E,WAAW,CAAC,EAAE,KAAK,CAAC;QAClB,sCAAsC;QACtC,WAAW,EAAE,MAAM,CAAC;QACpB,kFAAkF;QAClF,OAAO,EAAE,MAAM,EAAE,CAAC;KACnB,CAAC,CAAC;CACJ;AAED,wBAAgB,oBAAoB,CAAC,OAAO,CAAC,EAAE,qBAAqB,2BA6BnE"}

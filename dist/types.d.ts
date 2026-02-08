@@ -96,23 +96,4 @@ export interface TrustedDevice {
     trustedAt: string;
     lastUsedAt: string;
 }
-/**
- * Base interface for all syncable entities.
- * Every entity managed by the sync engine has these fields.
- */
-export interface SyncableEntity {
-    id: string;
-    created_at: string;
-    updated_at: string;
-    deleted?: boolean;
-    _version?: number;
-    device_id?: string | null;
-}
-/**
- * Base interface for entities owned by a user.
- * Extends SyncableEntity with a user_id field.
- */
-export interface UserOwnedEntity extends SyncableEntity {
-    user_id: string;
-}
 //# sourceMappingURL=types.d.ts.map

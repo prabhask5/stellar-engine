@@ -145,7 +145,6 @@ Import only what you need via subpath exports:
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
 | `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
-| `@prabhask5/stellar-engine/crdt` | CRDT document lifecycle, realtime sync, awareness/presence, offline cache |
 | `@prabhask5/stellar-engine/email` | Email sending (`sendEmail`, `validateSmtpCredentials`) |
 
 The root export (`@prabhask5/stellar-engine`) re-exports everything for backward compatibility.

@@ -244,9 +244,17 @@ function generateViteConfig(opts: InstallOptions): string {
  *      into their own bundles for long-term caching
  */
 
+// =============================================================================
+//                                  IMPORTS
+// =============================================================================
+
 import { sveltekit } from '@sveltejs/kit/vite';
 import { stellarPWA } from '@prabhask5/stellar-engine/vite';
 import { defineConfig } from 'vite';
+
+// =============================================================================
+//                            VITE CONFIGURATION
+// =============================================================================
 
 export default defineConfig({
   plugins: [
@@ -256,16 +264,22 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
+        /* ── Vendor chunk isolation ── */
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
+            /** Supabase auth + realtime — ~100 KB gzipped */
             if (id.includes('@supabase')) return 'vendor-supabase';
+            /** Dexie (IndexedDB wrapper) — offline-first storage layer */
             if (id.includes('dexie')) return 'vendor-dexie';
           }
         }
       }
     },
+    /** Reduce noise — only warn for chunks above 500 KB */
     chunkSizeWarningLimit: 500,
+    /** esbuild is faster than terser and produces comparable output */
     minify: 'esbuild',
+    /** Target modern browsers → enables smaller output (no legacy polyfills) */
     target: 'es2020'
   }
 });
@@ -741,6 +755,34 @@ function generateReadme(opts: InstallOptions): string {
 
 > See [ARCHITECTURE.md](./ARCHITECTURE.md) for project structure.
 > See [FRAMEWORKS.md](./FRAMEWORKS.md) for framework decisions.
+
+## Install as an App
+
+This is a PWA (Progressive Web App) — install it on any device for quick access and an app-like experience.
+
+### iOS (Safari)
+
+1. Open the app in **Safari**.
+2. Tap the **Share** button (square with arrow).
+3. Scroll down and tap **Add to Home Screen**.
+4. Tap **Add**.
+
+### Android (Chrome)
+
+1. Open the app in **Chrome**.
+2. Tap the **three-dot menu** (top right).
+3. Tap **Add to Home screen** or **Install app**.
+4. Confirm the installation.
+
+### Desktop (Chrome / Edge)
+
+1. Open the app in your browser.
+2. Click the **install icon** in the address bar (or look for an install prompt).
+3. Click **Install**.
+
+Once installed, the app runs as a standalone window with full offline support.
+
+---
 
 ## Getting Started
 
@@ -1262,7 +1304,19 @@ function generateHuskyPreCommit(): string {
  * @returns The TypeScript source for `src/routes/+layout.ts`.
  */
 function generateRootLayoutTs(opts: InstallOptions): string {
-  return `import { browser } from '$app/environment';
+  return `/**
+ * @fileoverview Root layout loader — engine bootstrap + auth resolution.
+ *
+ * Runs on every navigation. In the browser it initialises runtime config,
+ * resolves the current auth state (online session or offline credentials),
+ * and starts the sync engine when the user is authenticated.
+ */
+
+// =============================================================================
+//                                  IMPORTS
+// =============================================================================
+
+import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { goto } from '$app/navigation';
 import { initEngine, startSyncEngine, supabase } from '@prabhask5/stellar-engine';
@@ -1272,8 +1326,18 @@ import { resolveRootLayout } from '@prabhask5/stellar-engine/kit';
 import type { AuthMode, OfflineCredentials, Session } from '@prabhask5/stellar-engine/types';
 import type { LayoutLoad } from './$types';
 
+// =============================================================================
+//                          SVELTEKIT ROUTE CONFIG
+// =============================================================================
+
+/** Allow server-side rendering for initial page load performance. */
 export const ssr = true;
+/** Disable prerendering — pages depend on runtime auth state. */
 export const prerender = false;
+
+// =============================================================================
+//                          ENGINE BOOTSTRAP
+// =============================================================================
 
 // TODO: Configure initEngine() with your app-specific database schema.
 // Call initEngine({...}) at module scope (guarded by \`if (browser)\`).
@@ -1299,15 +1363,37 @@ export const prerender = false;
 //   });
 // }
 
+// =============================================================================
+//                           LAYOUT DATA TYPE
+// =============================================================================
+
+/**
+ * Data returned by the root layout load function.
+ */
 export interface LayoutData {
+  /** Active Supabase session, or \`null\` when offline / unauthenticated. */
   session: Session | null;
+  /** Current authentication mode (\`'online'\`, \`'offline'\`, or \`'none'\`). */
   authMode: AuthMode;
+  /** Cached offline credentials (display name, avatar) when auth is offline. */
   offlineProfile: OfflineCredentials | null;
+  /** Whether the single-user account has completed initial setup. */
   singleUserSetUp?: boolean;
 }
 
+// =============================================================================
+//                            LOAD FUNCTION
+// =============================================================================
+
+/**
+ * Root layout load — initialises config, resolves auth, and starts sync.
+ *
+ * @param params - SvelteKit load params (provides the current URL).
+ * @returns Layout data with session and auth state.
+ */
 export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
   if (browser) {
+    /* Fetch runtime config from /api/config (cached after first call) */
     const config = await initConfig();
     if (!config && url.pathname !== '/setup') {
       redirect(307, '/setup');
@@ -1315,12 +1401,15 @@ export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
     if (!config) {
       return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
     }
+    /* Determine whether the user is online-authenticated, offline, or none */
     const result = await resolveAuthState();
     if (result.authMode !== 'none') {
+      /* Kick off background sync (Supabase realtime + IndexedDB) */
       await startSyncEngine();
     }
     return result;
   }
+  /* SSR fallback — no auth info available on the server */
   return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
 };
 `;
@@ -1332,18 +1421,52 @@ export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
  * @returns The Svelte component source for `src/routes/+layout.svelte`.
  */
 function generateRootLayoutSvelte(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Root layout component — app shell, auth hydration,
+  navigation chrome, overlays, and PWA lifecycle.
+
+  This is the outermost Svelte component. It wraps every page and is
+  responsible for hydrating auth state from the load function, rendering
+  the navigation bar / tab bar, and mounting global overlays like the
+  service-worker update prompt.
+-->
+<script lang="ts">
+  /**
+   * @fileoverview Root layout script — imports, props, and reactive auth hydration.
+   */
+
+  // ==========================================================================
+  //                                IMPORTS
+  // ==========================================================================
+
+  /* ── Stellar Engine — Auth & Stores ── */
   import { hydrateAuthState } from '@prabhask5/stellar-engine/kit';
   import { authState } from '@prabhask5/stellar-engine/stores';
+
+  /* ── Types ── */
   import type { LayoutData } from './+layout';
 
+  // ==========================================================================
+  //                                 PROPS
+  // ==========================================================================
+
   interface Props {
+    /** Default slot content (the routed page component). */
     children?: import('svelte').Snippet;
+    /** Layout data returned by the root \`+layout.ts\` load function. */
     data: LayoutData;
   }
 
   let { children, data }: Props = $props();
 
+  // ==========================================================================
+  //                           COMPONENT STATE
+  // ==========================================================================
+
+  /**
+   * Hydrate the global auth store whenever the load function returns
+   * fresh data (e.g. after navigation or token refresh).
+   */
   $effect(() => {
     hydrateAuthState(data);
   });
@@ -1368,9 +1491,28 @@ function generateRootLayoutSvelte(): string {
  * @returns The Svelte component source for `src/routes/+page.svelte`.
  */
 function generateHomePage(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Home / landing page — welcome screen and primary content.
+
+  This is the default route (\`/\`). It renders the main content area
+  the user sees after authentication.
+-->
+<script lang="ts">
+  /**
+   * @fileoverview Home page script — data access and component state.
+   */
+
+  // ==========================================================================
+  //                                IMPORTS
+  // ==========================================================================
+
+  /* ── Stellar Engine — Auth & Stores ── */
   import { getUserProfile } from '@prabhask5/stellar-engine/auth';
   import { onSyncComplete, authState } from '@prabhask5/stellar-engine/stores';
+
+  // ==========================================================================
+  //                           COMPONENT STATE
+  // ==========================================================================
 
   // TODO: Add home page state and logic
 </script>
@@ -1385,10 +1527,40 @@ function generateHomePage(): string {
  * @returns The Svelte component source for `src/routes/+error.svelte`.
  */
 function generateErrorPage(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Error boundary — handles three scenarios:
+    1. **Offline** — device has no connectivity, show a friendly offline message
+    2. **404**     — page not found, offer navigation back to home
+    3. **Generic** — unexpected error, display status code and retry option
+-->
+<script lang="ts">
+  /**
+   * @fileoverview Error page script — status detection and recovery actions.
+   */
+
+  // ==========================================================================
+  //                                IMPORTS
+  // ==========================================================================
+
   import { page } from '$app/stores';
 
+  // ==========================================================================
+  //                                 STATE
+  // ==========================================================================
+
   // TODO: Add error page logic (offline detection, retry handlers, etc.)
+
+  // ==========================================================================
+  //                          REACTIVE EFFECTS
+  // ==========================================================================
+
+  // TODO: Add reactive effects (e.g. watch online/offline status)
+
+  // ==========================================================================
+  //                          EVENT HANDLERS
+  // ==========================================================================
+
+  // TODO: Add event handlers (retry, go home, etc.)
 </script>
 
 <!-- TODO: Add error page template (status code display, retry button, go home button) -->
@@ -1401,13 +1573,29 @@ function generateErrorPage(): string {
  * @returns The TypeScript source for `src/routes/setup/+page.ts`.
  */
 function generateSetupPageTs(): string {
-  return `import { browser } from '$app/environment';
+  return `/**
+ * @fileoverview Setup page access control gate.
+ *
+ * Two modes:
+ *   - **Unconfigured** — no runtime config exists yet; anyone can access the
+ *     setup wizard to perform first-time Supabase configuration.
+ *   - **Configured + admin** — config already saved; only authenticated admin
+ *     users may revisit the setup page to update credentials or redeploy.
+ */
+
+import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { getConfig } from '@prabhask5/stellar-engine/config';
 import { getValidSession, isAdmin } from '@prabhask5/stellar-engine/auth';
 import type { PageLoad } from './$types';
 
+/**
+ * Guard the setup route — allow first-time setup or admin-only access.
+ *
+ * @returns Page data with an \`isFirstSetup\` flag.
+ */
 export const load: PageLoad = async () => {
+  /* Config and session helpers rely on browser APIs */
   if (!browser) return {};
   if (!getConfig()) {
     return { isFirstSetup: true };
@@ -1430,7 +1618,14 @@ export const load: PageLoad = async () => {
  * @returns The Svelte component source for `src/routes/setup/+page.svelte`.
  */
 function generateSetupPageSvelte(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Five-step Supabase configuration wizard.
+
+  Guides the user through entering Supabase credentials, validating them
+  against the server, optionally deploying environment variables to Vercel,
+  and reloading the app with the new config active.
+-->
+<script lang="ts">
   import { setConfig } from '@prabhask5/stellar-engine/config';
   import { isOnline } from '@prabhask5/stellar-engine/stores';
   import { pollForNewServiceWorker } from '@prabhask5/stellar-engine/kit';
@@ -1448,7 +1643,13 @@ function generateSetupPageSvelte(): string {
  * @returns The Svelte component source for `src/routes/policy/+page.svelte`.
  */
 function generatePolicyPage(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Privacy policy page.
+
+  Static content page that displays the application's privacy policy.
+  Required by app stores and good practice for any app handling user data.
+-->
+<script lang="ts">
   // TODO: Add any needed imports
 </script>
 
@@ -1463,7 +1664,16 @@ function generatePolicyPage(): string {
  * @returns The Svelte component source for `src/routes/login/+page.svelte`.
  */
 function generateLoginPage(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Login page — three modes:
+    1. **Setup**       — first-time account creation (email + PIN)
+    2. **Unlock**      — returning user enters PIN to unlock
+    3. **Link Device** — new device links to an existing account via email verification
+
+  Uses BroadcastChannel (\`auth-channel\`) for cross-tab communication with
+  the /confirm page so email verification results propagate instantly.
+-->
+<script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/stores';
@@ -1479,7 +1689,16 @@ function generateLoginPage(): string {
   } from '@prabhask5/stellar-engine/auth';
   import { sendDeviceVerification } from '@prabhask5/stellar-engine';
 
+  // ==========================================================================
+  //                        LAYOUT / PAGE DATA
+  // ==========================================================================
+
   // TODO: Add login page state (setup/unlock/link-device modes, PIN inputs, modals)
+
+  // ==========================================================================
+  //                          SHARED UI STATE
+  // ==========================================================================
+
   // TODO: Add BroadcastChannel listener for auth-confirmed events from /confirm
 </script>
 
@@ -1494,21 +1713,47 @@ function generateLoginPage(): string {
  * @returns The Svelte component source for `src/routes/confirm/+page.svelte`.
  */
 function generateConfirmPage(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Email confirmation page — token verification, BroadcastChannel
+  relay, and close/redirect flow.
+
+  Supabase email links land here with \`?token_hash=...&type=...\` query
+  params. The page verifies the token, broadcasts the result to the
+  originating tab via BroadcastChannel, and either tells the user they
+  can close the tab or redirects them to the app root.
+-->
+<script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { handleEmailConfirmation, broadcastAuthConfirmed } from '@prabhask5/stellar-engine/kit';
 
+  // ==========================================================================
+  //                                 STATE
+  // ==========================================================================
+
+  /** Current page state — drives which UI variant is rendered. */
   let status: 'verifying' | 'success' | 'error' | 'redirecting' | 'can_close' = 'verifying';
+  /** Human-readable error message when verification fails. */
   let errorMessage = '';
 
+  // ==========================================================================
+  //                              CONSTANTS
+  // ==========================================================================
+
+  /** BroadcastChannel name shared with the login page. */
   const CHANNEL_NAME = 'auth-channel'; // TODO: Customize channel name
 
+  // ==========================================================================
+  //                              LIFECYCLE
+  // ==========================================================================
+
   onMount(async () => {
+    /* ── Read Supabase callback params ── */
     const tokenHash = $page.url.searchParams.get('token_hash');
     const type = $page.url.searchParams.get('type');
 
+    /* ── Token present → verify it ── */
     if (tokenHash && type) {
       const result = await handleEmailConfirmation(
         tokenHash,
@@ -1522,16 +1767,31 @@ function generateConfirmPage(): string {
       }
 
       status = 'success';
+      /* Brief pause so the user sees the success state */
       await new Promise((resolve) => setTimeout(resolve, 800));
     }
 
+    /* ── Notify the originating tab and decide next action ── */
     const tabResult = await broadcastAuthConfirmed(CHANNEL_NAME, type || 'signup');
     if (tabResult === 'can_close') {
       status = 'can_close';
     } else if (tabResult === 'no_broadcast') {
-      goto('/', { replaceState: true });
+      focusOrRedirect();
     }
   });
+
+  // ==========================================================================
+  //                              HELPERS
+  // ==========================================================================
+
+  /**
+   * Navigate to the app root when no originating tab is available to
+   * receive the BroadcastChannel message (e.g. the user opened the
+   * confirmation link in a different browser).
+   */
+  function focusOrRedirect() {
+    goto('/', { replaceState: true });
+  }
 </script>
 
 <!-- TODO: Add confirmation page template (verifying/success/error/can_close states) -->
@@ -1548,10 +1808,22 @@ function generateConfirmPage(): string {
  * @returns The TypeScript source for `src/routes/api/config/+server.ts`.
  */
 function generateConfigServer(): string {
-  return `import { json } from '@sveltejs/kit';
+  return `/**
+ * Config API Endpoint — \`GET /api/config\`
+ *
+ * Returns the runtime configuration object (Supabase URL, anon key, app
+ * settings) that the client fetches on first load via \`initConfig()\`.
+ */
+
+import { json } from '@sveltejs/kit';
 import { getServerConfig } from '@prabhask5/stellar-engine/kit';
 import type { RequestHandler } from './$types';
 
+/**
+ * Serve the runtime config as JSON.
+ *
+ * @returns A JSON response containing the server-side config object.
+ */
 export const GET: RequestHandler = async () => {
   return json(getServerConfig());
 };
@@ -1564,11 +1836,26 @@ export const GET: RequestHandler = async () => {
  * @returns The TypeScript source for `src/routes/api/setup/deploy/+server.ts`.
  */
 function generateDeployServer(): string {
-  return `import { json } from '@sveltejs/kit';
+  return `/**
+ * Vercel Deploy API Endpoint — \`POST /api/setup/deploy\`
+ *
+ * Accepts Supabase credentials and a Vercel token, then sets the
+ * corresponding environment variables on the Vercel project and triggers
+ * a redeployment so the new config takes effect.
+ */
+
+import { json } from '@sveltejs/kit';
 import { deployToVercel } from '@prabhask5/stellar-engine/kit';
 import type { RequestHandler } from './$types';
 
+/**
+ * Deploy Supabase credentials to Vercel environment variables.
+ *
+ * @param params - SvelteKit request event.
+ * @returns JSON result with success/failure and optional error message.
+ */
 export const POST: RequestHandler = async ({ request }) => {
+  /* ── Parse and validate request body ── */
   const { supabaseUrl, supabaseAnonKey, vercelToken } = await request.json();
 
   if (!supabaseUrl || !supabaseAnonKey || !vercelToken) {
@@ -1578,6 +1865,7 @@ export const POST: RequestHandler = async ({ request }) => {
     );
   }
 
+  /* ── Ensure we're running on Vercel ── */
   const projectId = process.env.VERCEL_PROJECT_ID;
   if (!projectId) {
     return json(
@@ -1586,6 +1874,7 @@ export const POST: RequestHandler = async ({ request }) => {
     );
   }
 
+  /* ── Delegate to engine ── */
   const result = await deployToVercel({ vercelToken, projectId, supabaseUrl, supabaseAnonKey });
   return json(result);
 };
@@ -1598,9 +1887,18 @@ export const POST: RequestHandler = async ({ request }) => {
  * @returns The TypeScript source for `src/routes/api/setup/validate/+server.ts`.
  */
 function generateValidateServer(): string {
-  return `import { createValidateHandler } from '@prabhask5/stellar-engine/kit';
+  return `/**
+ * Supabase Credential Validation Endpoint — \`POST /api/setup/validate\`
+ *
+ * Accepts a Supabase URL and anon key, attempts a lightweight query
+ * against the project, and returns whether the credentials are valid.
+ * Used by the setup wizard before saving config.
+ */
+
+import { createValidateHandler } from '@prabhask5/stellar-engine/kit';
 import type { RequestHandler } from './$types';
 
+/** Validate Supabase credentials — delegates to stellar-engine's handler factory. */
 export const POST: RequestHandler = createValidateHandler();
 `;
 }
@@ -1615,8 +1913,19 @@ export const POST: RequestHandler = createValidateHandler();
  * @returns The TypeScript source for `src/routes/[...catchall]/+page.ts`.
  */
 function generateCatchallPage(): string {
-  return `import { redirect } from '@sveltejs/kit';
+  return `/**
+ * Catch-All Route Handler — \`[...catchall]/+page.ts\`
+ *
+ * Matches any URL that doesn't correspond to a defined route and
+ * redirects the user back to the home page. Prevents 404 errors
+ * for deep links that no longer exist.
+ */
 
+import { redirect } from '@sveltejs/kit';
+
+/**
+ * Redirect unknown paths to the app root.
+ */
 export function load() {
   redirect(302, '/');
 }
@@ -1630,18 +1939,38 @@ export function load() {
  * @returns The TypeScript source for `src/routes/(protected)/+layout.ts`.
  */
 function generateProtectedLayoutTs(): string {
-  return `import { redirect } from '@sveltejs/kit';
+  return `/**
+ * @fileoverview Auth Guard — protected route group layout loader.
+ *
+ * Redirects unauthenticated users to \`/login\`, preserving the intended
+ * destination as a \`?redirect=\` query parameter so the login page can
+ * navigate back after successful authentication.
+ */
+
+import { redirect } from '@sveltejs/kit';
 import { browser } from '$app/environment';
 import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
 import type { AuthMode, OfflineCredentials, Session } from '@prabhask5/stellar-engine/types';
 import type { LayoutLoad } from './$types';
 
+/**
+ * Data returned by the protected layout load function.
+ */
 export interface ProtectedLayoutData {
+  /** Active Supabase session, or \`null\` when offline. */
   session: Session | null;
+  /** Current authentication mode (\`'online'\`, \`'offline'\`, or \`'none'\`). */
   authMode: AuthMode;
+  /** Cached offline credentials when auth mode is offline. */
   offlineProfile: OfflineCredentials | null;
 }
 
+/**
+ * Enforce authentication — redirect to login if the user has no session.
+ *
+ * @param params - SvelteKit load params (provides the current URL).
+ * @returns Protected layout data with guaranteed auth state.
+ */
 export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> => {
   if (browser) {
     const result = await resolveAuthState();
@@ -1655,6 +1984,7 @@ export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> =>
     }
     return result;
   }
+  /* SSR fallback — no auth info available on the server */
   return { session: null, authMode: 'none', offlineProfile: null };
 };
 `;
@@ -1666,8 +1996,27 @@ export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> =>
  * @returns The Svelte component source for `src/routes/(protected)/+layout.svelte`.
  */
 function generateProtectedLayoutSvelte(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Protected Layout Component — wraps the \`(protected)\` route group.
+
+  Every page inside \`src/routes/(protected)/\` inherits this layout. The auth
+  guard lives in \`+layout.ts\`; this component is a pass-through that renders
+  the child page and provides a hook for protected-area chrome (backgrounds,
+  breadcrumbs, etc.).
+-->
+<script lang="ts">
+  // ==========================================================================
+  //                                IMPORTS
+  // ==========================================================================
+
+  // (no additional imports needed for the pass-through layout)
+
+  // ==========================================================================
+  //                                 PROPS
+  // ==========================================================================
+
   interface Props {
+    /** Default slot content (the routed page component). */
     children?: import('svelte').Snippet;
   }
 
@@ -1687,7 +2036,22 @@ function generateProtectedLayoutSvelte(): string {
  * @returns The Svelte component source for `src/routes/(protected)/profile/+page.svelte`.
  */
 function generateProfilePage(): string {
-  return `<script lang="ts">
+  return `<!--
+  @fileoverview Profile & administration page.
+
+  Capabilities:
+    - View / edit display name and avatar
+    - Change email address (with re-verification)
+    - Change unlock gate type (PIN length, pattern, etc.)
+    - Manage trusted devices (view, revoke)
+    - Toggle debug mode
+    - Reset local database (destructive — requires confirmation)
+-->
+<script lang="ts">
+  // ==========================================================================
+  //                                IMPORTS
+  // ==========================================================================
+
   import { goto } from '$app/navigation';
   import {
     changeSingleUserGate,
@@ -1704,6 +2068,10 @@ function generateProfilePage(): string {
     removeTrustedDevice,
     getCurrentDeviceId
   } from '@prabhask5/stellar-engine';
+
+  // ==========================================================================
+  //                           COMPONENT STATE
+  // ==========================================================================
 
   // TODO: Add profile page state (form fields, device management, debug tools)
 </script>
@@ -1727,12 +2095,29 @@ function generateUpdatePromptComponent(): string {
   /**
    * @fileoverview UpdatePrompt — service-worker update notification.
    *
-   * Uses monitorSwLifecycle() from stellar-engine to detect when a new
-   * version is waiting to activate, and handleSwUpdate() to apply it.
+   * Detects when a new service worker version is waiting to activate and
+   * shows an "update available" prompt. Detection relies on six signals:
+   *   1. \`statechange\` on the installing SW → catches updates during the visit
+   *   2. \`updatefound\` on the registration → catches background installs
+   *   3. \`visibilitychange\` → re-checks when the tab becomes visible
+   *   4. \`online\` event → re-checks when connectivity is restored
+   *   5. Periodic interval → fallback for iOS standalone mode
+   *   6. Initial check on mount → catches SWs that installed before this component
+   *
+   * Uses \`monitorSwLifecycle()\` from stellar-engine to wire up all six, and
+   * \`handleSwUpdate()\` to send SKIP_WAITING + reload on user confirmation.
    */
+
+  // ==========================================================================
+  //                                IMPORTS
+  // ==========================================================================
 
   import { onMount, onDestroy } from 'svelte';
   import { monitorSwLifecycle, handleSwUpdate } from '@prabhask5/stellar-engine/kit';
+
+  // ==========================================================================
+  //                           COMPONENT STATE
+  // ==========================================================================
 
   /** Whether the update prompt is visible */
   let showPrompt = $state(false);
@@ -1740,7 +2125,12 @@ function generateUpdatePromptComponent(): string {
   /** Guard flag to prevent double-reload */
   let reloading = false;
 
+  /** Cleanup function returned by monitorSwLifecycle */
   let cleanup: (() => void) | null = null;
+
+  // ==========================================================================
+  //                      SERVICE WORKER MONITORING
+  // ==========================================================================
 
   onMount(() => {
     cleanup = monitorSwLifecycle({
@@ -1753,6 +2143,10 @@ function generateUpdatePromptComponent(): string {
   onDestroy(() => {
     cleanup?.();
   });
+
+  // ==========================================================================
+  //                          ACTION HANDLERS
+  // ==========================================================================
 
   /**
    * Apply the update: sends SKIP_WAITING to the waiting SW,
@@ -1801,7 +2195,14 @@ function generateUpdatePromptComponent(): string {
  * @returns The TypeScript source for `src/lib/types.ts`.
  */
 function generateAppTypes(): string {
-  return `// App types barrel — re-exports from stellar-engine plus app-specific types
+  return `/**
+ * @fileoverview Type barrel — re-exports from stellar-engine plus app-specific types.
+ *
+ * Conventions used by stellar-engine tables:
+ *   - \`deleted\`    — soft-delete flag (boolean, default \`false\`)
+ *   - \`_version\`   — optimistic concurrency counter (integer, starts at 1)
+ *   - \`device_id\`  — originating device identifier for conflict resolution
+ */
 export type { SyncStatus, AuthMode, OfflineCredentials } from '@prabhask5/stellar-engine/types';
 
 // TODO: Add app-specific type definitions below

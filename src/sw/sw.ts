@@ -27,13 +27,23 @@ export {}; // ensure this is treated as a module
  *
  * The `APP_VERSION` constant is patched automatically by the stellarPWA
  * Vite plugin on every production build.
+ *
+ * @see {@link handleNavigationRequest} for HTML page caching (network-first)
+ * @see {@link handleImmutableAsset} for content-hashed asset caching (cache-first)
+ * @see {@link handleStaticAsset} for general static asset caching (cache-first)
+ * @see {@link backgroundPrecache} for offline-readiness precaching
+ * @see {@link cleanupOldAssets} for stale immutable asset removal
  */
 
 // =============================================================================
 //                              VERSIONING
 // =============================================================================
 
-/** Build-stamped version — updated automatically by the stellarPWA Vite plugin on each build */
+/**
+ * Build-stamped version string — updated automatically by the stellarPWA
+ * Vite plugin on each build. Used to key the shell cache and reported
+ * back to clients via the `GET_VERSION` message handler.
+ */
 const APP_VERSION = '__SW_VERSION__';
 
 // =============================================================================
@@ -42,15 +52,16 @@ const APP_VERSION = '__SW_VERSION__';
 
 /**
  * Persistent cache for immutable assets (`/_app/immutable/*`).
- * These files contain content hashes → safe to cache indefinitely.
- * NOT cleared on deploy — assets accumulate and are cleaned by `cleanupOldAssets()`.
+ * These files contain content hashes in their filenames, making them safe
+ * to cache indefinitely. NOT cleared on deploy — assets accumulate across
+ * builds and are pruned by {@link cleanupOldAssets} when triggered.
  */
 const ASSET_CACHE = '__SW_PREFIX__-assets-v1';
 
 /**
  * Versioned cache for the app shell (HTML, manifest, icons) and other
  * static assets. Re-created on each deploy; old versions are deleted
- * during the `activate` event.
+ * during the `activate` event so only one shell cache exists at a time.
  */
 const SHELL_CACHE = '__SW_PREFIX__-shell-' + APP_VERSION;
 
@@ -61,6 +72,9 @@ const SHELL_CACHE = '__SW_PREFIX__-shell-' + APP_VERSION;
 /**
  * Core app shell resources to precache during the `install` event.
  * These are the minimum files needed for the app to render offline.
+ *
+ * Note: The root HTML (`/`) is cached separately in the install handler
+ * because its failure should abort the installation entirely.
  */
 const PRECACHE_ASSETS = [
   '/manifest.json',
@@ -77,7 +91,7 @@ const PRECACHE_ASSETS = [
 /**
  * Install handler — precaches the minimal app shell.
  *
- * Strategy:
+ * **Strategy:**
  *   1. The root HTML (`/`) is **required** — if it fails, install fails.
  *      Better to stay on the working old SW than activate with no cached HTML.
  *   2. Other shell assets (icons, manifest) are **optional** — failures
@@ -86,6 +100,8 @@ const PRECACHE_ASSETS = [
  *      "update available" prompt.
  *   4. Auto-promotes via `skipWaiting()` after 5 minutes as a fallback for
  *      iOS PWA where the update prompt may never be interacted with.
+ *
+ * @param event - The `install` {@link ExtendableEvent}.
  */
 self.addEventListener('install', (event: ExtendableEvent) => {
   console.log(`[SW] Installing version: ${APP_VERSION}`);
@@ -133,14 +149,16 @@ self.addEventListener('install', (event: ExtendableEvent) => {
 /**
  * Activate handler — cleans up stale caches and claims all clients.
  *
- * Deletes:
+ * **Deletes:**
  *   - Old versioned shell caches (e.g., `__SW_PREFIX__-shell-<old-version>`)
  *   - The legacy `__SW_PREFIX__-cache-v1` cache (one-time migration from the
  *     original single-cache strategy)
  *
- * Keeps:
+ * **Keeps:**
  *   - `ASSET_CACHE` — immutable assets persist across versions
  *   - `SHELL_CACHE` — the current deploy's shell cache
+ *
+ * @param event - The `activate` {@link ExtendableEvent}.
  */
 self.addEventListener('activate', (event: ExtendableEvent) => {
   console.log(`[SW] Activating version: ${APP_VERSION}`);
@@ -177,14 +195,16 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
 /**
  * Fetch handler — routes requests to the appropriate caching strategy.
  *
- * Routing logic (in priority order):
+ * **Routing logic** (in priority order):
  *   1. Skip non-GET requests (mutations should always hit the network)
  *   2. Skip external origins (only cache same-origin resources)
  *   3. Skip `/api/*` routes (backend data — never cache)
- *   4. Navigation requests → `handleNavigationRequest()` (network-first)
- *   5. Immutable assets     → `handleImmutableAsset()`   (cache-first, permanent)
- *   6. Static assets        → `handleStaticAsset()`      (cache-first)
- *   7. Everything else      → `handleOtherRequest()`     (network-first)
+ *   4. Navigation requests  --> {@link handleNavigationRequest} (network-first)
+ *   5. Immutable assets     --> {@link handleImmutableAsset}    (cache-first, permanent)
+ *   6. Static assets        --> {@link handleStaticAsset}       (cache-first)
+ *   7. Everything else      --> {@link handleOtherRequest}      (network-first)
+ *
+ * @param event - The {@link FetchEvent} to handle.
  */
 self.addEventListener('fetch', (event: FetchEvent) => {
   /* Only intercept GET requests — let POST/PUT/DELETE go straight to network */
@@ -229,8 +249,17 @@ self.addEventListener('fetch', (event: FetchEvent) => {
  * Determines whether a given pathname looks like a static asset
  * (scripts, styles, images, fonts, data files).
  *
- * @param pathname — The URL pathname to test (e.g., `/_app/version.json`)
- * @returns `true` if the path matches a known static-asset extension
+ * Matches by file extension or by the `/_app/` prefix (SvelteKit's
+ * client-side output directory).
+ *
+ * @param pathname - The URL pathname to test (e.g., `/_app/version.json`).
+ * @returns `true` if the path matches a known static-asset extension.
+ *
+ * @example
+ * ```ts
+ * isStaticAsset('/icon-192.png');  // true
+ * isStaticAsset('/api/config');    // false
+ * ```
  */
 function isStaticAsset(pathname: string): boolean {
   return (
@@ -257,13 +286,17 @@ function isStaticAsset(pathname: string): boolean {
 /**
  * Handles HTML navigation requests with a **network-first** strategy.
  *
- * 1. Attempt a network fetch with a 3-second timeout (abort via `AbortController`)
- * 2. If successful → cache the response as `/` and return it
- * 3. If failed → serve the cached root HTML for offline use
- * 4. If nothing cached → return a minimal offline fallback page
+ * **Flow:**
+ *   1. Attempt a network fetch with a 3-second timeout (abort via `AbortController`)
+ *   2. If successful --> cache the response as `/` and return it
+ *   3. If failed --> serve the cached root HTML for offline use
+ *   4. If nothing cached --> return a minimal offline fallback page
  *
- * @param request — The navigation `Request` object
- * @returns A `Response` (from network, cache, or inline fallback)
+ * The 3-second timeout prevents the user from staring at a blank screen
+ * on flaky connections while still preferring fresh content.
+ *
+ * @param request - The navigation `Request` object.
+ * @returns A `Response` (from network, cache, or inline fallback).
  */
 async function handleNavigationRequest(request: Request): Promise<Response> {
   const cache = await caches.open(SHELL_CACHE);
@@ -307,12 +340,15 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
 /**
  * Handles requests for immutable assets (`/_app/immutable/*`).
  *
- * Strategy: **cache-first, NEVER revalidate**. These files have content
+ * **Strategy:** cache-first, NEVER revalidate. These files have content
  * hashes baked into their filenames — if the content changes, the filename
  * changes, so a cached version is always correct.
  *
- * @param request — The `Request` for an immutable asset
- * @returns The cached `Response`, or a freshly-fetched one (then cached)
+ * Uses `ASSET_CACHE` which persists across SW versions (not cleared on
+ * deploy). Old entries are pruned by {@link cleanupOldAssets}.
+ *
+ * @param request - The `Request` for an immutable asset.
+ * @returns The cached `Response`, or a freshly-fetched one (then cached).
  */
 async function handleImmutableAsset(request: Request): Promise<Response> {
   const cache = await caches.open(ASSET_CACHE);
@@ -344,12 +380,12 @@ async function handleImmutableAsset(request: Request): Promise<Response> {
  * Handles requests for general static assets (non-immutable JS, CSS, images,
  * fonts, JSON files).
  *
- * Strategy: **cache-first, NO background revalidation**. This saves
+ * **Strategy:** cache-first, NO background revalidation. This saves
  * bandwidth — the shell cache is versioned per deploy, so stale assets
  * are cleaned up automatically when the new SW activates.
  *
- * @param request — The `Request` for a static asset
- * @returns The cached `Response`, or a freshly-fetched one (then cached)
+ * @param request - The `Request` for a static asset.
+ * @returns The cached `Response`, or a freshly-fetched one (then cached).
  */
 async function handleStaticAsset(request: Request): Promise<Response> {
   const cache = await caches.open(SHELL_CACHE);
@@ -380,13 +416,14 @@ async function handleStaticAsset(request: Request): Promise<Response> {
 /**
  * Handles all other same-origin GET requests with a **network-first** strategy.
  *
- * 1. Try the network
- * 2. If successful → cache and return
- * 3. If failed → return cached version
- * 4. If nothing cached → return a 503 "Offline" response
+ * **Flow:**
+ *   1. Try the network
+ *   2. If successful --> cache and return
+ *   3. If failed --> return cached version
+ *   4. If nothing cached --> return a 503 "Offline" response
  *
- * @param request — The `Request` object
- * @returns A `Response` from network or cache
+ * @param request - The `Request` object.
+ * @returns A `Response` from network or cache.
  */
 async function handleOtherRequest(request: Request): Promise<Response> {
   const cache = await caches.open(SHELL_CACHE);
@@ -413,7 +450,7 @@ async function handleOtherRequest(request: Request): Promise<Response> {
  * cached. This makes the entire app available offline without blocking the
  * install event.
  *
- * Key behaviors:
+ * **Key behaviours:**
  *   - Fetches the manifest with a cache-busting query param (`?_=<timestamp>`)
  *   - Checks both `ASSET_CACHE` and `SHELL_CACHE` to avoid redundant downloads
  *   - Downloads in batches of 5 with a 50 ms pause between batches to avoid
@@ -421,6 +458,10 @@ async function handleOtherRequest(request: Request): Promise<Response> {
  *   - Notifies all open windows with `PRECACHE_COMPLETE` when done
  *
  * Triggered by sending `{ type: 'PRECACHE_ALL' }` to the service worker.
+ *
+ * @returns A promise that resolves when precaching is complete (or fails).
+ *
+ * @see {@link cleanupOldAssets} for removing assets no longer in the manifest
  */
 async function backgroundPrecache(): Promise<void> {
   try {
@@ -448,6 +489,7 @@ async function backgroundPrecache(): Promise<void> {
     /* ── Determine which assets still need caching ────────────────── */
     const uncached: string[] = [];
     for (const url of assets) {
+      /* Route to the correct cache based on whether the asset is immutable */
       const isImmutable = url.includes('/_app/immutable/');
       const cache = isImmutable ? assetCache : shellCache;
       const cached = await cache.match(url);
@@ -511,6 +553,8 @@ async function backgroundPrecache(): Promise<void> {
  * versioned and cleaned during the `activate` event.
  *
  * Triggered by sending `{ type: 'CLEANUP_OLD' }` to the service worker.
+ *
+ * @returns A promise that resolves when cleanup is complete.
  */
 async function cleanupOldAssets(): Promise<void> {
   try {
@@ -553,7 +597,12 @@ async function cleanupOldAssets(): Promise<void> {
 /**
  * Broadcasts a message to all open windows/tabs.
  *
- * @param message — The message object to send (e.g., `{ type: 'PRECACHE_COMPLETE', ... }`)
+ * @param message - The message object to send (e.g., `{ type: 'PRECACHE_COMPLETE', ... }`).
+ *
+ * @example
+ * ```ts
+ * notifyClients({ type: 'PRECACHE_COMPLETE', cached: 42, total: 50 });
+ * ```
  */
 function notifyClients(message: Record<string, unknown>): void {
   self.clients.matchAll({ type: 'window' }).then((clients) => {
@@ -573,7 +622,7 @@ function notifyClients(message: Record<string, unknown>): void {
  * styling — it will be precached and served automatically instead of
  * this bare-bones fallback.
  *
- * @returns An unstyled HTML string for the offline fallback
+ * @returns An unstyled HTML string for the offline fallback.
  */
 function getOfflineHTML(): string {
   return `<!DOCTYPE html>
@@ -598,13 +647,15 @@ function getOfflineHTML(): string {
 /**
  * Listens for messages from the app's client-side code.
  *
- * Supported message types:
- *   - `SKIP_WAITING`     → Immediately activate the waiting SW (user accepted update)
- *   - `GET_VERSION`      → Responds with the current `APP_VERSION` via `MessagePort`
- *   - `PRECACHE_ALL`     → Triggers `backgroundPrecache()` to download all assets
- *   - `CLEANUP_OLD`      → Triggers `cleanupOldAssets()` to remove stale cache entries
- *   - `CACHE_URLS`       → Caches a specific list of URLs (used for route prefetching)
- *   - `GET_CACHE_STATUS` → Responds with cache completeness info via `MessagePort`
+ * **Supported message types:**
+ *   - `SKIP_WAITING`     --> Immediately activate the waiting SW (user accepted update)
+ *   - `GET_VERSION`      --> Responds with the current `APP_VERSION` via `MessagePort`
+ *   - `PRECACHE_ALL`     --> Triggers {@link backgroundPrecache} to download all assets
+ *   - `CLEANUP_OLD`      --> Triggers {@link cleanupOldAssets} to remove stale cache entries
+ *   - `CACHE_URLS`       --> Caches a specific list of URLs (used for route prefetching)
+ *   - `GET_CACHE_STATUS` --> Responds with cache completeness info via `MessagePort`
+ *
+ * @param event - The {@link ExtendableMessageEvent} from a client.
  */
 self.addEventListener('message', (event: ExtendableMessageEvent) => {
   const { type } = event.data || {};
@@ -636,6 +687,7 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
     const shellCachePromise = caches.open(SHELL_CACHE);
     Promise.all([assetCachePromise, shellCachePromise]).then(([ac, sc]) => {
       urls.forEach((url) => {
+        /* Route each URL to the correct cache based on immutability */
         const isImmutable = url.includes('/_app/immutable/');
         const cache = isImmutable ? ac : sc;
         cache.add(url).catch(() => {});
@@ -659,11 +711,14 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
  * Computes the current cache completeness by comparing cached entries
  * against the asset manifest.
  *
- * @returns An object with:
+ * Attempts to find the manifest in cache first (for offline use), then
+ * falls back to a network fetch.
+ *
+ * @returns An object describing cache readiness:
  *   - `cached`  — Number of manifest assets currently in cache
  *   - `total`   — Total number of assets in the manifest
  *   - `ready`   — `true` if every asset is cached (full offline support)
- *   - `version` — The manifest version string
+ *   - `version` — The manifest version string (if available)
  *   - `error`   — Error message string (only present if something went wrong)
  */
 async function getCacheStatus(): Promise<{

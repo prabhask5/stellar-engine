@@ -1,13 +1,51 @@
 /**
  * @fileoverview Server-side API helpers for SvelteKit route handlers.
  *
- * Extracts reusable backend logic so scaffolded API routes can be thin wrappers.
+ * This module extracts reusable backend logic so scaffolded API routes can be
+ * thin wrappers around these helpers. It provides three main capabilities:
+ *
+ *   - **Server config reading** — reads Supabase credentials from environment
+ *     variables at runtime (`getServerConfig`)
+ *   - **Vercel deployment** — upserts env vars and triggers production
+ *     redeployments via the Vercel REST API (`deployToVercel`)
+ *   - **Credential validation** — factory for a SvelteKit POST handler that
+ *     validates Supabase credentials (`createValidateHandler`)
+ *
+ * All Vercel API interactions use a create-or-update (upsert) strategy for
+ * environment variables, and support both git-based and clone-based
+ * redeployment strategies for maximum compatibility.
+ *
+ * @module kit/server
+ *
+ * @example
+ * ```ts
+ * // In /api/config/+server.ts
+ * import { getServerConfig } from 'stellar-engine/kit/server';
+ * export function GET() {
+ *   return new Response(JSON.stringify(getServerConfig()));
+ * }
+ * ```
+ *
+ * @see {@link https://vercel.com/docs/rest-api} for Vercel API reference
+ * @see {@link validateSupabaseCredentials} in `supabase/validate.ts`
  */
 // =============================================================================
 //  HELPERS — Vercel API Utilities
 // =============================================================================
 /**
  * Low-level wrapper around the Vercel REST API.
+ *
+ * Handles authentication headers and JSON body serialization for all
+ * Vercel API calls. This is an internal helper — not exported.
+ *
+ * @param path   - The API path (appended to `https://api.vercel.com`).
+ * @param token  - The Vercel bearer token for authorization.
+ * @param method - HTTP method (defaults to `'GET'`).
+ * @param body   - Optional request body, serialized to JSON.
+ *
+ * @returns The raw `Response` from the Vercel API.
+ *
+ * @throws {TypeError} If the `fetch` call itself fails (e.g. network error).
  */
 async function vercelApi(path, token, method = 'GET', body) {
     return fetch(`https://api.vercel.com${path}`, {
@@ -22,10 +60,21 @@ async function vercelApi(path, token, method = 'GET', body) {
 /**
  * Creates or updates a single environment variable on a Vercel project.
  *
- * Strategy:
- *  1. Attempt to create via `POST /v10/projects/:id/env`.
- *  2. If `ENV_ALREADY_EXISTS`, list all env vars to find the existing
- *     entry's ID, then patch it with the new value.
+ * Implements an upsert strategy:
+ *   1. Attempt to create via `POST /v10/projects/:id/env`.
+ *   2. If Vercel returns `ENV_ALREADY_EXISTS`, list all env vars to find
+ *      the existing entry's ID, then patch it with the new value.
+ *
+ * This two-step approach is necessary because Vercel's create endpoint
+ * does not support an "upsert" mode — it always fails if the key exists.
+ *
+ * @param projectId - The Vercel project ID.
+ * @param token     - The Vercel bearer token.
+ * @param key       - The environment variable name to set.
+ * @param value     - The environment variable value.
+ *
+ * @throws {Error} If the create fails for a reason other than already-exists,
+ *                 or if the list/patch fallback also fails.
  */
 async function setEnvVar(projectId, token, key, value) {
     const createRes = await vercelApi(`/v10/projects/${projectId}/env`, token, 'POST', {
@@ -39,7 +88,12 @@ async function setEnvVar(projectId, token, key, value) {
     const createData = await createRes.json();
     const errorCode = createData.error?.code || '';
     const errorMessage = createData.error?.message || '';
+    /* If the variable already exists, fall through to the update path.
+       Vercel may report this via error code or message text depending
+       on the API version, so we check both. */
     if (errorCode === 'ENV_ALREADY_EXISTS' || errorMessage.includes('already exists')) {
+        /* List all env vars to find the existing entry's ID — Vercel requires
+           the entry ID for PATCH operations, not the key name. */
         const listRes = await vercelApi(`/v9/projects/${projectId}/env`, token);
         if (!listRes.ok) {
             throw new Error(`Failed to list env vars: ${listRes.statusText}`);
@@ -53,6 +107,8 @@ async function setEnvVar(projectId, token, key, value) {
             }
         }
         else {
+            /* Edge case: Vercel says the var exists but it's not in the list.
+               This can happen with env var scoping issues. */
             throw new Error(`Env var ${key} reported as existing but not found in list`);
         }
     }
@@ -65,8 +121,29 @@ async function setEnvVar(projectId, token, key, value) {
 // =============================================================================
 /**
  * Reads Supabase configuration from `process.env` at runtime.
- * Returns `{ configured: true, supabaseUrl, supabaseAnonKey }` when both
- * env vars exist, or `{ configured: false }` otherwise.
+ *
+ * Checks for the presence of both `PUBLIC_SUPABASE_URL` and
+ * `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` environment variables.
+ * Returns `{ configured: true }` with the values when both exist,
+ * or `{ configured: false }` otherwise.
+ *
+ * This is intended for use in SvelteKit server routes (e.g. `+server.ts`)
+ * to report configuration status to the client during the setup flow.
+ *
+ * @returns The server config status with optional Supabase credentials.
+ *
+ * @example
+ * ```ts
+ * // In /api/config/+server.ts
+ * import { getServerConfig } from 'stellar-engine/kit/server';
+ * export function GET() {
+ *   return new Response(JSON.stringify(getServerConfig()), {
+ *     headers: { 'Content-Type': 'application/json' }
+ *   });
+ * }
+ * ```
+ *
+ * @see {@link ServerConfig} for the return type shape
  */
 export function getServerConfig() {
     const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
@@ -77,21 +154,58 @@ export function getServerConfig() {
     return { configured: false };
 }
 /**
- * Full Vercel deployment flow: upsert env vars, then trigger a production
- * redeployment via git-based or clone-based strategy.
+ * Full Vercel deployment flow: upserts Supabase environment variables,
+ * then triggers a production redeployment.
+ *
+ * The deployment uses a two-strategy approach:
+ *   - **Strategy A (preferred)**: Git-based redeployment using the repo
+ *     metadata from Vercel's environment (`VERCEL_GIT_REPO_SLUG`, etc.).
+ *     This triggers a fresh build from the source branch.
+ *   - **Strategy B (fallback)**: Clone-based redeployment using an existing
+ *     deployment ID (`VERCEL_DEPLOYMENT_ID` or `VERCEL_URL`). This
+ *     reuses the last build artifacts with updated env vars.
+ *
+ * Both strategies target the `production` environment.
+ *
+ * @param config - The deployment configuration containing Vercel auth
+ *                 credentials, project ID, and Supabase connection values.
+ *
+ * @returns A result object indicating success/failure with an optional
+ *          deployment URL or error message.
+ *
+ * @example
+ * ```ts
+ * const result = await deployToVercel({
+ *   vercelToken: 'tok_...',
+ *   projectId: 'prj_...',
+ *   supabaseUrl: 'https://abc.supabase.co',
+ *   supabaseAnonKey: 'eyJ...'
+ * });
+ * if (!result.success) console.error(result.error);
+ * ```
+ *
+ * @see {@link DeployConfig} for the input configuration shape
+ * @see {@link DeployResult} for the return type shape
+ * @see {@link setEnvVar} for the upsert strategy used for env vars
  */
 export async function deployToVercel(config) {
     try {
-        // Phase 1 — Upsert environment variables
+        // -------------------------------------------------------------------------
+        //  Phase 1 — Upsert environment variables
+        // -------------------------------------------------------------------------
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_URL', config.supabaseUrl);
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY', config.supabaseAnonKey);
-        // Phase 2 — Trigger production redeployment
+        // -------------------------------------------------------------------------
+        //  Phase 2 — Trigger production redeployment
+        // -------------------------------------------------------------------------
         const deploymentId = process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_URL;
         const gitRepo = process.env.VERCEL_GIT_REPO_SLUG;
         const gitOwner = process.env.VERCEL_GIT_REPO_OWNER;
         const gitRef = process.env.VERCEL_GIT_COMMIT_REF || 'main';
         let deploymentUrl = '';
-        // Strategy A — Git-based redeployment (preferred)
+        /* Strategy A — Git-based redeployment (preferred).
+           Uses the connected GitHub repo to trigger a fresh build from source.
+           Only available when Vercel has git integration metadata. */
         if (gitRepo && gitOwner) {
             const deployRes = await vercelApi(`/v13/deployments`, config.vercelToken, 'POST', {
                 name: config.projectId,
@@ -108,7 +222,10 @@ export async function deployToVercel(config) {
                 deploymentUrl = deployData.url || '';
             }
         }
-        // Strategy B — Clone current deployment (fallback)
+        /* Strategy B — Clone current deployment (fallback).
+           Reuses the most recent deployment's build output with the newly
+           updated env vars. Used when git metadata is unavailable (e.g.
+           manual deploys or Vercel CLI uploads). */
         if (!deploymentUrl && deploymentId) {
             const redeployRes = await vercelApi(`/v13/deployments`, config.vercelToken, 'POST', {
                 name: config.projectId,
@@ -129,11 +246,37 @@ export async function deployToVercel(config) {
     }
 }
 /**
- * Factory returning a SvelteKit POST handler that validates Supabase credentials.
- * The handler parses the request body and delegates to `validateSupabaseCredentials`.
+ * Factory returning a SvelteKit POST handler that validates Supabase
+ * credentials by attempting to connect to the provided Supabase instance.
+ *
+ * The returned handler:
+ *   1. Parses the JSON request body for `supabaseUrl` and `supabaseAnonKey`
+ *   2. Validates that both fields are present (returns 400 if not)
+ *   3. Delegates to `validateSupabaseCredentials` for the actual check
+ *   4. Returns a JSON response with the validation result
+ *
+ * The `validateSupabaseCredentials` import is dynamic (`await import(...)`)
+ * to keep this module's dependency footprint minimal — the validation logic
+ * and its Supabase client dependency are only loaded when the endpoint is
+ * actually called.
+ *
+ * @returns An async handler function compatible with SvelteKit's
+ *          `RequestHandler` signature for POST endpoints.
+ *
+ * @example
+ * ```ts
+ * // In /api/validate-supabase/+server.ts
+ * import { createValidateHandler } from 'stellar-engine/kit/server';
+ * export const POST = createValidateHandler();
+ * ```
+ *
+ * @see {@link validateSupabaseCredentials} in `supabase/validate.ts`
  */
 export function createValidateHandler() {
     return async ({ request }) => {
+        /* Dynamic import keeps the Supabase client out of the module graph
+           until this handler is actually invoked — reduces cold start time
+           for routes that don't need validation. */
         const { validateSupabaseCredentials } = await import('../supabase/validate.js');
         try {
             const { supabaseUrl, supabaseAnonKey } = await request.json();

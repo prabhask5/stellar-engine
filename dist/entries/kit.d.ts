@@ -1,3 +1,14 @@
+/**
+ * @fileoverview Kit subpath barrel — `@prabhask5/stellar-engine/kit`
+ *
+ * SvelteKit-specific helpers for server routes, layout load functions, email
+ * confirmation flows, service worker lifecycle management, and auth hydration.
+ * These utilities bridge the stellar-engine core with SvelteKit's routing and
+ * server conventions.
+ *
+ * This entry point is intended for use **only** within SvelteKit projects and
+ * should not be imported from plain Svelte or non-Kit environments.
+ */
 export { getServerConfig, deployToVercel, createValidateHandler } from '../kit/server.js';
 export type { DeployConfig, DeployResult, ServerConfig } from '../kit/server.js';
 export { resolveRootLayout, resolveProtectedLayout, resolveSetupAccess } from '../kit/loads.js';

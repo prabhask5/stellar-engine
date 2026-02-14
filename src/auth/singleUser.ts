@@ -1,13 +1,52 @@
 /**
- * Single-User Auth Module
+ * @fileoverview Single-User Authentication Module
  *
- * Uses Supabase email/password auth where the PIN *is* the password (padded).
- * Replaces the previous anonymous auth + client-side SHA-256 hash approach.
+ * Provides the complete authentication lifecycle for single-user mode, where a
+ * single user account is tied to the application instance. This module handles
+ * setup, unlock (login), locking, gate (PIN/password) changes, email changes,
+ * profile updates, multi-device linking, and full account reset.
  *
- * - Setup: signUp() with email + padded PIN
- * - Unlock: signInWithPassword() with email + padded PIN
- * - Device verification: signInWithOtp() for untrusted devices
- * - Offline fallback: cached credentials in IndexedDB
+ * ## Architecture
+ *
+ * Authentication is backed by Supabase email/password auth, where the user's
+ * PIN or password is padded (via {@link padPin}) to meet Supabase's minimum
+ * password length requirement. A local IndexedDB config store
+ * (`singleUserConfig` table) mirrors essential auth metadata for offline
+ * fallback and fast reads.
+ *
+ * ## Auth Flow Summary
+ *
+ * 1. **Setup** ({@link setupSingleUser}): Creates a Supabase user with
+ *    `signUp()`. Optionally requires email confirmation.
+ * 2. **Unlock** ({@link unlockSingleUser}): Authenticates via
+ *    `signInWithPassword()`. If device verification is enabled, untrusted
+ *    devices are challenged with an OTP email before being granted a session.
+ * 3. **Offline fallback**: When offline, credentials are verified against a
+ *    locally-cached SHA-256 hash of the gate. A cached Supabase session is
+ *    restored if available; otherwise, a synthetic offline session is created.
+ * 4. **Lock** ({@link lockSingleUser}): Stops the sync engine and clears
+ *    in-memory auth state, but preserves the Supabase session and local data.
+ *
+ * ## Security Considerations
+ *
+ * - **PIN padding**: PINs are short by design. The {@link padPin} function
+ *   appends an app-specific suffix to meet Supabase's 6-character minimum,
+ *   but the effective entropy remains that of the original PIN.
+ * - **Offline hash**: The gate hash stored in IndexedDB uses SHA-256 via the
+ *   Web Crypto API. This is a convenience fallback, NOT a substitute for
+ *   server-side verification. An attacker with IndexedDB access could
+ *   brute-force a short PIN.
+ * - **Rate limiting**: The {@link preCheckLogin} guard provides client-side
+ *   rate limiting to slow down brute-force attempts. Server-side rate limiting
+ *   is handled by Supabase.
+ * - **Device verification**: When enabled, untrusted devices must verify via
+ *   an email OTP before a session is granted. See {@link deviceVerification}.
+ *
+ * @module singleUser
+ * @see {@link deviceVerification} for the device trust and OTP verification layer
+ * @see {@link offlineCredentials} for cached credential management
+ * @see {@link offlineSession} for synthetic offline session creation
+ * @see {@link loginGuard} for pre-check rate limiting
  */
 
 import type { SingleUserConfig } from '../types';
@@ -30,12 +69,19 @@ import { debugLog, debugWarn, debugError } from '../debug';
 import { preCheckLogin, onLoginSuccess, onLoginFailure } from './loginGuard';
 import type { PreCheckStrategy } from './loginGuard';
 
+/** Constant key used for the single config record in IndexedDB. */
 const CONFIG_ID = 'config';
 
-// ============================================================
+// =============================================================================
 // HELPERS
-// ============================================================
+// =============================================================================
 
+/**
+ * Retrieve the Dexie database instance from the engine configuration.
+ *
+ * @returns The initialized Dexie database instance.
+ * @throws {Error} If the database has not been initialized yet (engine not started).
+ */
 function getDb() {
   const db = getEngineConfig().db;
   if (!db) throw new Error('Database not initialized.');
@@ -44,13 +90,40 @@ function getDb() {
 
 /**
  * Pad a PIN to meet Supabase's minimum password length.
- * e.g. "1234" → "1234_stellar" (12 chars, well above the 6-char minimum)
+ *
+ * Supabase requires passwords of at least 6 characters. Since PINs can be as
+ * short as 4 digits, this function appends an app-specific prefix as a suffix
+ * to reach a safe length.
+ *
+ * @param pin - The raw PIN/password entered by the user.
+ * @returns The padded string suitable for use as a Supabase password.
+ *
+ * @example
+ * ```ts
+ * // With default prefix 'app':
+ * padPin('1234'); // => '1234_app'
+ *
+ * // With custom prefix 'stellar':
+ * padPin('1234'); // => '1234_stellar'
+ * ```
+ *
+ * @security The padding increases character length but does NOT increase
+ *   entropy. The suffix is deterministic and app-wide.
  */
 export function padPin(pin: string): string {
   const prefix = getEngineConfig().prefix || 'app';
   return `${pin}_${prefix}`;
 }
 
+/**
+ * Build the full redirect URL for email confirmation flows.
+ *
+ * Uses `window.location.origin` combined with the configured
+ * `confirmRedirectPath` (defaults to `/confirm`). Falls back to a relative
+ * `/confirm` path in non-browser environments (e.g., SSR).
+ *
+ * @returns The absolute URL to redirect to after email confirmation.
+ */
 function getConfirmRedirectUrl(): string {
   if (typeof window !== 'undefined') {
     const path = getEngineConfig().auth?.confirmRedirectPath || '/confirm';
@@ -59,23 +132,48 @@ function getConfirmRedirectUrl(): string {
   return '/confirm';
 }
 
+/**
+ * Read the single-user configuration record from IndexedDB.
+ *
+ * @returns The stored config, or `null` if no config exists (not yet set up).
+ */
 async function readConfig(): Promise<SingleUserConfig | null> {
   const db = getDb();
   const record = await db.table('singleUserConfig').get(CONFIG_ID);
   return record as SingleUserConfig | null;
 }
 
+/**
+ * Write (create or update) the single-user configuration record in IndexedDB.
+ *
+ * @param config - The complete configuration object to persist. Must include
+ *   `id: 'config'` to match the constant key.
+ */
 async function writeConfig(config: SingleUserConfig): Promise<void> {
   const db = getDb();
   await db.table('singleUserConfig').put(config);
 }
 
-// ============================================================
+// =============================================================================
 // PUBLIC API
-// ============================================================
+// =============================================================================
 
 /**
  * Check if single-user mode has been set up (config exists in IndexedDB).
+ *
+ * This is a lightweight read used by the UI to decide whether to show the
+ * setup screen or the unlock screen.
+ *
+ * @returns `true` if a single-user config record exists, `false` otherwise.
+ *
+ * @example
+ * ```ts
+ * if (await isSingleUserSetUp()) {
+ *   showUnlockScreen();
+ * } else {
+ *   showSetupScreen();
+ * }
+ * ```
  */
 export async function isSingleUserSetUp(): Promise<boolean> {
   try {
@@ -88,13 +186,31 @@ export async function isSingleUserSetUp(): Promise<boolean> {
 
 /**
  * Get non-sensitive display info about the single user.
- * Returns null if not set up.
+ *
+ * Returns profile data, gate type, code length, and a masked email suitable
+ * for display in the UI. Does NOT return the gate hash or any secrets.
+ *
+ * @returns An object with display-safe user info, or `null` if not set up.
+ *
+ * @example
+ * ```ts
+ * const info = await getSingleUserInfo();
+ * if (info) {
+ *   console.log(info.maskedEmail); // "pr••••@gmail.com"
+ *   console.log(info.gateType);    // "code"
+ * }
+ * ```
  */
 export async function getSingleUserInfo(): Promise<{
+  /** Arbitrary user profile data (name, avatar, etc.). */
   profile: Record<string, unknown>;
+  /** The type of gate: 'code' for numeric PIN, 'password' for freeform. */
   gateType: SingleUserConfig['gateType'];
+  /** Length of the numeric code (4 or 6), if gateType is 'code'. */
   codeLength?: 4 | 6;
+  /** The raw email address (included for internal use). */
   email?: string;
+  /** The masked email for safe display (e.g. "pr••••@gmail.com"). */
   maskedEmail?: string;
 } | null> {
   const config = await readConfig();
@@ -109,12 +225,42 @@ export async function getSingleUserInfo(): Promise<{
 }
 
 /**
- * First-time setup: create Supabase user with email/password auth.
+ * First-time setup: create a Supabase user with email/password auth.
  *
- * Uses signUp() which sends a confirmation email if emailConfirmation is enabled.
- * The PIN is padded to meet Supabase's minimum password length.
+ * This is the entry point for new users. It creates a Supabase account using
+ * `signUp()`, stores a local config in IndexedDB, and optionally requires
+ * email confirmation before granting a session.
  *
- * @returns confirmationRequired — true if the caller should show a "check your email" modal
+ * ## Online vs Offline
+ *
+ * - **Online**: Creates a real Supabase user, caches offline credentials,
+ *   trusts the current device, and sets up the auth state.
+ * - **Offline**: Creates a temporary local-only setup with a random UUID as
+ *   the user ID. The real Supabase account will be created when the user
+ *   comes back online (handled by the sync engine).
+ *
+ * @param gate - The PIN or password chosen by the user.
+ * @param profile - Arbitrary profile data (e.g., `{ name: 'Alice' }`).
+ * @param email - The user's email address for Supabase auth.
+ * @returns An object with `error` (string or null) and `confirmationRequired`
+ *   (true if the caller should show a "check your email" modal).
+ *
+ * @throws Never throws directly; all errors are caught and returned in the
+ *   `error` field.
+ *
+ * @example
+ * ```ts
+ * const result = await setupSingleUser('1234', { name: 'Alice' }, 'alice@example.com');
+ * if (result.error) {
+ *   showError(result.error);
+ * } else if (result.confirmationRequired) {
+ *   showEmailConfirmationModal();
+ * } else {
+ *   navigateToHome();
+ * }
+ * ```
+ *
+ * @see {@link completeSingleUserSetup} for finalizing after email confirmation
  */
 export async function setupSingleUser(
   gate: string,
@@ -129,11 +275,12 @@ export async function setupSingleUser(
     const emailConfirmationEnabled = engineConfig.auth?.emailConfirmation?.enabled ?? false;
 
     const paddedPassword = padPin(gate);
-    const gateHash = await hashValue(gate); // Keep hash for offline fallback
+    const gateHash = await hashValue(gate); /* Keep hash for offline fallback */
     const now = new Date().toISOString();
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
-    // Build profile metadata for Supabase user_metadata
+    /* Build profile metadata for Supabase user_metadata — allows the host app
+       to transform profile fields into a Supabase-friendly shape */
     const profileToMetadata = engineConfig.auth?.profileToMetadata;
     const metadata = {
       ...(profileToMetadata ? profileToMetadata(profile) : profile),
@@ -157,9 +304,9 @@ export async function setupSingleUser(
       }
 
       const user = data.user!;
-      const session = data.session; // null if email confirmation required
+      const session = data.session; /* null if email confirmation is required */
 
-      // Store config in IndexedDB
+      /* Persist config to IndexedDB so subsequent unlocks can work offline */
       const config: SingleUserConfig = {
         id: CONFIG_ID,
         gateType,
@@ -173,30 +320,32 @@ export async function setupSingleUser(
       };
       await writeConfig(config);
 
-      // If email confirmation is required, session will be null
-      // The caller should show a "check your email" modal
+      /* If email confirmation is required, session will be null.
+         The caller should show a "check your email" modal and wait for
+         the AUTH_CONFIRMED BroadcastChannel message. */
       if (emailConfirmationEnabled && !session) {
         debugLog('[SingleUser] Setup initiated, awaiting email confirmation for:', email);
         return { error: null, confirmationRequired: true };
       }
 
-      // No confirmation needed (or already confirmed) — proceed immediately
+      /* No confirmation needed (or already confirmed) — proceed immediately */
       if (session) {
-        // Cache offline credentials
+        /* Cache offline credentials — non-fatal if this fails */
         try {
           await cacheOfflineCredentials(email, gate, user, session);
         } catch (e) {
           debugWarn('[SingleUser] Failed to cache offline credentials:', e);
         }
 
-        // Create offline session
+        /* Create offline session for future offline unlocks */
         try {
           await createOfflineSession(user.id);
         } catch (e) {
           debugWarn('[SingleUser] Failed to create offline session:', e);
         }
 
-        // Auto-trust current device
+        /* Auto-trust current device so the user is not immediately challenged
+           with device verification on the device they just set up */
         try {
           await trustCurrentDevice(user.id);
         } catch (e) {
@@ -210,6 +359,8 @@ export async function setupSingleUser(
       return { error: null, confirmationRequired: false };
     } else {
       // --- OFFLINE SETUP ---
+      /* Generate a temporary UUID for the user. This will be replaced with the
+         real Supabase user ID once the device comes online and syncs. */
       const tempUserId = crypto.randomUUID();
 
       const config: SingleUserConfig = {
@@ -247,7 +398,17 @@ export async function setupSingleUser(
 
 /**
  * Complete setup after email confirmation succeeds.
- * Called when the original tab receives AUTH_CONFIRMED via BroadcastChannel.
+ *
+ * Called when the original tab receives an `AUTH_CONFIRMED` message via
+ * BroadcastChannel. At this point, Supabase has confirmed the email and a
+ * session should be available. This function caches offline credentials,
+ * creates an offline session, and trusts the current device.
+ *
+ * @returns An object with `error` (string or null).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @see {@link setupSingleUser} for the initial setup that triggers confirmation
  */
 export async function completeSingleUserSetup(): Promise<{ error: string | null }> {
   try {
@@ -256,7 +417,8 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
       return { error: 'Single-user config not found' };
     }
 
-    // After email confirmation, the session should now be available
+    /* After email confirmation, the session should now be available
+       in Supabase's internal storage (localStorage) */
     const {
       data: { session },
       error: sessionError
@@ -268,28 +430,30 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
 
     const user = session.user;
 
-    // Update config with user ID if needed
+    /* Update config with real Supabase user ID if it was missing
+       (e.g., offline setup that was later confirmed) */
     if (!config.supabaseUserId) {
       config.supabaseUserId = user.id;
       config.updatedAt = new Date().toISOString();
       await writeConfig(config);
     }
 
-    // Cache offline credentials
+    /* Cache offline credentials — uses gateHash as password fallback
+       since we no longer have the raw gate at this point */
     try {
       await cacheOfflineCredentials(config.email || '', config.gateHash || '', user, session);
     } catch (e) {
       debugWarn('[SingleUser] Failed to cache offline credentials after confirmation:', e);
     }
 
-    // Create offline session
+    /* Create offline session */
     try {
       await createOfflineSession(user.id);
     } catch (e) {
       debugWarn('[SingleUser] Failed to create offline session after confirmation:', e);
     }
 
-    // Auto-trust current device
+    /* Auto-trust current device */
     try {
       await trustCurrentDevice(user.id);
     } catch (e) {
@@ -307,9 +471,46 @@ export async function completeSingleUserSetup(): Promise<{ error: string | null 
 }
 
 /**
- * Unlock: verify PIN via signInWithPassword, handle device verification.
+ * Unlock (login) the single-user account by verifying the PIN/password.
  *
- * Returns deviceVerificationRequired if the device is untrusted.
+ * ## Online Flow
+ *
+ * 1. Pre-check via {@link preCheckLogin} (client-side rate limiting).
+ * 2. Authenticate with Supabase `signInWithPassword()`.
+ * 3. If device verification is enabled and this device is untrusted, trigger
+ *    an OTP email and return `deviceVerificationRequired: true`.
+ * 4. Otherwise, cache credentials, update offline session, refresh the local
+ *    gate hash, and set auth state.
+ *
+ * ## Offline Flow
+ *
+ * 1. Verify the gate against the locally-stored SHA-256 hash.
+ * 2. Attempt to restore a cached Supabase session.
+ * 3. If no cached session, create a synthetic offline session.
+ *
+ * @param gate - The PIN or password entered by the user.
+ * @returns An object containing:
+ *   - `error`: Error message or null on success.
+ *   - `deviceVerificationRequired`: True if the UI should show OTP verification.
+ *   - `maskedEmail`: Masked email for display during device verification.
+ *   - `retryAfterMs`: Milliseconds to wait before retrying (rate-limited).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @example
+ * ```ts
+ * const result = await unlockSingleUser('1234');
+ * if (result.error) {
+ *   showError(result.error);
+ * } else if (result.deviceVerificationRequired) {
+ *   showDeviceVerificationModal(result.maskedEmail);
+ * } else {
+ *   navigateToHome();
+ * }
+ * ```
+ *
+ * @see {@link completeDeviceVerification} for finishing the OTP flow
+ * @see {@link lockSingleUser} for the reverse operation
  */
 export async function unlockSingleUser(gate: string): Promise<{
   error: string | null;
@@ -329,7 +530,8 @@ export async function unlockSingleUser(gate: string): Promise<{
     if (!isOffline && config.email) {
       // --- ONLINE UNLOCK via Supabase signInWithPassword ---
 
-      // Pre-check credentials locally before calling Supabase
+      /* Pre-check credentials locally before calling Supabase to enforce
+         client-side rate limiting and avoid unnecessary network requests */
       const preCheck = await preCheckLogin(gate, 'single-user');
       if (!preCheck.proceed) {
         return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
@@ -346,28 +548,33 @@ export async function unlockSingleUser(gate: string): Promise<{
       if (error) {
         await onLoginFailure(strategy, 'single-user');
         debugWarn('[SingleUser] signInWithPassword failed:', error.message);
+        /* Return generic error to avoid leaking whether the account exists */
         return { error: 'Incorrect code' };
       }
 
-      // Successful Supabase login
+      /* Successful Supabase login — reset rate-limit counters */
       onLoginSuccess();
 
       const session = data.session!;
       const user = data.user!;
 
-      // Update supabaseUserId if needed
+      /* Sync the Supabase user ID into local config if it changed
+         (e.g., after account migration or re-creation) */
       if (config.supabaseUserId !== user.id) {
         config.supabaseUserId = user.id;
         config.updatedAt = new Date().toISOString();
         await writeConfig(config);
       }
 
-      // Check device verification
+      /* Device verification gate: if enabled, check whether this device
+         is in the trusted_devices table before granting access */
       const deviceVerificationEnabled = engineConfig.auth?.deviceVerification?.enabled ?? false;
       if (deviceVerificationEnabled) {
         const trusted = await isDeviceTrusted(user.id);
         if (!trusted) {
-          // Untrusted device — sign out, send OTP
+          /* Untrusted device — send OTP email and signal the UI to show
+             the verification prompt. The session remains valid but the
+             user cannot proceed until the device is verified. */
           debugLog('[SingleUser] Untrusted device detected, sending OTP');
           const { error: otpError } = await sendDeviceVerification(config.email);
           if (otpError) {
@@ -380,32 +587,35 @@ export async function unlockSingleUser(gate: string): Promise<{
           };
         }
 
-        // Trusted — touch device
+        /* Trusted device — refresh the last_used_at timestamp to extend
+           the trust window */
         await touchTrustedDevice(user.id);
       }
 
-      // Re-apply profile to user_metadata
+      /* Re-apply profile to user_metadata on each login to keep Supabase
+         in sync with any local profile changes made while offline */
       const profileToMetadata = engineConfig.auth?.profileToMetadata;
       const metadata = profileToMetadata ? profileToMetadata(config.profile) : config.profile;
       await supabase.auth.updateUser({ data: metadata }).catch((e: unknown) => {
         debugWarn('[SingleUser] Failed to update user_metadata on unlock:', e);
       });
 
-      // Cache offline credentials
+      /* Cache offline credentials for future offline unlocks */
       try {
         await cacheOfflineCredentials(config.email, gate, user, session);
       } catch (e) {
         debugWarn('[SingleUser] Failed to update offline credentials:', e);
       }
 
-      // Update offline session
+      /* Update offline session */
       try {
         await createOfflineSession(user.id);
       } catch (e) {
         debugWarn('[SingleUser] Failed to update offline session:', e);
       }
 
-      // Update local gateHash for offline fallback
+      /* Update the local gate hash in case the user changed their PIN
+         on another device — keeps offline verification in sync */
       const newHash = await hashValue(gate);
       if (config.gateHash !== newHash) {
         config.gateHash = newHash;
@@ -419,13 +629,15 @@ export async function unlockSingleUser(gate: string): Promise<{
       return { error: null };
     } else {
       // --- OFFLINE UNLOCK (or no email — legacy migration) ---
-      // Fall back to local hash verification
+      /* Fall back to local hash verification when offline or when the
+         config has no email (legacy accounts before email was required) */
       const inputHash = await hashValue(gate);
       if (config.gateHash && inputHash !== config.gateHash) {
         return { error: 'Incorrect code' };
       }
 
-      // Try cached Supabase session
+      /* Try to restore a cached Supabase session from the Supabase client's
+         internal storage — this may still be valid if the token hasn't expired */
       const cachedSession = await getSession();
       if (cachedSession) {
         authState.setSupabaseAuth(cachedSession);
@@ -433,7 +645,8 @@ export async function unlockSingleUser(gate: string): Promise<{
         return { error: null };
       }
 
-      // No cached session — fall back to offline auth
+      /* No cached session available — create a synthetic offline session
+         so the app can function in read/write-locally mode */
       const userId = config.supabaseUserId || crypto.randomUUID();
       await createOfflineSession(userId);
 
@@ -457,21 +670,40 @@ export async function unlockSingleUser(gate: string): Promise<{
 }
 
 /**
- * Complete device verification after OTP email link is clicked.
- * Called when the original tab receives AUTH_CONFIRMED via BroadcastChannel.
+ * Complete device verification after the OTP email link is clicked.
+ *
+ * This can be called in two scenarios:
+ * 1. **From the confirm page** (with `tokenHash`): Verifies the OTP token,
+ *    then establishes the session.
+ * 2. **From the original tab** (without `tokenHash`): The confirm page has
+ *    already verified the OTP and sent `AUTH_CONFIRMED` via BroadcastChannel.
+ *    This function just picks up the now-available session.
+ *
+ * After verification, the current device is trusted, offline credentials are
+ * cached, and auth state is set.
+ *
+ * @param tokenHash - Optional OTP token hash from the email link URL. If
+ *   provided, the token is verified against Supabase before proceeding.
+ * @returns An object with `error` (string or null).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @see {@link unlockSingleUser} which triggers device verification
+ * @see {@link pollDeviceVerification} for polling-based completion
  */
 export async function completeDeviceVerification(
   tokenHash?: string
 ): Promise<{ error: string | null }> {
   try {
-    // If tokenHash is provided, verify it (called from confirm page)
+    /* If tokenHash is provided, verify it first (called from the confirm page).
+       Uses dynamic import to avoid circular dependency issues. */
     if (tokenHash) {
       const { verifyDeviceCode } = await import('./deviceVerification');
       const { error } = await verifyDeviceCode(tokenHash);
       if (error) return { error };
     }
 
-    // After OTP verification, session should be available
+    /* After OTP verification, the Supabase session should be available */
     const {
       data: { session },
       error: sessionError
@@ -482,10 +714,10 @@ export async function completeDeviceVerification(
 
     const user = session.user;
 
-    // Trust the device
+    /* Trust the device now that verification is complete */
     await trustCurrentDevice(user.id);
 
-    // Cache credentials
+    /* Cache credentials for offline use */
     const config = await readConfig();
     if (config?.email) {
       try {
@@ -495,7 +727,7 @@ export async function completeDeviceVerification(
       }
     }
 
-    // Create offline session
+    /* Create offline session */
     try {
       await createOfflineSession(user.id);
     } catch (e) {
@@ -513,11 +745,27 @@ export async function completeDeviceVerification(
 }
 
 /**
- * Poll whether this device has been trusted (e.g. after OTP verified on another device).
+ * Poll whether this device has been trusted after OTP verification.
  *
- * Requires an active session (sendDeviceVerification keeps the session alive).
- * The confirm page calls trustPendingDevice() which trusts the originating device,
- * so this check will pass once verification is complete on any device.
+ * Used by the UI to detect when device verification has been completed on
+ * another device (e.g., the user opened the OTP link on their phone). The
+ * confirm page calls {@link trustPendingDevice}, which trusts the originating
+ * device. Once that happens, this poll returns `true`.
+ *
+ * Requires an active session — {@link sendDeviceVerification} keeps the
+ * session alive specifically for this purpose.
+ *
+ * @returns `true` if the current device is now trusted, `false` otherwise.
+ *
+ * @example
+ * ```ts
+ * const interval = setInterval(async () => {
+ *   if (await pollDeviceVerification()) {
+ *     clearInterval(interval);
+ *     await completeDeviceVerification();
+ *   }
+ * }, 3000);
+ * ```
  */
 export async function pollDeviceVerification(): Promise<boolean> {
   try {
@@ -533,11 +781,24 @@ export async function pollDeviceVerification(): Promise<boolean> {
 }
 
 /**
- * Lock: stop sync engine, reset auth state to 'none'.
- * Does NOT destroy session, data, or sign out of Supabase.
+ * Lock the application: stop the sync engine and reset auth state to 'none'.
+ *
+ * This is a "soft lock" — it does NOT destroy the Supabase session, clear
+ * local data, or sign out. The user can unlock again with their PIN without
+ * needing network access (if offline credentials are cached).
+ *
+ * @example
+ * ```ts
+ * await lockSingleUser();
+ * navigateToLockScreen();
+ * ```
+ *
+ * @see {@link unlockSingleUser} for the reverse operation
+ * @see {@link resetSingleUser} for a full destructive reset
  */
 export async function lockSingleUser(): Promise<void> {
   try {
+    /* Dynamic import to avoid circular dependency with the engine module */
     const { stopSyncEngine } = await import('../engine');
     await stopSyncEngine();
   } catch (e) {
@@ -550,7 +811,31 @@ export async function lockSingleUser(): Promise<void> {
 }
 
 /**
- * Change the gate (code/password). Verifies old gate via signInWithPassword.
+ * Change the gate (PIN/password) for the single-user account.
+ *
+ * Verifies the old gate before accepting the new one. When online, the
+ * password is also updated in Supabase. When offline, only the local hash
+ * is updated (Supabase will be out of sync until the next online login).
+ *
+ * @param oldGate - The current PIN/password for verification.
+ * @param newGate - The new PIN/password to set.
+ * @returns An object with `error` (string or null).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @security The old gate is verified either via local hash comparison or
+ *   Supabase `signInWithPassword()` before the change is applied. This
+ *   prevents unauthorized changes if the device is left unlocked.
+ *
+ * @example
+ * ```ts
+ * const result = await changeSingleUserGate('1234', '5678');
+ * if (result.error) {
+ *   showError(result.error);
+ * } else {
+ *   showSuccess('Code changed successfully');
+ * }
+ * ```
  */
 export async function changeSingleUserGate(
   oldGate: string,
@@ -565,15 +850,17 @@ export async function changeSingleUserGate(
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
     if (!isOffline && config.email) {
-      // Online: verify old gate locally if possible, fall back to Supabase
+      /* Online: verify old gate locally first (faster, avoids network round-trip).
+         Fall back to Supabase verification if no local hash is available. */
       if (config.gateHash) {
-        // Local hash check
+        /* Local hash check — preferred path */
         const oldHash = await hashValue(oldGate);
         if (oldHash !== config.gateHash) {
           return { error: 'Current code is incorrect' };
         }
       } else {
-        // No local hash — fall back to Supabase verification
+        /* No local hash — fall back to Supabase verification.
+           This can happen after a migration from an older schema. */
         const { error: verifyError } = await supabase.auth.signInWithPassword({
           email: config.email,
           password: padPin(oldGate)
@@ -584,7 +871,7 @@ export async function changeSingleUserGate(
         }
       }
 
-      // Update password in Supabase
+      /* Update password in Supabase so all devices use the new gate */
       const { error: updateError } = await supabase.auth.updateUser({
         password: padPin(newGate)
       });
@@ -593,20 +880,20 @@ export async function changeSingleUserGate(
         return { error: `Failed to update code: ${updateError.message}` };
       }
     } else {
-      // Offline: verify against local hash
+      /* Offline: can only verify against the local hash */
       const oldHash = await hashValue(oldGate);
       if (config.gateHash && oldHash !== config.gateHash) {
         return { error: 'Current code is incorrect' };
       }
     }
 
-    // Update local hash
+    /* Update local hash regardless of online/offline status */
     const newHash = await hashValue(newGate);
     config.gateHash = newHash;
     config.updatedAt = new Date().toISOString();
     await writeConfig(config);
 
-    // Update offline credentials cache
+    /* Update offline credentials cache to match the new gate */
     try {
       const db = getDb();
       const creds = await db.table('offlineCredentials').get('current_user');
@@ -629,7 +916,24 @@ export async function changeSingleUserGate(
 }
 
 /**
- * Update profile in IndexedDB and Supabase user_metadata.
+ * Update the user's profile in both IndexedDB and Supabase `user_metadata`.
+ *
+ * When online, the profile is pushed to Supabase so it's available on all
+ * devices. When offline, only the local config is updated (Supabase will be
+ * synced on the next online login via {@link unlockSingleUser}).
+ *
+ * @param profile - The new profile data to store (replaces the existing profile entirely).
+ * @returns An object with `error` (string or null).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @example
+ * ```ts
+ * const result = await updateSingleUserProfile({ name: 'Bob', avatar: 'cat' });
+ * if (result.error) {
+ *   showError(result.error);
+ * }
+ * ```
  */
 export async function updateSingleUserProfile(
   profile: Record<string, unknown>
@@ -646,6 +950,8 @@ export async function updateSingleUserProfile(
 
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     if (!isOffline) {
+      /* Transform profile into Supabase metadata format using the host
+         app's custom transformer, if provided */
       const engineConfig = getEngineConfig();
       const profileToMetadata = engineConfig.auth?.profileToMetadata;
       const metadata = profileToMetadata ? profileToMetadata(profile) : profile;
@@ -658,7 +964,7 @@ export async function updateSingleUserProfile(
       }
     }
 
-    // Update offline credentials cache
+    /* Update offline credentials cache with the new profile */
     try {
       const db = getDb();
       const creds = await db.table('offlineCredentials').get('current_user');
@@ -681,8 +987,19 @@ export async function updateSingleUserProfile(
 }
 
 /**
- * Initiate an email change. Requires online state.
- * Supabase sends a confirmation email to the new address.
+ * Initiate an email change for the single-user account.
+ *
+ * Requires an active internet connection. Supabase sends a confirmation email
+ * to the new address. The change is not applied until the user clicks the
+ * confirmation link and {@link completeSingleUserEmailChange} is called.
+ *
+ * @param newEmail - The new email address to change to.
+ * @returns An object with `error` (string or null) and `confirmationRequired`
+ *   (true if the caller should show a "check your email" prompt).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @see {@link completeSingleUserEmailChange} for finalizing the change
  */
 export async function changeSingleUserEmail(
   newEmail: string
@@ -717,15 +1034,25 @@ export async function changeSingleUserEmail(
 }
 
 /**
- * Complete email change after the user confirms via the email link.
- * Called when the original tab receives AUTH_CONFIRMED with type 'email_change'.
+ * Complete an email change after the user confirms via the email link.
+ *
+ * Called when the original tab receives `AUTH_CONFIRMED` with type
+ * `email_change`. Refreshes the Supabase session to pick up the new email,
+ * then updates IndexedDB config and offline credentials.
+ *
+ * @returns An object with `error` (string or null) and `newEmail` (the
+ *   confirmed new email, or null on error).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @see {@link changeSingleUserEmail} for initiating the change
  */
 export async function completeSingleUserEmailChange(): Promise<{
   error: string | null;
   newEmail: string | null;
 }> {
   try {
-    // Refresh session to get updated user data
+    /* Refresh session to get updated user data with the new email */
     const { data, error: refreshError } = await supabase.auth.refreshSession();
     if (refreshError || !data.session) {
       debugError(
@@ -741,7 +1068,7 @@ export async function completeSingleUserEmailChange(): Promise<{
       return { error: 'No email found in updated session', newEmail: null };
     }
 
-    // Update local IndexedDB config
+    /* Update local IndexedDB config with the confirmed new email */
     const config = await readConfig();
     if (config) {
       config.email = newEmail;
@@ -749,7 +1076,7 @@ export async function completeSingleUserEmailChange(): Promise<{
       await writeConfig(config);
     }
 
-    // Update offline credentials cache
+    /* Update offline credentials cache with the new email */
     try {
       const db = getDb();
       const creds = await db.table('offlineCredentials').get('current_user');
@@ -777,7 +1104,21 @@ export async function completeSingleUserEmailChange(): Promise<{
 }
 
 /**
- * Full reset: clear config, sign out of Supabase, clear all data.
+ * Full reset: clear config, sign out of Supabase, and clear all local data.
+ *
+ * This is a destructive operation that removes the single-user config from
+ * IndexedDB and signs out of Supabase (which clears the session and all
+ * local auth state). After this, the app returns to the initial setup state.
+ *
+ * @returns An object with `error` (string or null).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @security This clears auth state but does NOT delete the Supabase user
+ *   account or any server-side data. Use {@link resetSingleUserRemote} for
+ *   a full server-side reset.
+ *
+ * @see {@link resetSingleUserRemote} for server-side account deletion
  */
 export async function resetSingleUser(): Promise<{ error: string | null }> {
   try {
@@ -799,19 +1140,42 @@ export async function resetSingleUser(): Promise<{ error: string | null }> {
   }
 }
 
-// ============================================================
+// =============================================================================
 // MULTI-DEVICE + EXTENSION SUPPORT
-// ============================================================
+// =============================================================================
 
 /**
- * Fetch remote gate config via the get_extension_config() RPC.
- * Returns user info if a user exists in Supabase, null otherwise.
- * Works without authentication (uses anon key).
+ * Fetch remote gate configuration via the `get_extension_config()` Supabase RPC.
+ *
+ * Returns user info if a user exists in the Supabase project, `null` otherwise.
+ * This is used by browser extensions and new devices to discover the existing
+ * account before linking. Works without authentication (uses the anon key).
+ *
+ * @returns An object with `email`, `gateType`, `codeLength`, and `profile`,
+ *   or `null` if no user exists or the RPC fails.
+ *
+ * @example
+ * ```ts
+ * const remote = await fetchRemoteGateConfig();
+ * if (remote) {
+ *   // Account exists — show link-device screen
+ *   showLinkDeviceScreen(remote.email, remote.gateType);
+ * } else {
+ *   // No account — show setup screen
+ *   showSetupScreen();
+ * }
+ * ```
+ *
+ * @see {@link linkSingleUserDevice} for linking after discovery
  */
 export async function fetchRemoteGateConfig(): Promise<{
+  /** The user's email address. */
   email: string;
+  /** The gate type ('code' or 'password'). */
   gateType: string;
+  /** The numeric code length (4 or 6). */
   codeLength: number;
+  /** The user's profile metadata. */
   profile: Record<string, unknown>;
 } | null> {
   try {
@@ -837,7 +1201,33 @@ export async function fetchRemoteGateConfig(): Promise<{
 
 /**
  * Link a new device to an existing single-user account.
- * Signs in with email + padded PIN, builds local config from user_metadata.
+ *
+ * Signs in with the provided email and PIN via Supabase `signInWithPassword()`,
+ * then builds and stores a local config from the user's `user_metadata`. If
+ * device verification is enabled, untrusted devices are challenged with an OTP.
+ *
+ * This is the multi-device counterpart to {@link setupSingleUser}: setup
+ * creates the account, while link joins an existing one from a new device.
+ *
+ * @param email - The email address of the existing account.
+ * @param pin - The PIN/password to authenticate with.
+ * @returns An object containing:
+ *   - `error`: Error message or null on success.
+ *   - `deviceVerificationRequired`: True if OTP verification is needed.
+ *   - `maskedEmail`: Masked email for display during device verification.
+ *   - `retryAfterMs`: Milliseconds to wait before retrying (rate-limited).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @example
+ * ```ts
+ * const result = await linkSingleUserDevice('alice@example.com', '1234');
+ * if (result.deviceVerificationRequired) {
+ *   showOtpModal(result.maskedEmail);
+ * }
+ * ```
+ *
+ * @see {@link fetchRemoteGateConfig} for discovering the account to link to
  */
 export async function linkSingleUserDevice(
   email: string,
@@ -854,7 +1244,8 @@ export async function linkSingleUserDevice(
     const gateType = singleUserOpts?.gateType || 'code';
     const codeLength = singleUserOpts?.codeLength;
 
-    // Pre-check with rate limiting (new device → no-cache strategy)
+    /* Pre-check with rate limiting. New devices always use the 'no-cache'
+       strategy since there are no local credentials to compare against. */
     const preCheck = await preCheckLogin(pin, 'single-user', email);
     if (!preCheck.proceed) {
       return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
@@ -873,18 +1264,20 @@ export async function linkSingleUserDevice(
       return { error: 'Incorrect code' };
     }
 
-    // Successful Supabase login
+    /* Successful Supabase login — reset rate-limit counters */
     onLoginSuccess();
 
     const session = data.session!;
     const user = data.user!;
 
-    // Build profile from user_metadata (reverse of profileToMetadata)
+    /* Build profile from user_metadata using the host app's reverse
+       transformer (profileExtractor is the inverse of profileToMetadata) */
     const profileExtractor = engineConfig.auth?.profileExtractor;
     const userMeta = user.user_metadata || {};
     const profile = profileExtractor ? profileExtractor(userMeta) : userMeta;
 
-    // Build and write local config
+    /* Build and write local config — this is the first time this device
+       has any knowledge of the account */
     const gateHash = await hashValue(pin);
     const now = new Date().toISOString();
 
@@ -901,7 +1294,7 @@ export async function linkSingleUserDevice(
     };
     await writeConfig(config);
 
-    // Check device verification
+    /* Check device verification */
     const deviceVerificationEnabled = engineConfig.auth?.deviceVerification?.enabled ?? false;
     if (deviceVerificationEnabled) {
       const trusted = await isDeviceTrusted(user.id);
@@ -920,14 +1313,14 @@ export async function linkSingleUserDevice(
       await touchTrustedDevice(user.id);
     }
 
-    // Cache offline credentials
+    /* Cache offline credentials */
     try {
       await cacheOfflineCredentials(email, pin, user, session);
     } catch (e) {
       debugWarn('[SingleUser] Failed to cache offline credentials on link:', e);
     }
 
-    // Create offline session
+    /* Create offline session */
     try {
       await createOfflineSession(user.id);
     } catch (e) {
@@ -945,8 +1338,24 @@ export async function linkSingleUserDevice(
 }
 
 /**
- * Reset the remote single user via the reset_single_user() RPC.
- * Also clears all local auth state (IndexedDB + localStorage).
+ * Reset the remote single-user account via the `reset_single_user()` Supabase RPC.
+ *
+ * This is a full destructive reset that:
+ * 1. Calls the server-side `reset_single_user()` RPC to delete the user account.
+ * 2. Signs out of Supabase to clear the in-memory session.
+ * 3. Clears all local IndexedDB state (config, offline credentials, offline session).
+ * 4. Removes Supabase session tokens from localStorage.
+ *
+ * After this, the app returns to its initial un-configured state on all devices.
+ *
+ * @returns An object with `error` (string or null).
+ *
+ * @throws Never throws directly; all errors are caught and returned.
+ *
+ * @security This permanently deletes the Supabase user account. The operation
+ *   cannot be undone. The RPC should be secured with appropriate RLS policies.
+ *
+ * @see {@link resetSingleUser} for a local-only reset that preserves the server account
  */
 export async function resetSingleUserRemote(): Promise<{ error: string | null }> {
   try {
@@ -956,14 +1365,14 @@ export async function resetSingleUserRemote(): Promise<{ error: string | null }>
       return { error: error.message };
     }
 
-    // Sign out to clear in-memory session and persisted auth tokens
+    /* Sign out to clear in-memory session and persisted auth tokens */
     try {
       await supabase.auth.signOut();
     } catch {
-      // Ignore — session may already be invalid
+      /* Ignore — session may already be invalid after account deletion */
     }
 
-    // Clear local IndexedDB state
+    /* Clear local IndexedDB state: config, offline credentials, offline session */
     try {
       const db = getDb();
       await db.table('singleUserConfig').delete(CONFIG_ID);
@@ -973,14 +1382,15 @@ export async function resetSingleUserRemote(): Promise<{ error: string | null }>
       debugWarn('[SingleUser] Failed to clear local state on remote reset:', e);
     }
 
-    // Clear any remaining Supabase session from localStorage
+    /* Clear any remaining Supabase session tokens from localStorage.
+       Supabase stores tokens under keys prefixed with 'sb-'. */
     try {
       if (typeof localStorage !== 'undefined') {
         const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'));
         keys.forEach((k) => localStorage.removeItem(k));
       }
     } catch {
-      // Ignore storage errors
+      /* Ignore storage errors (e.g., in SSR or restricted environments) */
     }
 
     debugLog('[SingleUser] Remote reset complete');

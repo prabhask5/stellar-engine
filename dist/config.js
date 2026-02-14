@@ -1,40 +1,101 @@
+/**
+ * @fileoverview Engine Configuration and Initialization
+ *
+ * Central configuration hub for the sync engine. {@link initEngine} is the
+ * first function consumers call — it accepts a {@link SyncEngineConfig} object
+ * that describes:
+ *   - Which Supabase tables to sync and their IndexedDB schemas
+ *   - Authentication mode (multi-user, single-user, or none)
+ *   - Sync timing parameters (debounce, polling interval, tombstone TTL)
+ *   - Optional callbacks for auth state changes
+ *
+ * The config is stored as a module-level singleton and accessed by every other
+ * module via {@link getEngineConfig}. The database creation flow supports two
+ * modes:
+ *   1. **Managed** — Engine creates and owns the Dexie instance from a
+ *      {@link DatabaseConfig} (recommended).
+ *   2. **Provided** — Consumer passes a pre-created `Dexie` instance for
+ *      backward compatibility.
+ *
+ * @see {@link database.ts} for Dexie instance creation
+ * @see {@link engine.ts} for the sync lifecycle that consumes this config
+ */
 import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { createDatabase, _setManagedDb } from './database';
 import { snakeToCamel } from './utils';
+// =============================================================================
+// Module State
+// =============================================================================
+/** Singleton engine configuration (set by {@link initEngine}). */
 let engineConfig = null;
+/** Promise that resolves when the database is fully opened and upgraded. */
 let _dbReady = null;
+// =============================================================================
+// Initialization
+// =============================================================================
+/**
+ * Initialize the sync engine with the provided configuration.
+ *
+ * Must be called once at app startup, before any other engine function.
+ * Propagates the `prefix` to all internal modules (debug, deviceId,
+ * Supabase client, runtime config) and creates or registers the Dexie
+ * database instance.
+ *
+ * @param config - The full engine configuration object.
+ *
+ * @example
+ * // In your app's root layout or entry point:
+ * initEngine({
+ *   prefix: 'myapp',
+ *   tables: [...],
+ *   database: { name: 'myapp-db', versions: [...] },
+ * });
+ */
 export function initEngine(config) {
     engineConfig = config;
-    // Propagate prefix to all internal modules
+    /* Propagate prefix to all internal modules that use localStorage keys. */
     if (config.prefix) {
         _setDebugPrefix(config.prefix);
         _setDeviceIdPrefix(config.prefix);
         _setClientPrefix(config.prefix);
         _setConfigPrefix(config.prefix);
     }
-    // Handle database creation
+    /* Handle database creation — either managed or provided. */
     if (config.database) {
         _dbReady = createDatabase(config.database).then((db) => {
-            // Store on config for backward compat (engine.ts reads config.db)
+            /* Store on config for backward compat (engine.ts reads config.db). */
             config.db = db;
         });
     }
     else if (config.db) {
-        // Backward compat: use provided Dexie instance
+        /* Backward compat: use the consumer-provided Dexie instance. */
         _setManagedDb(config.db);
         _dbReady = Promise.resolve();
     }
 }
+// =============================================================================
+// Accessors
+// =============================================================================
 /**
  * Wait for the database to be fully opened and upgraded.
- * Must be awaited before any DB access.
+ *
+ * Must be awaited before any IndexedDB access. Returns immediately if
+ * the database was provided directly (no async creation needed).
+ *
+ * @returns A promise that resolves when the DB is ready.
  */
 export function waitForDb() {
     return _dbReady || Promise.resolve();
 }
+/**
+ * Get the current engine configuration.
+ *
+ * @throws {Error} If {@link initEngine} has not been called yet.
+ * @returns The singleton {@link SyncEngineConfig} object.
+ */
 export function getEngineConfig() {
     if (!engineConfig) {
         throw new Error('Sync engine not initialized. Call initEngine() first.');
@@ -42,14 +103,25 @@ export function getEngineConfig() {
     return engineConfig;
 }
 /**
- * Get the Dexie (IndexedDB) table name for a TableConfig entry.
- * Derives from supabaseName via snake_case → camelCase conversion.
+ * Get the Dexie (IndexedDB) table name for a given table config entry.
+ *
+ * Derives the name from `supabaseName` via snake_case → camelCase conversion.
+ *
+ * @param table - A table configuration entry.
+ * @returns The camelCase Dexie table name (e.g., `'goalLists'` for `'goal_lists'`).
  */
 export function getDexieTableFor(table) {
     return snakeToCamel(table.supabaseName);
 }
 /**
- * Get the Supabase-to-Dexie table mapping derived from config.
+ * Build a lookup map from Supabase table names to Dexie table names.
+ *
+ * Used by {@link data.ts} to resolve table names at runtime.
+ *
+ * @returns An object mapping Supabase names → Dexie names.
+ *
+ * @example
+ * getTableMap(); // { goal_lists: 'goalLists', goals: 'goals' }
  */
 export function getTableMap() {
     const config = getEngineConfig();
@@ -60,7 +132,13 @@ export function getTableMap() {
     return map;
 }
 /**
- * Get columns for a specific Supabase table from config.
+ * Get the SELECT column list for a specific Supabase table.
+ *
+ * Used to build egress-optimized queries that only fetch needed columns.
+ *
+ * @param supabaseName - The Supabase table name (e.g., `'goals'`).
+ * @throws {Error} If the table is not found in the engine config.
+ * @returns The comma-separated column string.
  */
 export function getTableColumns(supabaseName) {
     const config = getEngineConfig();

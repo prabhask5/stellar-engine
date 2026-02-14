@@ -1,3 +1,33 @@
+/**
+ * @fileoverview Main entry point — `@prabhask5/stellar-engine`
+ *
+ * This is the primary barrel export for the stellar-engine package. It
+ * re-exports the **full** public API surface, covering:
+ *
+ * - **Engine Configuration & Lifecycle** — initialize, start, and run the
+ *   offline-first sync engine.
+ * - **Database Access** — get a handle to the IndexedDB instance or reset it.
+ * - **Generic CRUD & Query** — create, read, update, delete, batch write,
+ *   increment, and query data in the local database.
+ * - **Authentication** — Supabase GoTrue auth, offline login, single-user
+ *   (kiosk) auth, admin checks, device verification, and login guards.
+ * - **Reactive Stores** — Svelte-compatible stores for sync status, network
+ *   state, remote changes, and auth state.
+ * - **Realtime Events** — lifecycle hooks for sync completion and realtime
+ *   data updates.
+ * - **Runtime Configuration** — read and write app-level config at runtime.
+ * - **Debug & Utilities** — logging, ID generation, ordering, and string
+ *   conversion helpers.
+ * - **Svelte Actions** — DOM-level directives for remote-change animations.
+ * - **Type Definitions** — all public TypeScript types and interfaces.
+ * - **Supabase Client** — direct access to the Supabase client for advanced
+ *   or custom queries.
+ * - **Supabase Validation** — server-side credential and schema validation.
+ *
+ * For tree-shaking or smaller bundle sizes, prefer the subpath entry points
+ * (e.g. `@prabhask5/stellar-engine/auth`, `@prabhask5/stellar-engine/stores`)
+ * which expose focused subsets of this API.
+ */
 export { initEngine } from './config';
 export type { SyncEngineConfig, TableConfig } from './config';
 export { getDb, resetDatabase } from './database';

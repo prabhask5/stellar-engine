@@ -1,3 +1,61 @@
+/**
+ * @fileoverview Local-First Sync Engine - Core orchestrator for offline-first data synchronization.
+ *
+ * This is the heart of stellar-engine: a bidirectional sync engine that keeps local
+ * IndexedDB (via Dexie) in sync with a remote Supabase database. It implements the
+ * "local-first" pattern where all reads/writes happen against the local DB for instant
+ * responsiveness, and a background sync loop reconciles with the server.
+ *
+ * ## Architecture Overview
+ *
+ * ```
+ * ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+ * │   UI Layer   │────▶│  Local DB    │────▶│  Sync Engine │────▶ Supabase
+ * │  (instant)   │◀────│  (IndexedDB) │◀────│  (background)│◀──── (remote)
+ * └─────────────┘     └──────────────┘     └──────────────┘
+ * ```
+ *
+ * ## Core Rules
+ *
+ * 1. **All reads come from local DB** (IndexedDB via Dexie)
+ * 2. **All writes go to local DB first**, immediately (no waiting for network)
+ * 3. **Every write creates a pending operation** in the sync queue (outbox pattern)
+ * 4. **Sync loop ships outbox to server** in the background (push phase)
+ * 5. **On refresh, load local state instantly**, then run background sync (pull phase)
+ *
+ * ## Sync Cycle Flow
+ *
+ * 1. **Push**: Coalesce pending ops → send to Supabase → remove from queue
+ * 2. **Pull**: Fetch changes since last cursor → apply with conflict resolution → update cursor
+ * 3. **Notify**: Tell registered stores to refresh from local DB
+ *
+ * ## Key Subsystems
+ *
+ * - **Egress monitoring**: Tracks bytes/records transferred for debugging bandwidth usage
+ * - **Sync lock (mutex)**: Prevents concurrent sync cycles from corrupting state
+ * - **Watchdog**: Detects stuck syncs and auto-releases locks after timeout
+ * - **Tombstone cleanup**: Garbage-collects soft-deleted records after configured TTL
+ * - **Auth validation**: Ensures valid session before syncing (prevents silent RLS failures)
+ * - **Visibility sync**: Smart re-sync when user returns to tab after extended absence
+ * - **Realtime integration**: Skips polling pull when WebSocket subscription is healthy
+ *
+ * ## Egress Optimization Strategy
+ *
+ * The engine aggressively minimizes Supabase egress (bandwidth) through:
+ * - Operation coalescing (50 rapid updates → 1 request)
+ * - Push-only mode when realtime is healthy (skip pull after local writes)
+ * - Cached user validation (1 getUser() call per hour instead of per sync)
+ * - Visibility-aware sync (skip sync if tab was hidden briefly)
+ * - Reconnect cooldown (skip sync if we just synced before going offline)
+ * - Selective column fetching (only request configured columns, not `*`)
+ *
+ * @module engine
+ * @see {@link ./queue.ts} - Sync queue (outbox) management
+ * @see {@link ./conflicts.ts} - Field-level conflict resolution
+ * @see {@link ./realtime.ts} - Supabase Realtime WebSocket subscriptions
+ * @see {@link ./config.ts} - Engine configuration and table definitions
+ */
+
 import { getEngineConfig, getDexieTableFor, waitForDb } from './config';
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import {
@@ -37,72 +95,155 @@ import { getOfflineCredentials } from './auth/offlineCredentials';
 import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
 import { validateSchema } from './supabase/validate';
 
-// ============================================================
-// LOCAL-FIRST SYNC ENGINE
+// =============================================================================
+// CONFIG ACCESSORS
+// =============================================================================
 //
-// Rules:
-// 1. All reads come from local DB (IndexedDB)
-// 2. All writes go to local DB first, immediately
-// 3. Every write creates a pending operation in the outbox
-// 4. Sync loop ships outbox to server in background
-// 5. On refresh, load local state instantly, then run background sync
-// ============================================================
+// These helper functions provide lazy access to engine configuration values.
+// They exist because the engine config is set at runtime via `initEngine()`,
+// so we can't read config values at module load time (they'd be undefined).
+// Each function reads from the live config on every call to support hot-reloading.
+// =============================================================================
 
-// Helper functions for config-driven access
+/**
+ * Get the Dexie database instance from the engine config.
+ *
+ * @returns The initialized Dexie database
+ * @throws {Error} If the database hasn't been initialized via `initEngine()`
+ */
 function getDb() {
   const db = getEngineConfig().db;
   if (!db)
     throw new Error('Database not initialized. Provide db or database config to initEngine().');
   return db;
 }
+
+/**
+ * Get the Supabase client instance.
+ *
+ * Prefers the explicitly-provided client from config, falling back to the
+ * proxy-based client (which defers initialization until first use).
+ *
+ * @returns The Supabase client for server communication
+ */
 function getSupabase() {
   const config = getEngineConfig();
   if (config.supabase) return config.supabase;
-  // Fall back to the proxy-based supabase client
   return supabaseProxy;
 }
+
+/**
+ * Map a Supabase table name to its corresponding Dexie (local) table name.
+ *
+ * Table name mapping allows the local DB schema to differ from the remote schema.
+ * Falls back to using the Supabase name directly if no mapping is configured.
+ *
+ * @param supabaseName - The remote Supabase table name
+ * @returns The local Dexie table name (may include a prefix)
+ */
 function getDexieTableName(supabaseName: string): string {
   const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
   return table ? getDexieTableFor(table) : supabaseName;
 }
+
+/**
+ * Get the column selection string for a Supabase table.
+ *
+ * Used in SELECT queries to limit which columns are fetched from the server.
+ * This is an **egress optimization** — fetching only needed columns reduces
+ * bandwidth usage, especially for tables with large text/JSON columns.
+ *
+ * @param supabaseName - The remote Supabase table name
+ * @returns PostgREST column selector (e.g., `"id,name,updated_at"` or `"*"`)
+ */
 function getColumns(supabaseName: string): string {
   const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
   return table?.columns || '*';
 }
+
+/**
+ * Check if a Supabase table is configured as a singleton (one row per user).
+ *
+ * Singleton tables have special handling during sync: when a duplicate key
+ * error occurs on create, the engine reconciles the local ID with the server's
+ * existing row instead of treating it as an error.
+ *
+ * @param supabaseName - The remote Supabase table name
+ * @returns `true` if the table is a singleton
+ */
 function isSingletonTable(supabaseName: string): boolean {
   const table = getEngineConfig().tables.find((t) => t.supabaseName === supabaseName);
   return table?.isSingleton || false;
 }
 
-// Getter functions for config values (can't read config at module level)
+// --- Timing & Threshold Config Accessors ---
+// Each has a sensible default if not configured by the consumer.
+
+/** Delay before pushing local writes to server (debounces rapid edits). Default: 2000ms */
 function getSyncDebounceMs(): number {
   return getEngineConfig().syncDebounceMs ?? 2000;
 }
+
+/** Interval for periodic background sync (polling fallback when realtime is down). Default: 15min */
 function getSyncIntervalMs(): number {
   return getEngineConfig().syncIntervalMs ?? 900000;
 }
+
+/** How long to keep soft-deleted (tombstone) records before hard-deleting. Default: 7 days */
 function getTombstoneMaxAgeDays(): number {
   return getEngineConfig().tombstoneMaxAgeDays ?? 7;
 }
+
+/** Minimum time tab must be hidden before triggering a sync on return. Default: 5min */
 function getVisibilitySyncMinAwayMs(): number {
   return getEngineConfig().visibilitySyncMinAwayMs ?? 300000;
 }
+
+/** Cooldown after a successful sync before allowing reconnect-triggered sync. Default: 2min */
 function getOnlineReconnectCooldownMs(): number {
   return getEngineConfig().onlineReconnectCooldownMs ?? 120000;
 }
+
+/** Engine prefix used for localStorage keys and debug window utilities. Default: "engine" */
 function getPrefix(): string {
   return getEngineConfig().prefix || 'engine';
 }
 
-// Track if we were recently offline (for auth validation on reconnect)
+// =============================================================================
+// AUTH STATE TRACKING
+// =============================================================================
+//
+// When the device goes offline and comes back online, we must re-validate the
+// user's session before allowing any sync operations. Without this, an expired
+// or revoked session could cause Supabase RLS to silently block all writes
+// (returning success but affecting 0 rows — the "ghost sync" bug).
+// =============================================================================
+
+/** Whether the device was recently offline (triggers auth validation on reconnect) */
 let wasOffline = false;
-let authValidatedAfterReconnect = true; // Start as true (no validation needed initially)
-let _schemaValidated = false; // One-time schema validation flag
+
+/** Whether auth has been validated since the last offline→online transition. Starts `true` (no validation needed on fresh start) */
+let authValidatedAfterReconnect = true;
+
+/** One-time flag: has the Supabase schema been validated this session? */
+let _schemaValidated = false;
 
 /**
- * Clear all pending sync operations (used when auth is invalid)
- * SECURITY: Called when offline credentials are found to be invalid
- * to prevent unauthorized data from being synced to the server
+ * Clear all pending sync operations from the outbox queue.
+ *
+ * **SECURITY**: Called when offline credentials are found to be invalid, to prevent
+ * unauthorized data from being synced to the server. Without this, a user who
+ * tampered with offline credentials could queue malicious writes that get pushed
+ * once the device reconnects.
+ *
+ * @returns The number of operations that were cleared
+ *
+ * @example
+ * ```ts
+ * // Called during auth validation failure
+ * const cleared = await clearPendingSyncQueue();
+ * console.log(`Prevented ${cleared} unauthorized sync operations`);
+ * ```
  */
 export async function clearPendingSyncQueue(): Promise<number> {
   try {
@@ -142,9 +283,20 @@ function needsAuthValidation(): boolean {
   return wasOffline && !authValidatedAfterReconnect;
 }
 
-// ============================================================
-// EGRESS MONITORING - Track sync cycles for debugging
-// ============================================================
+// =============================================================================
+// EGRESS MONITORING
+// =============================================================================
+//
+// Tracks every byte transferred during sync cycles, broken down by table.
+// This data powers the `window.__<prefix>Egress()` and `window.__<prefix>SyncStats()`
+// debug utilities, helping developers identify bandwidth-heavy tables and
+// optimize their column selections.
+//
+// All stats are session-scoped (reset on page reload). The sync cycle log
+// retains the last 100 entries as a rolling window.
+// =============================================================================
+
+/** Stats captured for each sync cycle (push + pull) */
 interface SyncCycleStats {
   timestamp: string;
   trigger: string;
@@ -155,10 +307,13 @@ interface SyncCycleStats {
   durationMs: number;
 }
 
+/** Rolling log of recent sync cycles (max 100 entries) */
 const syncStats: SyncCycleStats[] = [];
+
+/** Total number of sync cycles since page load */
 let totalSyncCycles = 0;
 
-// Egress tracking
+/** Cumulative egress (download) statistics for the current browser session */
 interface EgressStats {
   totalBytes: number;
   totalRecords: number;
@@ -173,7 +328,15 @@ const egressStats: EgressStats = {
   sessionStart: new Date().toISOString()
 };
 
-// Helper to estimate JSON size in bytes
+/**
+ * Estimate the byte size of a JSON-serializable value.
+ *
+ * Uses `Blob` for accurate UTF-8 byte counting when available,
+ * falling back to string length (which undercounts multi-byte chars).
+ *
+ * @param data - Any JSON-serializable value
+ * @returns Estimated size in bytes
+ */
 function estimateJsonSize(data: unknown): number {
   try {
     return new Blob([JSON.stringify(data)]).size;
@@ -183,7 +346,16 @@ function estimateJsonSize(data: unknown): number {
   }
 }
 
-// Track egress for a table
+/**
+ * Record egress (data downloaded) for a specific table.
+ *
+ * Updates both the per-table and global cumulative counters. Called after
+ * every Supabase SELECT query to build an accurate picture of bandwidth usage.
+ *
+ * @param tableName - The Supabase table name
+ * @param data - The rows returned from the query (null/empty = no egress)
+ * @returns The bytes and record count for this specific fetch
+ */
 function trackEgress(
   tableName: string,
   data: unknown[] | null
@@ -209,13 +381,26 @@ function trackEgress(
   return { bytes, records };
 }
 
-// Format bytes for display
+/**
+ * Format a byte count into a human-readable string (B, KB, or MB).
+ *
+ * @param bytes - Raw byte count
+ * @returns Formatted string like `"1.23 KB"` or `"456 B"`
+ */
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+/**
+ * Record a completed sync cycle in the rolling stats log.
+ *
+ * Automatically timestamps the entry and trims the log to 100 entries.
+ * Also emits a debug log line summarizing the cycle for real-time monitoring.
+ *
+ * @param stats - Sync cycle metrics (trigger, items pushed/pulled, egress, duration)
+ */
 function logSyncCycle(stats: Omit<SyncCycleStats, 'timestamp'>) {
   const entry: SyncCycleStats = {
     ...stats,
@@ -236,11 +421,24 @@ function logSyncCycle(stats: Omit<SyncCycleStats, 'timestamp'>) {
   );
 }
 
-// Export for debugging in browser console
-// Uses configurable prefix: window.__<prefix>SyncStats?.()
-// Also: window.__<prefix>Tombstones?.() or window.__<prefix>Tombstones?.({ cleanup: true, force: true })
-// Also: window.__<prefix>Egress?.()
-// Also: window.__<prefix>Sync.forceFullSync(), .resetSyncCursor(), .sync(), .getStatus(), .checkConnection(), .realtimeStatus()
+/**
+ * Expose debug utilities on the `window` object for browser console access.
+ *
+ * Only initializes when running in a browser AND debug mode is enabled.
+ * All utilities are namespaced under a configurable prefix to avoid collisions
+ * when multiple engines run on the same page.
+ *
+ * Available utilities (where `<prefix>` defaults to `"engine"`):
+ * - `window.__<prefix>SyncStats()` — View recent sync cycle statistics
+ * - `window.__<prefix>Egress()` — View cumulative bandwidth usage by table
+ * - `window.__<prefix>Tombstones()` — Inspect soft-deleted record counts
+ * - `window.__<prefix>Sync.forceFullSync()` — Reset cursor and re-download everything
+ * - `window.__<prefix>Sync.resetSyncCursor()` — Reset cursor (next sync pulls all)
+ * - `window.__<prefix>Sync.sync()` — Trigger an immediate full sync
+ * - `window.__<prefix>Sync.getStatus()` — Get current sync cursor and pending op count
+ * - `window.__<prefix>Sync.checkConnection()` — Test Supabase connectivity
+ * - `window.__<prefix>Sync.realtimeStatus()` — Check WebSocket connection health
+ */
 function initDebugWindowUtilities(): void {
   if (typeof window === 'undefined' || !isDebugMode()) return;
 
@@ -302,34 +500,99 @@ function initDebugWindowUtilities(): void {
   // See below where it's assigned after the function definition
 }
 
+// =============================================================================
+// MODULE-LEVEL STATE
+// =============================================================================
+//
+// These variables track the engine's runtime state. They're module-scoped
+// (not class properties) because the engine is a singleton — there's only ever
+// one sync engine per page. All state is reset by `stopSyncEngine()`.
+// =============================================================================
+
+/** Timer handle for the debounced sync-after-write (cleared on each new write) */
 let syncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/** Timer handle for the periodic background sync interval */
 let syncInterval: ReturnType<typeof setInterval> | null = null;
-let _hasHydrated = false; // Track if initial hydration has been attempted
 
-// EGRESS OPTIMIZATION: Cache getUser() validation to avoid network call every sync cycle
+/** Whether initial hydration (empty-DB pull) has been attempted this session */
+let _hasHydrated = false;
+
+// --- EGRESS OPTIMIZATION: Cached user validation ---
+// `getUser()` makes a network round-trip to Supabase. Calling it every sync cycle
+// wastes bandwidth. Instead, we cache the result and only re-validate once per hour.
+// If the token is revoked server-side between validations, the push will fail with
+// an RLS error — which is acceptable since it triggers a session refresh.
+
+/** Timestamp of the last successful `getUser()` network call */
 let lastUserValidation = 0;
+
+/** User ID returned by the last successful `getUser()` call */
 let lastValidatedUserId: string | null = null;
-const USER_VALIDATION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
-// EGRESS OPTIMIZATION: Track last successful sync for online-reconnect cooldown
+/** How often to re-validate the user with a network call (1 hour) */
+const USER_VALIDATION_INTERVAL_MS = 60 * 60 * 1000;
+
+// --- Sync timing & visibility tracking ---
+
+/** Timestamp of the last successful sync completion (used for reconnect cooldown) */
 let lastSuccessfulSyncTimestamp = 0;
-let isTabVisible = true; // Track tab visibility
-let visibilityDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
-let tabHiddenAt: number | null = null; // Track when tab became hidden for smart sync
-const VISIBILITY_SYNC_DEBOUNCE_MS = 1000; // Debounce for visibility change syncs
-const RECENTLY_MODIFIED_TTL_MS = 2000; // Protect recently modified entities for 2 seconds
-// Industry standard: 500ms-2000ms. 2s covers sync debounce (1s) + network latency with margin.
 
-// Track recently modified entity IDs to prevent pull from overwriting fresh local changes
-// This provides an additional layer of protection beyond the pending queue check
+/** Whether the browser tab is currently visible (drives periodic sync decisions) */
+let isTabVisible = true;
+
+/** Timer handle for debouncing visibility-change-triggered syncs */
+let visibilityDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/** When the tab became hidden (null if currently visible) — used to calculate away duration */
+let tabHiddenAt: number | null = null;
+
+/** Debounce delay for visibility-change syncs (prevents rapid tab-switching spam) */
+const VISIBILITY_SYNC_DEBOUNCE_MS = 1000;
+
+/**
+ * How long a locally-modified entity is "protected" from being overwritten by pull.
+ *
+ * When the user writes locally, the entity is marked as recently modified.
+ * During pull, if a remote version arrives within this TTL, it's skipped to
+ * prevent the pull from reverting the user's fresh local change before the
+ * push has a chance to send it to the server.
+ *
+ * Industry standard range: 500ms–2000ms. We use 2s to cover the sync debounce
+ * window (1s default) plus network latency with margin.
+ */
+const RECENTLY_MODIFIED_TTL_MS = 2000;
+
+/**
+ * Map of entity ID → timestamp for recently modified entities.
+ *
+ * This provides an additional layer of protection beyond the pending queue check.
+ * Even if the queue is coalesced or cleared, recently modified entities won't be
+ * overwritten by stale remote data during pull.
+ */
 const recentlyModifiedEntities: Map<string, number> = new Map();
 
-// Mark an entity as recently modified (called by repositories after local writes)
+/**
+ * Mark an entity as recently modified to protect it from being overwritten by pull.
+ *
+ * Called by repository functions after every local write. The protection expires
+ * after `RECENTLY_MODIFIED_TTL_MS` (2 seconds).
+ *
+ * @param entityId - The UUID of the entity that was just modified locally
+ */
 export function markEntityModified(entityId: string): void {
   recentlyModifiedEntities.set(entityId, Date.now());
 }
 
-// Check if entity was recently modified locally
+/**
+ * Check if an entity was recently modified locally (within the TTL window).
+ *
+ * Used during pull to skip remote updates for entities the user just edited.
+ * Automatically cleans up expired entries on access.
+ *
+ * @param entityId - The UUID to check
+ * @returns `true` if the entity was modified within `RECENTLY_MODIFIED_TTL_MS`
+ */
 function isRecentlyModified(entityId: string): boolean {
   const modifiedAt = recentlyModifiedEntities.get(entityId);
   if (!modifiedAt) return false;
@@ -343,7 +606,12 @@ function isRecentlyModified(entityId: string): boolean {
   return true;
 }
 
-// Clean up expired entries (called periodically)
+/**
+ * Garbage-collect expired entries from the recently-modified map.
+ *
+ * Called periodically by the sync interval timer to prevent the map
+ * from growing unbounded in long-running sessions.
+ */
 function cleanupRecentlyModified(): void {
   const now = Date.now();
   for (const [entityId, modifiedAt] of recentlyModifiedEntities) {
@@ -353,23 +621,59 @@ function cleanupRecentlyModified(): void {
   }
 }
 
-// Proper async mutex to prevent concurrent syncs
-// Uses a queue-based approach where each caller waits for the previous one
-let lockPromise: Promise<void> | null = null;
-let lockResolve: (() => void) | null = null;
-let lockAcquiredAt: number | null = null;
-const SYNC_LOCK_TIMEOUT_MS = 60_000; // Force-release lock after 60s
+// =============================================================================
+// SYNC LOCK (MUTEX)
+// =============================================================================
+//
+// Prevents concurrent sync cycles from running simultaneously. Without this,
+// two overlapping syncs could both read the same pending ops and push duplicates,
+// or interleave pull writes causing inconsistent local state.
+//
+// The lock uses a simple promise-based approach: acquiring the lock creates a
+// promise that blocks subsequent acquirers. Releasing resolves the promise.
+// A timeout ensures the lock is force-released if a sync hangs.
+// =============================================================================
 
-// Store event listener references for cleanup
+/** The pending lock promise (null = lock is free) */
+let lockPromise: Promise<void> | null = null;
+
+/** Resolver function for the current lock holder */
+let lockResolve: (() => void) | null = null;
+
+/** Timestamp when the lock was acquired (for stale-lock detection) */
+let lockAcquiredAt: number | null = null;
+
+/** Maximum time a sync lock can be held before force-release (60 seconds) */
+const SYNC_LOCK_TIMEOUT_MS = 60_000;
+
+// --- Event listener references (stored for cleanup in stopSyncEngine) ---
 let handleOnlineRef: (() => void) | null = null;
 let handleOfflineRef: (() => void) | null = null;
 let handleVisibilityChangeRef: (() => void) | null = null;
 
-// Watchdog: detect stuck syncs and auto-retry
-let watchdogInterval: ReturnType<typeof setInterval> | null = null;
-const WATCHDOG_INTERVAL_MS = 15_000; // Check every 15s
-const SYNC_OPERATION_TIMEOUT_MS = 45_000; // Abort sync operations after 45s
+// --- Watchdog timer ---
+// Runs every 15s to detect stuck syncs. If the lock has been held longer than
+// SYNC_LOCK_TIMEOUT_MS, the watchdog force-releases it and triggers a retry.
+// This prevents permanent sync stalls from unhandled promise rejections.
 
+/** Timer handle for the sync watchdog */
+let watchdogInterval: ReturnType<typeof setInterval> | null = null;
+
+/** How often the watchdog checks for stuck locks */
+const WATCHDOG_INTERVAL_MS = 15_000;
+
+/** Maximum time allowed for individual push/pull operations before abort */
+const SYNC_OPERATION_TIMEOUT_MS = 45_000;
+
+/**
+ * Attempt to acquire the sync lock (non-blocking).
+ *
+ * If the lock is currently held, checks whether it's stale (held beyond timeout).
+ * Stale locks are force-released to recover from stuck syncs. If the lock is
+ * legitimately held by an active sync, returns `false` immediately (no waiting).
+ *
+ * @returns `true` if the lock was acquired, `false` if another sync is in progress
+ */
 async function acquireSyncLock(): Promise<boolean> {
   // If lock is held, check if it's stale (held too long)
   if (lockPromise !== null) {
@@ -392,6 +696,12 @@ async function acquireSyncLock(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Release the sync lock, allowing the next sync cycle to proceed.
+ *
+ * Resolves the lock promise (unblocking any waiters), then clears all lock state.
+ * Safe to call even if the lock isn't held (no-op).
+ */
 function releaseSyncLock(): void {
   if (lockResolve) {
     lockResolve();
@@ -401,7 +711,19 @@ function releaseSyncLock(): void {
   lockAcquiredAt = null;
 }
 
-// Timeout wrapper: races a promise against a timeout
+/**
+ * Race a promise against a timeout, rejecting if the timeout fires first.
+ *
+ * Used to prevent sync operations from hanging indefinitely when Supabase
+ * doesn't respond (e.g., during a service outage or DNS failure).
+ *
+ * @template T - The resolved type of the promise
+ * @param promise - The async operation to wrap
+ * @param ms - Maximum wait time in milliseconds
+ * @param label - Human-readable label for the timeout error message
+ * @returns The resolved value if the promise wins the race
+ * @throws {Error} `"<label> timed out after <N>s"` if the timeout fires first
+ */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -420,9 +742,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-// Callbacks for when sync completes (stores can refresh from local)
+// =============================================================================
+// SYNC COMPLETION CALLBACKS
+// =============================================================================
+//
+// Svelte stores register callbacks here to be notified when a sync cycle
+// completes (either push or pull). This triggers stores to re-read from
+// the local DB, ensuring the UI reflects the latest synced state.
+// =============================================================================
+
+/** Set of registered callbacks to invoke after every successful sync cycle */
 const syncCompleteCallbacks: Set<() => void> = new Set();
 
+/**
+ * Register a callback to be invoked when a sync cycle completes.
+ *
+ * Used by Svelte stores to refresh their data from the local DB after new
+ * remote data has been pulled. Returns an unsubscribe function for cleanup.
+ *
+ * @param callback - Function to call after each sync completion
+ * @returns Unsubscribe function that removes the callback
+ *
+ * @example
+ * ```ts
+ * // In a Svelte store
+ * const unsubscribe = onSyncComplete(() => {
+ *   refreshFromLocalDb();
+ * });
+ * // Later, during cleanup:
+ * unsubscribe();
+ * ```
+ */
 export function onSyncComplete(callback: () => void): () => void {
   syncCompleteCallbacks.add(callback);
   debugLog(`[SYNC] Store registered for sync complete (total: ${syncCompleteCallbacks.size})`);
@@ -432,6 +782,12 @@ export function onSyncComplete(callback: () => void): () => void {
   };
 }
 
+/**
+ * Invoke all registered sync-complete callbacks.
+ *
+ * Each callback is wrapped in try/catch so a failing store refresh doesn't
+ * prevent other stores from updating.
+ */
 function notifySyncComplete(): void {
   debugLog(`[SYNC] Notifying ${syncCompleteCallbacks.size} store callbacks to refresh`);
   for (const callback of syncCompleteCallbacks) {
@@ -443,11 +799,41 @@ function notifySyncComplete(): void {
   }
 }
 
-// ============================================================
-// SYNC OPERATIONS - Background sync to/from Supabase
-// ============================================================
+// =============================================================================
+// SYNC OPERATIONS — Push & Pull
+// =============================================================================
+//
+// The core sync cycle has two phases:
+//
+// 1. **PUSH** (outbox → server): Read pending ops from the sync queue,
+//    coalesce redundant updates, then send each operation to Supabase.
+//    Operations are intent-based (create/set/increment/delete) not CRUD,
+//    which enables smarter coalescing and conflict resolution.
+//
+// 2. **PULL** (server → local): Fetch all rows modified since the last
+//    sync cursor, apply them to the local DB with field-level conflict
+//    resolution, and advance the cursor.
+//
+// Push always runs before pull so that local changes are persisted to the
+// server before we fetch remote changes. This ordering ensures that the
+// pull's conflict resolution has access to the server's view of our changes.
+// =============================================================================
 
-// Schedule a debounced sync after local writes
+/**
+ * Schedule a debounced sync push after a local write.
+ *
+ * Called by repository functions after every write to the local DB. The debounce
+ * prevents hammering the server during rapid edits (e.g., typing in a text field).
+ * When realtime is healthy, runs in push-only mode (skips the pull phase) since
+ * remote changes arrive via WebSocket.
+ *
+ * @example
+ * ```ts
+ * // After a local write in a repository
+ * await db.table('todos').put(newTodo);
+ * scheduleSyncPush(); // Sync will fire after debounce delay
+ * ```
+ */
 export function scheduleSyncPush(): void {
   if (syncTimeout) {
     clearTimeout(syncTimeout);
@@ -463,8 +849,21 @@ export function scheduleSyncPush(): void {
   }, getSyncDebounceMs());
 }
 
-// Get current user ID for sync cursor isolation
-// CRITICAL: This validates the session is actually valid, not just cached
+/**
+ * Get the current authenticated user's ID, validating the session is actually valid.
+ *
+ * **CRITICAL**: This doesn't just read a cached token — it verifies the session
+ * is genuinely valid. This catches cases where:
+ * - The session token expired while the tab was in the background
+ * - The token was revoked server-side (e.g., password change, admin action)
+ * - The refresh token is invalid (e.g., user signed out on another device)
+ *
+ * **EGRESS OPTIMIZATION**: The expensive `getUser()` network call is cached for
+ * 1 hour. Between validations, we trust the local session token. If the token
+ * was revoked, the next push will fail with an RLS error, triggering a refresh.
+ *
+ * @returns The user's UUID, or `null` if not authenticated / session invalid
+ */
 async function getCurrentUserId(): Promise<string | null> {
   try {
     const supabase = getSupabase();
@@ -554,14 +953,29 @@ async function getCurrentUserId(): Promise<string | null> {
   }
 }
 
-// Get last sync cursor from localStorage (per-user to prevent cross-user sync issues)
+/**
+ * Read the last sync cursor from localStorage.
+ *
+ * The cursor is an ISO 8601 timestamp representing the `updated_at` of the most
+ * recent record we've seen. It's stored **per-user** to prevent cross-user sync
+ * issues when multiple accounts use the same browser (each user has their own
+ * cursor so switching accounts doesn't skip or re-pull data).
+ *
+ * @param userId - The user ID for cursor isolation (null = legacy global cursor)
+ * @returns ISO timestamp cursor, or epoch if no cursor is stored
+ */
 function getLastSyncCursor(userId: string | null): string {
   if (typeof localStorage === 'undefined') return '1970-01-01T00:00:00.000Z';
   const key = userId ? `lastSyncCursor_${userId}` : 'lastSyncCursor';
   return localStorage.getItem(key) || '1970-01-01T00:00:00.000Z';
 }
 
-// Set last sync cursor (per-user)
+/**
+ * Persist the sync cursor to localStorage (per-user).
+ *
+ * @param cursor - ISO 8601 timestamp of the newest `updated_at` seen
+ * @param userId - The user ID for cursor isolation
+ */
 function setLastSyncCursor(cursor: string, userId: string | null): void {
   if (typeof localStorage !== 'undefined') {
     const key = userId ? `lastSyncCursor_${userId}` : 'lastSyncCursor';
@@ -632,9 +1046,25 @@ async function forceFullSync(): Promise<void> {
   }
 }
 
-// PULL: Fetch changes from remote since last sync
-// Returns egress stats for this pull operation
-// minCursor: optional minimum cursor to use (e.g., timestamp after push completes)
+/**
+ * **PULL PHASE**: Fetch all changes from Supabase since the last sync cursor.
+ *
+ * This is the "download" half of the sync cycle. It:
+ * 1. Queries all configured tables for rows with `updated_at > lastSyncCursor`
+ * 2. For each remote record, applies it to local DB with conflict resolution
+ * 3. Skips recently-modified entities (protected by the TTL guard)
+ * 4. Skips entities just processed by realtime (prevents double-processing)
+ * 5. Advances the sync cursor to the newest `updated_at` seen
+ *
+ * All table queries run in parallel for minimal wall-clock time. The entire
+ * local write is wrapped in a Dexie transaction for atomicity.
+ *
+ * @param minCursor - Optional minimum cursor override (e.g., post-push timestamp
+ *   to avoid re-fetching records we just pushed). Uses the later of this and
+ *   the stored cursor.
+ * @returns Egress stats (bytes and record count) for this pull
+ * @throws {Error} If no authenticated user is available
+ */
 async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; records: number }> {
   const userId = await getCurrentUserId();
 
@@ -693,7 +1123,20 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
     pullRecords += egress.records;
   }
 
-  // Helper function to apply remote changes with field-level conflict resolution
+  /**
+   * Apply remote records to local DB with field-level conflict resolution.
+   *
+   * For each remote record:
+   * - **No local copy**: Accept remote (simple insert)
+   * - **Local is newer**: Skip (no conflict possible)
+   * - **Remote is newer, no pending ops**: Accept remote (fast path)
+   * - **Remote is newer, has pending ops**: Run 3-tier conflict resolution
+   *   (auto-merge non-conflicting fields, then pending-local-wins for conflicting fields)
+   *
+   * @param entityType - The Supabase table name (for conflict history logging)
+   * @param remoteRecords - Records fetched from the server
+   * @param table - Dexie table handle for local reads/writes
+   */
   async function applyRemoteWithConflictResolution<T extends { id: string; updated_at: string }>(
     entityType: string,
     remoteRecords: T[] | null,
@@ -790,17 +1233,42 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
   return { bytes: pullBytes, records: pullRecords };
 }
 
-// PUSH: Send pending operations to remote
-// Continues until queue is empty to catch items added during sync
-// Track push errors for this sync cycle
+/**
+ * Errors collected during the current push phase.
+ *
+ * Reset at the start of each push cycle. Used by `runFullSync()` to determine
+ * whether to show error status in the UI. Only "significant" errors (persistent
+ * or final-retry transient) are added here.
+ */
 let pushErrors: Array<{ message: string; table: string; operation: string; entityId: string }> = [];
 
+/** Statistics returned by a push operation */
 interface PushStats {
+  /** Number of queue items before coalescing */
   originalCount: number;
+  /** Number of items removed by coalescing (redundant ops merged) */
   coalescedCount: number;
+  /** Number of operations actually sent to Supabase */
   actualPushed: number;
 }
 
+/**
+ * **PUSH PHASE**: Send all pending operations from the sync queue to Supabase.
+ *
+ * This is the "upload" half of the sync cycle. It:
+ * 1. Pre-flight auth check (fail fast if session is expired)
+ * 2. Coalesces redundant operations (e.g., 50 rapid edits → 1 update)
+ * 3. Processes each queue item via `processSyncItem()`
+ * 4. Removes successfully pushed items from the queue
+ * 5. Increments retry count for failed items (exponential backoff)
+ *
+ * Loops until the queue is empty or `maxIterations` is reached. The loop
+ * catches items that were added to the queue *during* the push (e.g., the
+ * user made another edit while sync was running).
+ *
+ * @returns Push statistics (original count, coalesced count, actually pushed)
+ * @throws {Error} If auth validation fails before push
+ */
 async function pushPendingOps(): Promise<PushStats> {
   const maxIterations = 10; // Safety limit to prevent infinite loops
   let iterations = 0;
@@ -915,7 +1383,17 @@ async function pushPendingOps(): Promise<PushStats> {
   return { originalCount, coalescedCount, actualPushed };
 }
 
-// Check if error is a duplicate key violation (item already exists)
+/**
+ * Check if a Supabase/PostgreSQL error is a duplicate key violation.
+ *
+ * Handles multiple error formats: PostgreSQL error code `23505`,
+ * PostgREST error code `PGRST409`, and fallback message matching.
+ * Used during CREATE operations to gracefully handle race conditions
+ * where the same entity was created on multiple devices simultaneously.
+ *
+ * @param error - The error object from Supabase
+ * @returns `true` if this is a duplicate key / unique constraint violation
+ */
 function isDuplicateKeyError(error: { code?: string; message?: string }): boolean {
   // PostgreSQL error code for unique violation
   if (error.code === '23505') return true;
@@ -926,7 +1404,15 @@ function isDuplicateKeyError(error: { code?: string; message?: string }): boolea
   return msg.includes('duplicate') || msg.includes('unique') || msg.includes('already exists');
 }
 
-// Check if error is a "not found" error (item doesn't exist)
+/**
+ * Check if a Supabase/PostgreSQL error indicates the target row doesn't exist.
+ *
+ * Used during DELETE and UPDATE operations. If a row doesn't exist, the operation
+ * is treated as a no-op (idempotent) rather than an error.
+ *
+ * @param error - The error object from Supabase
+ * @returns `true` if this is a "not found" / "no rows" error
+ */
 function isNotFoundError(error: { code?: string; message?: string }): boolean {
   // PostgREST error code for no rows affected/found
   if (error.code === 'PGRST116') return true;
@@ -937,9 +1423,19 @@ function isNotFoundError(error: { code?: string; message?: string }): boolean {
   return msg.includes('not found') || msg.includes('no rows');
 }
 
-// Classify an error as transient (will likely succeed on retry) or persistent (won't improve)
-// Transient errors should not show UI errors until retries are exhausted
-// Persistent errors should show immediately since they require user action
+/**
+ * Classify an error as transient (will likely succeed on retry) or persistent (won't improve).
+ *
+ * This classification drives the UI error strategy:
+ * - **Transient errors** (network, timeout, rate limit, 5xx): Don't show error in UI
+ *   until retry attempts are exhausted. The user doesn't need to know about a brief
+ *   network hiccup that resolved on the next attempt.
+ * - **Persistent errors** (auth, validation, RLS): Show error immediately since they
+ *   require user action (re-login, fix data, etc.) and won't resolve with retries.
+ *
+ * @param error - The error to classify
+ * @returns `true` if the error is transient (likely to succeed on retry)
+ */
 function isTransientError(error: unknown): boolean {
   const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
   const errObj = error as { code?: string; status?: number };
@@ -981,9 +1477,24 @@ function isTransientError(error: unknown): boolean {
   return false;
 }
 
-// Process a single sync item (intent-based operation format)
-// CRITICAL: All operations use .select() to verify they succeeded
-// RLS can silently block operations - returning success but affecting 0 rows
+/**
+ * Process a single sync queue item by sending it to Supabase.
+ *
+ * Handles four operation types: `create`, `set`, `increment`, and `delete`.
+ * Each operation maps to a specific Supabase query pattern.
+ *
+ * **CRITICAL**: All operations use `.select()` to verify they actually affected a row.
+ * Without this, Supabase's Row Level Security (RLS) can **silently block** operations —
+ * returning a successful response with 0 rows affected. The `.select()` call lets us
+ * detect this and throw an appropriate error instead of silently losing data.
+ *
+ * **Singleton table handling**: For tables marked as `isSingleton` (one row per user),
+ * special reconciliation logic handles the case where the local UUID doesn't match
+ * the server's UUID (e.g., created offline before the server row existed).
+ *
+ * @param item - The sync queue item to process
+ * @throws {Error} If the operation fails or is blocked by RLS
+ */
 async function processSyncItem(item: SyncOperationItem): Promise<void> {
   const { table, entityId, operationType, field, value, timestamp } = item;
   const deviceId = getDeviceId();
@@ -993,16 +1504,20 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
 
   switch (operationType) {
     case 'create': {
-      // Create: insert the full payload with device_id
+      // INSERT the full entity payload with the originating device_id.
+      // Uses .select('id').maybeSingle() to verify the row was actually created
+      // (RLS can silently block inserts, returning success with no data).
       const payload = value as Record<string, unknown>;
       const { data, error } = await supabase
         .from(table)
         .insert({ id: entityId, ...payload, device_id: deviceId })
         .select('id')
         .maybeSingle();
-      // Ignore duplicate key errors (item already synced from another device)
+      // Duplicate key = another device already created this entity.
+      // For regular tables, this is a no-op (the entity exists, which is what we wanted).
+      // For singleton tables, we need to reconcile: the local UUID was generated offline
+      // and doesn't match the server's UUID, so we swap the local ID to match.
       if (error && isDuplicateKeyError(error)) {
-        // For singleton tables, reconcile local ID with server
         if (isSingletonTable(table) && payload.user_id) {
           const { data: existing } = await supabase
             .from(table)
@@ -1040,7 +1555,9 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
     }
 
     case 'delete': {
-      // Delete: soft delete with tombstone and device_id
+      // SOFT DELETE: Set `deleted: true` rather than physically removing the row.
+      // Other devices discover the deletion during their next pull and remove their local copy.
+      // The tombstone is eventually hard-deleted by `cleanupServerTombstones()` after the TTL.
       const { data, error } = await supabase
         .from(table)
         .update({ deleted: true, updated_at: timestamp, device_id: deviceId })
@@ -1060,9 +1577,11 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
     }
 
     case 'increment': {
-      // Increment: we need to read current value, add delta, and update
-      // This is done atomically by reading from local DB (which has the current state)
-      // The value we push is already the final computed value from local
+      // INCREMENT: Push the final computed value (not the delta) to the server.
+      // The local DB already has the correct value after the increment was applied locally.
+      // We read it from IndexedDB and send it as a SET to the server. This avoids the
+      // need for a server-side atomic increment (which Supabase doesn't natively support
+      // without an RPC function) and ensures eventual consistency.
       if (!field) {
         throw new Error('Increment operation requires a field');
       }
@@ -1103,7 +1622,9 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
     }
 
     case 'set': {
-      // Set: update the field(s) with the new value(s) and device_id
+      // SET: Update one or more fields on the server. Supports both single-field
+      // updates (field + value) and multi-field updates (value is a payload object).
+      // Includes singleton table reconciliation for ID mismatches (same as 'create').
       let updatePayload: Record<string, unknown>;
 
       if (field) {
@@ -1175,7 +1696,16 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
   }
 }
 
-// Extract raw error message from various error formats (Supabase, Error, etc.)
+/**
+ * Extract a raw error message from various error object formats.
+ *
+ * Handles: standard `Error` objects, Supabase/PostgreSQL error objects
+ * (with `message`, `details`, `hint`, `code` properties), wrapper objects
+ * with `error` or `description` properties, and primitive values.
+ *
+ * @param error - Any error value (Error, Supabase error object, string, etc.)
+ * @returns A human-readable error message string
+ */
 function extractErrorMessage(error: unknown): string {
   // Standard Error object
   if (error instanceof Error) {
@@ -1221,7 +1751,15 @@ function extractErrorMessage(error: unknown): string {
   return String(error);
 }
 
-// Parse error into user-friendly message
+/**
+ * Convert a technical error into a user-friendly message for the UI.
+ *
+ * Maps common error patterns (network, auth, rate limiting, server errors)
+ * to clear, actionable messages. Truncates unknown errors to 100 characters.
+ *
+ * @param error - The error to parse
+ * @returns A user-friendly error message suitable for display in the UI
+ */
 function parseErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
@@ -1260,8 +1798,26 @@ function parseErrorMessage(error: unknown): string {
   return 'An unexpected error occurred';
 }
 
-// Full sync: push first (so our changes are persisted), then pull
-// quiet: if true, don't update UI status at all (for background periodic syncs)
+/**
+ * Execute a full sync cycle: push local changes, then pull remote changes.
+ *
+ * This is the main entry point for sync. It orchestrates the complete cycle:
+ * 1. **Pre-flight checks**: Online status, auth validation, session validity
+ * 2. **Acquire lock**: Prevent concurrent syncs
+ * 3. **Push phase**: Send pending local changes to Supabase
+ * 4. **Pull phase**: Fetch remote changes since last cursor (with retry)
+ * 5. **Post-sync**: Update UI status, notify stores, log egress stats
+ *
+ * The `quiet` flag controls whether the UI sync indicator is shown. Background
+ * periodic syncs use `quiet=true` to avoid distracting the user. User-triggered
+ * syncs (after local writes) use `quiet=false` to show progress.
+ *
+ * The `skipPull` flag enables push-only mode when realtime subscriptions are
+ * healthy — since remote changes arrive via WebSocket, polling is redundant.
+ *
+ * @param quiet - If `true`, don't update the UI status indicator
+ * @param skipPull - If `true`, skip the pull phase (push-only mode)
+ */
 export async function runFullSync(
   quiet: boolean = false,
   skipPull: boolean = false
@@ -1614,7 +2170,28 @@ async function fullReconciliation(): Promise<number> {
   return totalRemoved;
 }
 
-// Initial hydration: if local DB is empty, pull everything from remote
+/**
+ * Initial hydration: populate an empty local DB from the remote server.
+ *
+ * This runs once on first load (or after a cache clear). If the local DB already
+ * has data, it falls through to a normal sync cycle instead.
+ *
+ * **Flow for empty local DB**:
+ * 1. Acquire sync lock
+ * 2. Pull ALL non-deleted records from every configured table
+ * 3. Store in local DB via bulk put (single transaction)
+ * 4. Set sync cursor to the max `updated_at` seen (not "now") to avoid missing
+ *    changes that happened during the hydration query
+ * 5. Notify stores to render the freshly loaded data
+ *
+ * **Flow for populated local DB**:
+ * 1. Run full reconciliation (if cursor is stale past tombstone TTL)
+ * 2. Reconcile orphaned local changes (items modified after cursor with empty queue)
+ * 3. Run normal full sync
+ *
+ * @see {@link fullReconciliation} - Handles the "been offline too long" case
+ * @see {@link reconcileLocalWithRemote} - Re-queues orphaned local changes
+ */
 async function hydrateFromRemote(): Promise<void> {
   if (typeof navigator === 'undefined' || !navigator.onLine) return;
 
@@ -1740,16 +2317,38 @@ async function hydrateFromRemote(): Promise<void> {
   }
 }
 
-// ============================================================
+// =============================================================================
 // TOMBSTONE CLEANUP
-// ============================================================
+// =============================================================================
+//
+// The engine uses "soft deletes" — deleted records are marked `deleted: true`
+// rather than being physically removed. This allows other devices to discover
+// the deletion during their next sync (they see the tombstone and remove their
+// local copy).
+//
+// However, tombstones accumulate over time. After `tombstoneMaxAgeDays` (default 7),
+// tombstones are "hard deleted" (physically removed) from both local and server.
+//
+// **Important**: If a device has been offline longer than the tombstone TTL, it may
+// miss tombstone deletions. The `fullReconciliation()` function handles this by
+// comparing local IDs against server IDs and removing orphans.
+// =============================================================================
 
-// Clean up old tombstones (deleted records) from local DB AND Supabase
-// This prevents indefinite accumulation of soft-deleted records
-const CLEANUP_INTERVAL_MS = 86400000; // 24 hours - only run server cleanup once per day
+/** Minimum interval between server-side tombstone cleanups (24 hours) */
+const CLEANUP_INTERVAL_MS = 86400000;
+
+/** Timestamp of the last server-side cleanup (prevents running more than once/day) */
 let lastServerCleanup = 0;
 
-// Clean up old tombstones from LOCAL IndexedDB
+/**
+ * Remove expired tombstones from the local IndexedDB.
+ *
+ * Scans all entity tables for records with `deleted === true` and
+ * `updated_at` older than the tombstone cutoff date. Runs inside
+ * a Dexie transaction for atomicity.
+ *
+ * @returns Number of tombstones removed
+ */
 async function cleanupLocalTombstones(): Promise<number> {
   const tombstoneMaxAgeDays = getTombstoneMaxAgeDays();
   const cutoffDate = new Date();
@@ -1790,7 +2389,16 @@ async function cleanupLocalTombstones(): Promise<number> {
   return totalDeleted;
 }
 
-// Clean up old tombstones from SUPABASE (runs once per day max)
+/**
+ * Remove expired tombstones from Supabase (server-side cleanup).
+ *
+ * Rate-limited to once per 24 hours to avoid unnecessary API calls.
+ * Uses actual DELETE (not soft delete) to physically remove the rows.
+ * Can be forced via the `force` parameter (used by debug utilities).
+ *
+ * @param force - If `true`, bypass the 24-hour rate limit
+ * @returns Number of tombstones removed from the server
+ */
 async function cleanupServerTombstones(force = false): Promise<number> {
   // Only run once per day to avoid unnecessary requests (unless forced)
   const now = Date.now();
@@ -1841,14 +2449,35 @@ async function cleanupServerTombstones(force = false): Promise<number> {
   return totalDeleted;
 }
 
-// Combined cleanup function
+/**
+ * Run both local and server tombstone cleanup.
+ *
+ * @returns Object with counts of tombstones removed locally and from the server
+ */
 async function cleanupOldTombstones(): Promise<{ local: number; server: number }> {
   const local = await cleanupLocalTombstones();
   const server = await cleanupServerTombstones();
   return { local, server };
 }
 
-// Debug function to check tombstone status and manually trigger cleanup
+/**
+ * Debug utility: inspect tombstone counts and optionally trigger cleanup.
+ *
+ * Available in browser console via `window.__<prefix>Tombstones()`.
+ * Displays per-table tombstone counts, ages, and eligibility for cleanup.
+ *
+ * @param options - Control cleanup behavior
+ * @param options.cleanup - If `true`, run tombstone cleanup after inspection
+ * @param options.force - If `true`, bypass the 24-hour server cleanup rate limit
+ *
+ * @example
+ * ```js
+ * // In browser console:
+ * __engineTombstones()                          // Inspect only
+ * __engineTombstones({ cleanup: true })          // Inspect + cleanup
+ * __engineTombstones({ cleanup: true, force: true })  // Force server cleanup too
+ * ```
+ */
 async function debugTombstones(options?: { cleanup?: boolean; force?: boolean }): Promise<void> {
   const tombstoneMaxAgeDays = getTombstoneMaxAgeDays();
   const cutoffDate = new Date();
@@ -1959,15 +2588,54 @@ async function debugTombstones(options?: { cleanup?: boolean; force?: boolean })
   debugLog('========================');
 }
 
-// ============================================================
-// LIFECYCLE
-// ============================================================
+// =============================================================================
+// LIFECYCLE — Start / Stop
+// =============================================================================
+//
+// The sync engine has a clear lifecycle:
+//
+// 1. **startSyncEngine()**: Called once after `initEngine()` configures the engine.
+//    Sets up all event listeners, timers, realtime subscriptions, and runs the
+//    initial hydration/sync. Idempotent — safe to call multiple times (cleans up
+//    existing listeners first).
+//
+// 2. **stopSyncEngine()**: Called during app teardown or before reconfiguring.
+//    Removes all event listeners, clears timers, unsubscribes from realtime,
+//    and releases the sync lock. After this, no sync activity occurs.
+//
+// 3. **clearLocalCache()**: Called during logout to wipe all local data.
+//    Clears entity tables, sync queue, conflict history, and sync cursors.
+// =============================================================================
 
-// Store cleanup functions for realtime subscriptions
+/** Unsubscribe function for realtime data update events */
 let realtimeDataUnsubscribe: (() => void) | null = null;
+
+/** Unsubscribe function for realtime connection state change events */
 let realtimeConnectionUnsubscribe: (() => void) | null = null;
+
+/** Supabase auth state change subscription (has nested unsubscribe structure) */
 let authStateUnsubscribe: { data: { subscription: { unsubscribe: () => void } } } | null = null;
 
+/**
+ * Start the sync engine: initialize all listeners, timers, and subscriptions.
+ *
+ * This is the main "boot" function for the sync engine. It:
+ * 1. Ensures the Dexie DB is open and upgraded
+ * 2. Cleans up any existing listeners (idempotent restart support)
+ * 3. Sets up debug window utilities
+ * 4. Subscribes to Supabase auth state changes (handles sign-out/token-refresh)
+ * 5. Registers online/offline handlers with auth validation
+ * 6. Registers visibility change handler for smart tab-return syncing
+ * 7. Starts realtime WebSocket subscriptions
+ * 8. Starts periodic background sync interval
+ * 9. Validates Supabase schema (one-time)
+ * 10. Runs initial hydration (if local DB is empty) or full sync
+ * 11. Runs initial cleanup (tombstones, conflicts, failed items)
+ * 12. Starts the watchdog timer
+ *
+ * **Must be called after `initEngine()`** — requires configuration to be set.
+ * Safe to call multiple times (previous listeners are cleaned up first).
+ */
 export async function startSyncEngine(): Promise<void> {
   if (typeof window === 'undefined') return;
 
@@ -2021,7 +2689,10 @@ export async function startSyncEngine(): Promise<void> {
   // Initialize network status monitoring (idempotent)
   isOnline.init();
 
-  // Subscribe to auth state changes - critical for iOS PWA where sessions can expire
+  // Subscribe to auth state changes.
+  // CRITICAL for iOS PWA: Safari aggressively kills background tabs, which can expire
+  // the Supabase session. When the user returns, TOKEN_REFRESHED fires and we need
+  // to restart realtime + trigger a sync to catch up on missed changes.
   authStateUnsubscribe = supabase.auth.onAuthStateChange(async (event, session) => {
     debugLog(`[SYNC] Auth state change: ${event}`);
 
@@ -2053,7 +2724,9 @@ export async function startSyncEngine(): Promise<void> {
     }
   });
 
-  // Register disconnect handler: create offline session from cached credentials
+  // Register disconnect handler: proactively create an offline session from cached
+  // credentials so the user can continue working without interruption. The offline
+  // session is validated on reconnect before any sync operations are allowed.
   isOnline.onDisconnect(async () => {
     debugLog('[Engine] Gone offline - creating offline session if credentials cached');
     try {
@@ -2148,10 +2821,13 @@ export async function startSyncEngine(): Promise<void> {
     markOffline();
   }
 
-  // Handle online event - restart realtime subscriptions
-  // NOTE: Sync is triggered by isOnline.onReconnect() which runs AFTER auth validation.
-  // This handler only restarts realtime — calling runFullSync() here would race
-  // with the reconnect handler's auth check and could sync before validation completes.
+  // Handle browser 'online' event — restart realtime WebSocket subscriptions.
+  //
+  // IMPORTANT: We do NOT trigger a sync here. Sync is handled by the
+  // `isOnline.onReconnect()` callback (registered above), which runs AFTER auth
+  // has been validated. If we called `runFullSync()` here, it would race with
+  // the reconnect handler's auth check and could attempt to sync with an expired
+  // session, causing silent RLS failures.
   handleOnlineRef = async () => {
     const userId = await getCurrentUserId();
     if (userId) {
@@ -2241,11 +2917,15 @@ export async function startSyncEngine(): Promise<void> {
     startRealtimeSubscriptions(userId);
   }
 
-  // Start periodic sync (quiet mode - don't show indicator unless needed)
-  // Reduced frequency when realtime is healthy
+  // Start the periodic background sync timer.
+  // This is the polling fallback for when realtime subscriptions are down.
+  // When realtime IS healthy, periodic sync is skipped entirely — realtime
+  // delivers changes in near-real-time, making polling redundant.
+  // Also runs housekeeping tasks (tombstone cleanup, conflict history, etc.)
   syncInterval = setInterval(async () => {
-    // Only run periodic sync if tab is visible and online
-    // Skip if realtime is healthy (reduces egress significantly)
+    // Only poll if: tab is visible AND online AND realtime is NOT healthy.
+    // This egress optimization is critical — without it, every open tab polls
+    // the entire database every 15 minutes regardless of realtime status.
     if (navigator.onLine && isTabVisible && !isRealtimeHealthy()) {
       runFullSync(true).catch((e) => debugError('[SYNC] Periodic sync failed:', e)); // Quiet background sync
     }
@@ -2371,6 +3051,17 @@ export async function startSyncEngine(): Promise<void> {
   }
 }
 
+/**
+ * Stop the sync engine: tear down all listeners, timers, and subscriptions.
+ *
+ * After calling this, no sync activity will occur. All event listeners are
+ * removed to prevent memory leaks. The sync lock is released in case a sync
+ * was in progress. Hydration and schema validation flags are reset so the
+ * engine can be cleanly restarted.
+ *
+ * Call this during app teardown, before reconfiguring the engine, or when
+ * the user navigates away from pages that need sync.
+ */
 export async function stopSyncEngine(): Promise<void> {
   if (typeof window === 'undefined') return;
 
@@ -2428,7 +3119,16 @@ export async function stopSyncEngine(): Promise<void> {
   _schemaValidated = false;
 }
 
-// Clear local cache (for logout)
+/**
+ * Clear all local data from IndexedDB (used during logout).
+ *
+ * Wipes all entity tables, the sync queue, and conflict history in a single
+ * transaction. Also removes the user's sync cursor from localStorage and
+ * resets the hydration flag so the next login triggers a fresh hydration.
+ *
+ * **IMPORTANT**: Call this BEFORE calling `stopSyncEngine()` to ensure the
+ * database is still open when clearing tables.
+ */
 export async function clearLocalCache(): Promise<void> {
   const config = getEngineConfig();
   const db = config.db!;

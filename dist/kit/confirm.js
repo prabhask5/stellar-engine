@@ -1,8 +1,30 @@
 /**
  * @fileoverview Email confirmation helpers for the `/confirm` route.
  *
- * Extracts the OTP verification + device trust + error translation logic
- * so the scaffolded confirm page can focus on UI.
+ * This module extracts the OTP verification, device trust, error translation,
+ * and cross-tab broadcast logic so that the scaffolded confirmation page can
+ * focus purely on UI rendering. It handles the full lifecycle of an email
+ * confirmation link click:
+ *
+ *   1. Verify the OTP token hash with Supabase
+ *   2. Trust the originating device (for device-verification flows)
+ *   3. Translate raw Supabase errors into user-friendly messages
+ *   4. Broadcast the confirmation to other open tabs via BroadcastChannel
+ *   5. Attempt to auto-close the confirmation tab
+ *
+ * @module kit/confirm
+ *
+ * @example
+ * ```ts
+ * // In /confirm/+page.svelte onMount
+ * const result = await handleEmailConfirmation(tokenHash, type);
+ * if (result.success) {
+ *   await broadcastAuthConfirmed('auth-channel', type);
+ * }
+ * ```
+ *
+ * @see {@link verifyOtp} in `supabase/auth.ts` for the underlying OTP call
+ * @see {@link trustPendingDevice} in `auth/deviceVerification.ts` for device trust logic
  */
 import { verifyOtp } from '../supabase/auth.js';
 import { trustPendingDevice } from '../auth/deviceVerification.js';
@@ -10,23 +32,53 @@ import { trustPendingDevice } from '../auth/deviceVerification.js';
 //  PUBLIC API
 // =============================================================================
 /**
- * Handles email confirmation: verifies the OTP token, trusts the pending
- * device for device-verification types, and translates Supabase error
- * messages to user-friendly strings.
+ * Handles the full email confirmation flow: verifies the OTP token hash,
+ * optionally trusts the pending device, and translates Supabase error
+ * messages into user-friendly strings.
  *
- * @param tokenHash - The `token_hash` from the confirmation URL query params.
- * @param type      - The verification type from Supabase (`signup`, `email`, `email_change`, `magiclink`).
- * @returns `{ success: true }` on success, or `{ success: false, error }` on failure.
+ * The function normalizes the `type` parameter before passing it to Supabase
+ * (e.g. `'magiclink'` maps to `'email'` for OTP verification purposes) and
+ * applies a tiered error classification to produce contextual error messages.
+ *
+ * @param tokenHash - The `token_hash` extracted from the confirmation URL
+ *                    query parameters (provided by Supabase in the email link).
+ * @param type      - The verification type from Supabase, indicating what kind
+ *                    of email action triggered the confirmation. One of:
+ *                    - `'signup'` — new account registration
+ *                    - `'email'` — email change or device verification
+ *                    - `'email_change'` — explicit email address change
+ *                    - `'magiclink'` — passwordless login link
+ *
+ * @returns A promise resolving to `{ success: true }` on successful
+ *          verification, or `{ success: false, error: string }` on failure
+ *          with a translated error message.
+ *
+ * @example
+ * ```ts
+ * const result = await handleEmailConfirmation(tokenHash, 'signup');
+ * if (!result.success) {
+ *   showError(result.error);
+ * }
+ * ```
+ *
+ * @see {@link ConfirmResult} for the return type shape
+ * @see {@link verifyOtp} for the underlying Supabase OTP verification
  */
 export async function handleEmailConfirmation(tokenHash, type) {
     try {
+        /* Supabase's verifyOtp does not accept 'magiclink' as a type;
+           it expects 'email' for both magic link and email verification flows. */
         const otpType = type === 'magiclink' ? 'email' : type;
         const { error } = await verifyOtp(tokenHash, otpType);
-        // For device-verification OTPs, trust the originating device
+        /* For device-verification OTPs (email or magiclink), trust the device
+           that initiated the confirmation so it won't be challenged again. */
         if (!error && (type === 'email' || type === 'magiclink')) {
             await trustPendingDevice();
         }
         if (error) {
+            /* Tiered error classification: check for common Supabase error patterns
+               and translate them to actionable user-facing messages rather than
+               exposing raw API error strings. */
             const errorLower = error.toLowerCase();
             if (errorLower.includes('already') ||
                 errorLower.includes('confirmed') ||
@@ -42,22 +94,53 @@ export async function handleEmailConfirmation(tokenHash, type) {
                     error: 'This confirmation link has expired. Please request a new one from the login page.'
                 };
             }
+            /* Unrecognized error pattern — pass through the raw message as a
+               last resort; this should be rare in production. */
             return { success: false, error };
         }
         return { success: true };
     }
     catch {
+        /* Catch network failures, unexpected exceptions, etc. The user sees
+           a generic message rather than a stack trace. */
         return { success: false, error: 'An unexpected error occurred. Please try again.' };
     }
 }
 /**
  * Broadcasts an auth confirmation event via `BroadcastChannel` so other
- * tabs (e.g. the login page) can pick up the auth state change.
+ * open tabs (e.g. the login page that initiated the email flow) can detect
+ * the completed authentication and update their UI accordingly.
  *
- * @param channelName - The BroadcastChannel name (must match the login page).
- * @param type        - The verification type to include in the message.
+ * After broadcasting, the function waits briefly for the receiving tab to
+ * process the message, then attempts to auto-close this confirmation tab.
+ * If the browser blocks `window.close()` (common for tabs not opened via
+ * `window.open()`), the function returns `'can_close'` so the UI can show
+ * a "you may close this tab" message instead.
+ *
+ * @param channelName - The `BroadcastChannel` name. Must match the channel
+ *                      name used by the login page listener.
+ * @param type        - The verification type to include in the broadcast
+ *                      message payload, so the receiver knows which flow
+ *                      completed.
+ *
+ * @returns A promise resolving to one of:
+ *   - `'closed'`       — tab was successfully closed (caller won't see this)
+ *   - `'can_close'`    — broadcast sent but tab could not auto-close
+ *   - `'no_broadcast'` — BroadcastChannel API not available (SSR or old browser)
+ *
+ * @example
+ * ```ts
+ * const status = await broadcastAuthConfirmed('stellar-auth', 'signup');
+ * if (status === 'can_close') {
+ *   showMessage('You can close this tab.');
+ * }
+ * ```
+ *
+ * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel}
  */
 export async function broadcastAuthConfirmed(channelName, type) {
+    /* Guard against SSR and browsers lacking BroadcastChannel support
+       (notably some older mobile browsers). */
     if (typeof window === 'undefined' || !('BroadcastChannel' in window)) {
         return 'no_broadcast';
     }
@@ -66,17 +149,21 @@ export async function broadcastAuthConfirmed(channelName, type) {
         type: 'AUTH_CONFIRMED',
         verificationType: type
     });
-    // Give the original tab time to process the message
+    /* Give the original tab time to process the message before closing
+       the channel — 500ms is sufficient for the receiver's event loop
+       to fire the handler and update its state. */
     await new Promise((resolve) => setTimeout(resolve, 500));
     channel.close();
-    // Attempt to close this confirmation tab
+    /* Attempt to close this confirmation tab — browsers generally only
+       allow window.close() for tabs opened programmatically via
+       window.open(), so this may silently fail. */
     try {
         window.close();
     }
     catch {
-        // Browser policy may block window.close()
+        /* Browser policy may block window.close() — expected behavior */
     }
-    // If still here → close failed
+    /* If execution reaches here, the tab is still open (close was blocked) */
     return 'can_close';
 }
 //# sourceMappingURL=confirm.js.map

@@ -6,33 +6,46 @@
  * **full** text whenever the content is visually truncated.
  *
  * **Behaviour by device type:**
- * - **Desktop** — tooltip appears on `mouseenter`, hides on `mouseleave`.
- *   Only shown when `scrollWidth > clientWidth` (text is actually clipped).
- * - **Mobile** — tooltip appears on `touchstart` (tap), dismisses on
- *   tap-outside or after a 3-second auto-dismiss timeout.
+ *   - **Desktop** — tooltip appears on `mouseenter`, hides on `mouseleave`.
+ *     Only shown when `scrollWidth > clientWidth` (text is actually clipped).
+ *   - **Mobile** — tooltip appears on `touchstart` (tap), dismisses on
+ *     tap-outside or after a 3-second auto-dismiss timeout.
  *
  * A **singleton** tooltip `<div>` is lazily appended to `document.body` and
  * reused across all instances of the action to avoid DOM bloat.
  *
- * **Usage:**
+ * @example
  * ```svelte
  * <span class="my-text" use:truncateTooltip>{longText}</span>
  * ```
+ *
+ * @see {@link truncateTooltip} for the Svelte action export
+ * @see {@link showTooltip} for the display logic
+ * @see {@link positionTooltip} for the positioning algorithm
  */
 
 // =============================================================================
 //                        SINGLETON TOOLTIP STATE
 // =============================================================================
 
-/** The shared tooltip DOM element — lazily created by {@link getTooltip}. */
+/**
+ * The shared tooltip DOM element — lazily created by {@link getTooltip}.
+ * Only one tooltip element exists in the entire document, regardless of
+ * how many `use:truncateTooltip` instances are active.
+ */
 let tooltipEl: HTMLElement | null = null;
 
-/** Handle for the mobile auto-dismiss `setTimeout` (cleared on manual hide). */
+/**
+ * Handle for the mobile auto-dismiss `setTimeout`.
+ * Cleared on manual hide to prevent stale timeouts from
+ * dismissing a newly-shown tooltip.
+ */
 let hideTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * The DOM element that currently "owns" the visible tooltip.
- * Used to prevent hide events from one element dismissing another's tooltip.
+ * Used to prevent hide events from one element dismissing another's tooltip,
+ * and to implement tap-toggle behaviour on mobile (tap same element = hide).
  */
 let currentOwner: HTMLElement | null = null;
 
@@ -44,7 +57,9 @@ let currentOwner: HTMLElement | null = null;
  * Return the singleton tooltip element, creating it on first call.
  *
  * The element is given the CSS class `truncate-tooltip` and an ARIA
- * `role="tooltip"` attribute for accessibility.
+ * `role="tooltip"` attribute for accessibility. The consuming app must
+ * provide CSS for `.truncate-tooltip` (positioning, background, etc.)
+ * and a `.visible` modifier class to control opacity/display.
  *
  * @returns The shared tooltip `HTMLElement`.
  */
@@ -65,12 +80,19 @@ function getTooltip(): HTMLElement {
 /**
  * Check whether an element's text content is visually truncated.
  *
- * Compares `scrollWidth` (full content width) against `clientWidth`
- * (visible width). When `scrollWidth` exceeds `clientWidth`, the CSS
- * `text-overflow: ellipsis` rule is hiding part of the text.
+ * Compares `scrollWidth` (full content width including overflow) against
+ * `clientWidth` (visible width). When `scrollWidth` exceeds `clientWidth`,
+ * the CSS `text-overflow: ellipsis` rule is hiding part of the text.
  *
  * @param el - The DOM element to test.
  * @returns `true` if the text overflows its container.
+ *
+ * @example
+ * ```ts
+ * if (isTruncated(spanElement)) {
+ *   showTooltip(spanElement);
+ * }
+ * ```
  */
 function isTruncated(el: HTMLElement): boolean {
   return el.scrollWidth > el.clientWidth;
@@ -85,10 +107,10 @@ function isTruncated(el: HTMLElement): boolean {
  *
  * Default placement is **centred above** the anchor with an 8 px gap.
  * Two edge-case corrections are applied:
- * 1. If the tooltip would overflow the **top** of the viewport, it flips
- *    to appear **below** the anchor instead.
- * 2. The horizontal position is clamped to keep the tooltip within the
- *    viewport (8 px padding on each side).
+ *   1. If the tooltip would overflow the **top** of the viewport, it flips
+ *      to appear **below** the anchor instead.
+ *   2. The horizontal position is clamped to keep the tooltip within the
+ *      viewport (8 px padding on each side).
  *
  * @param tooltip - The tooltip element to reposition.
  * @param anchor  - The element the tooltip should point at.
@@ -125,7 +147,7 @@ function positionTooltip(tooltip: HTMLElement, anchor: HTMLElement): void {
  * Positioning is deferred to the next animation frame so that the tooltip's
  * dimensions are accurate after its `textContent` is set.
  *
- * @param anchor - The element whose full text should be displayed.
+ * @param anchor - The element whose full text should be displayed in the tooltip.
  */
 function showTooltip(anchor: HTMLElement): void {
   if (!isTruncated(anchor)) return;
@@ -154,7 +176,7 @@ function showTooltip(anchor: HTMLElement): void {
  * Hide the tooltip and reset ownership state.
  *
  * Safe to call even when no tooltip is visible — the function is a no-op
- * in that case.
+ * in that case. Also clears any pending auto-dismiss timeout.
  */
 function hideTooltip(): void {
   if (tooltipEl) {
@@ -175,7 +197,8 @@ function hideTooltip(): void {
  * Detect whether the current device supports touch input.
  *
  * Uses feature detection (`ontouchstart` in `window` or `maxTouchPoints`)
- * rather than user-agent sniffing.
+ * rather than user-agent sniffing, which is more reliable across browsers
+ * and avoids false negatives on hybrid devices.
  *
  * @returns `true` on touch-capable devices.
  */
@@ -190,19 +213,24 @@ function isTouchDevice(): boolean {
 /**
  * Svelte action that applies truncation-aware tooltips to an element.
  *
- * On mount the action:
- * 1. Forces CSS `overflow: hidden`, `text-overflow: ellipsis`, and
- *    `white-space: nowrap` on the node to guarantee ellipsis rendering.
- * 2. Registers `mouseenter` / `mouseleave` handlers for desktop hover.
- * 3. Registers `touchstart` handlers for mobile tap-to-show behaviour.
- * 4. Registers a document-level `touchstart` listener for tap-outside
- *    dismissal on mobile.
+ * **On mount the action:**
+ *   1. Forces CSS `overflow: hidden`, `text-overflow: ellipsis`, and
+ *      `white-space: nowrap` on the node to guarantee ellipsis rendering.
+ *   2. Registers `mouseenter` / `mouseleave` handlers for desktop hover.
+ *   3. Registers `touchstart` handlers for mobile tap-to-show behaviour.
+ *   4. Registers a document-level `touchstart` listener for tap-outside
+ *      dismissal on mobile.
  *
  * The returned `destroy` callback cleans up all listeners and hides the
  * tooltip if the destroyed node was its current owner.
  *
  * @param node - The DOM element to enhance with truncation tooltips.
  * @returns A Svelte action lifecycle object with a `destroy` method.
+ *
+ * @example
+ * ```svelte
+ * <span class="my-text" use:truncateTooltip>{longText}</span>
+ * ```
  */
 export function truncateTooltip(node: HTMLElement) {
   /* ── Apply ellipsis CSS ──── */
@@ -210,27 +238,42 @@ export function truncateTooltip(node: HTMLElement) {
   node.style.textOverflow = 'ellipsis';
   node.style.whiteSpace = 'nowrap';
 
-  /* ── Desktop: hover handlers ──── */
+  // ---------------------------------------------------------------------------
+  //                    DESKTOP: HOVER HANDLERS
+  // ---------------------------------------------------------------------------
 
-  /** Show tooltip on mouse enter (desktop only). */
+  /**
+   * Show tooltip on mouse enter (desktop only).
+   * Skips on touch devices to avoid double-triggering with touch handlers.
+   */
   function handleMouseEnter(): void {
     if (isTouchDevice()) return;
     showTooltip(node);
   }
 
-  /** Hide tooltip on mouse leave if this node owns the tooltip. */
+  /**
+   * Hide tooltip on mouse leave, but only if this node owns the tooltip.
+   * Prevents one element's mouseleave from dismissing another's tooltip.
+   */
   function handleMouseLeave(): void {
     if (currentOwner === node) {
       hideTooltip();
     }
   }
 
-  /* ── Mobile: tap handlers ──── */
+  // ---------------------------------------------------------------------------
+  //                    MOBILE: TAP HANDLERS
+  // ---------------------------------------------------------------------------
 
   /**
    * Toggle tooltip on tap (mobile only).
-   * Prevents default to avoid triggering navigation or selection.
+   *
+   * Prevents default to avoid triggering navigation or text selection.
+   * Stops propagation to prevent the document-level tap-outside handler
+   * from immediately dismissing the tooltip.
    * Auto-dismisses after 3 seconds.
+   *
+   * @param e - The touch event.
    */
   function handleTap(e: Event): void {
     if (!isTouchDevice()) return;
@@ -253,7 +296,10 @@ export function truncateTooltip(node: HTMLElement) {
 
   /**
    * Dismiss the tooltip when the user taps outside the anchor or tooltip
-   * (mobile only). Ignores taps on the anchor itself or inside the tooltip.
+   * (mobile only). Ignores taps on the anchor itself or inside the tooltip
+   * to prevent unintended dismissal.
+   *
+   * @param e - The document-level touch event.
    */
   function handleTapOutside(e: Event): void {
     if (!currentOwner || currentOwner !== node) return;
@@ -263,14 +309,25 @@ export function truncateTooltip(node: HTMLElement) {
     hideTooltip();
   }
 
-  /* ── Register event listeners ──── */
+  // ---------------------------------------------------------------------------
+  //                 EVENT LISTENER REGISTRATION
+  // ---------------------------------------------------------------------------
+
   node.addEventListener('mouseenter', handleMouseEnter);
   node.addEventListener('mouseleave', handleMouseLeave);
   node.addEventListener('touchstart', handleTap, { passive: false });
   document.addEventListener('touchstart', handleTapOutside, { passive: true });
 
-  /* ── Svelte action lifecycle ──── */
+  // ---------------------------------------------------------------------------
+  //                 SVELTE ACTION LIFECYCLE
+  // ---------------------------------------------------------------------------
+
   return {
+    /**
+     * Cleanup handler — removes all event listeners and hides the tooltip
+     * if this node was the active owner. Prevents memory leaks from
+     * orphaned document-level listeners.
+     */
     destroy() {
       node.removeEventListener('mouseenter', handleMouseEnter);
       node.removeEventListener('mouseleave', handleMouseLeave);

@@ -2,8 +2,24 @@
 /**
  * @fileoverview CLI script that scaffolds a PWA SvelteKit project using stellar-engine.
  *
- * Usage:
- *   stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]
+ * Generates a complete project structure including:
+ *   - Build configuration (Vite, TypeScript, SvelteKit, ESLint, Prettier, Knip)
+ *   - PWA assets (manifest, offline page, placeholder icons)
+ *   - SvelteKit routes (home, login, setup wizard, profile, error, confirm)
+ *   - API endpoints (config, deploy, validate)
+ *   - Supabase database schema
+ *   - Git hooks via Husky
+ *
+ * Files are written non-destructively: existing files are skipped, not overwritten.
+ *
+ * @example
+ * ```bash
+ * stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]
+ * ```
+ *
+ * @see {@link main} for the entry point
+ * @see {@link parseArgs} for CLI argument parsing
+ * @see {@link writeIfMissing} for the non-destructive file write strategy
  */
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -12,7 +28,15 @@ import { execSync } from 'child_process';
 //                                 HELPERS
 // =============================================================================
 /**
- * Writes a file only if it doesn't already exist. Returns whether the file was created.
+ * Writes a file only if it doesn't already exist (non-destructive).
+ *
+ * Creates parent directories as needed. Tracks created and skipped files
+ * in the provided arrays for the final summary output.
+ *
+ * @param filePath - Absolute path to the target file.
+ * @param content - The file content to write.
+ * @param createdFiles - Accumulator for newly-created file paths (relative).
+ * @param skippedFiles - Accumulator for skipped file paths (relative).
  */
 function writeIfMissing(filePath, content, createdFiles, skippedFiles) {
     const relPath = filePath.replace(process.cwd() + '/', '');
@@ -33,6 +57,19 @@ function writeIfMissing(filePath, content, createdFiles, skippedFiles) {
 // =============================================================================
 //                              ARG PARSING
 // =============================================================================
+/**
+ * Parse command-line arguments into an {@link InstallOptions} object.
+ *
+ * Expects the format:
+ *   `stellar-engine install pwa --name "..." --short_name "..." --prefix "..." [--description "..."]`
+ *
+ * Exits the process with a usage message if required arguments are missing.
+ *
+ * @param argv - The raw `process.argv` array.
+ * @returns The parsed {@link InstallOptions}.
+ *
+ * @throws {SystemExit} Exits with code 1 if `--name`, `--short_name`, or `--prefix` are missing.
+ */
 function parseArgs(argv) {
     const args = argv.slice(2);
     if (args[0] !== 'install' || args[1] !== 'pwa') {
@@ -64,12 +101,26 @@ function parseArgs(argv) {
             'Usage: stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]');
         process.exit(1);
     }
+    /* Derive kebab-case name for package.json from the full name */
     const kebabName = name.toLowerCase().replace(/\s+/g, '-');
     return { name, shortName, prefix, description, kebabName };
 }
 // =============================================================================
 //                          TEMPLATE GENERATORS
 // =============================================================================
+// ---------------------------------------------------------------------------
+//                     PACKAGE.JSON GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `package.json` with all dependencies and scripts pre-configured
+ * for a stellar-engine PWA project.
+ *
+ * Includes dev tooling (ESLint, Prettier, Knip, Husky, svelte-check) and
+ * the `@prabhask5/stellar-engine` runtime dependency.
+ *
+ * @param opts - The install options containing the kebab-cased project name.
+ * @returns The JSON string for `package.json`.
+ */
 function generatePackageJson(opts) {
     return (JSON.stringify({
         name: opts.kebabName,
@@ -115,6 +166,16 @@ function generatePackageJson(opts) {
         type: 'module'
     }, null, 2) + '\n');
 }
+// ---------------------------------------------------------------------------
+//                      VITE CONFIG GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a Vite config with SvelteKit and stellarPWA plugins, plus
+ * manual chunk-splitting for heavy vendor libraries.
+ *
+ * @param opts - The install options containing `prefix` and `name`.
+ * @returns The TypeScript source for `vite.config.ts`.
+ */
 function generateViteConfig(opts) {
     return `/**
  * @fileoverview Vite build configuration for the ${opts.shortName} PWA.
@@ -155,6 +216,14 @@ export default defineConfig({
 });
 `;
 }
+// ---------------------------------------------------------------------------
+//                      TSCONFIG GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `tsconfig.json` extending SvelteKit's generated config.
+ *
+ * @returns The JSON string for `tsconfig.json`.
+ */
 function generateTsconfig() {
     return (JSON.stringify({
         extends: './.svelte-kit/tsconfig.json',
@@ -171,6 +240,15 @@ function generateTsconfig() {
         }
     }, null, 2) + '\n');
 }
+// ---------------------------------------------------------------------------
+//                    SVELTE CONFIG GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `svelte.config.js` with adapter-auto and vitePreprocess.
+ *
+ * @param opts - The install options containing `shortName`.
+ * @returns The JavaScript source for `svelte.config.js`.
+ */
 function generateSvelteConfig(opts) {
     return `/**
  * @fileoverview SvelteKit project configuration for ${opts.shortName}.
@@ -213,6 +291,15 @@ const config = {
 export default config;
 `;
 }
+// ---------------------------------------------------------------------------
+//                     MANIFEST GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a PWA `manifest.json` with icons, theme colours, and display settings.
+ *
+ * @param opts - The install options containing `name`, `shortName`, and `description`.
+ * @returns The JSON string for `static/manifest.json`.
+ */
 function generateManifest(opts) {
     return (JSON.stringify({
         name: opts.name,
@@ -243,6 +330,15 @@ function generateManifest(opts) {
         prefer_related_applications: false
     }, null, 2) + '\n');
 }
+// ---------------------------------------------------------------------------
+//                      APP.D.TS GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate the SvelteKit ambient type declarations file (`src/app.d.ts`).
+ *
+ * @param opts - The install options containing `shortName`.
+ * @returns The TypeScript source for `src/app.d.ts`.
+ */
 function generateAppDts(opts) {
     return `/**
  * @fileoverview Ambient type declarations for the ${opts.shortName} SvelteKit application.
@@ -289,6 +385,17 @@ declare global {
 export {};
 `;
 }
+// ---------------------------------------------------------------------------
+//                      APP.HTML GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate the root HTML shell (`src/app.html`) with PWA meta tags, iOS
+ * configuration, landscape blocker, gesture prevention, and deferred
+ * service worker registration.
+ *
+ * @param opts - The install options containing `name`, `shortName`, and `description`.
+ * @returns The HTML source for `src/app.html`.
+ */
 function generateAppHtml(opts) {
     return `<!doctype html>
 <html lang="en">
@@ -540,6 +647,16 @@ function generateAppHtml(opts) {
 </html>
 `;
 }
+// ---------------------------------------------------------------------------
+//                     README GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a minimal `README.md` with project name, links to architecture
+ * docs, and a quick-reference script table.
+ *
+ * @param opts - The install options containing `name`.
+ * @returns The Markdown source for `README.md`.
+ */
 function generateReadme(opts) {
     return `# ${opts.name}
 
@@ -566,6 +683,15 @@ npm run dev
 | \`npm run validate\` | Full validation (check + lint + dead-code) |
 `;
 }
+// ---------------------------------------------------------------------------
+//                   ARCHITECTURE DOC GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate an `ARCHITECTURE.md` describing the project stack and directory layout.
+ *
+ * @param opts - The install options containing `name`.
+ * @returns The Markdown source for `ARCHITECTURE.md`.
+ */
 function generateArchitecture(opts) {
     return `# Architecture
 
@@ -595,6 +721,14 @@ static/
 \`\`\`
 `;
 }
+// ---------------------------------------------------------------------------
+//                   FRAMEWORKS DOC GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `FRAMEWORKS.md` documenting technology choices and rationale.
+ *
+ * @returns The Markdown source for `FRAMEWORKS.md`.
+ */
 function generateFrameworks() {
     return `# Framework Decisions
 
@@ -625,6 +759,15 @@ Service worker (generated by \`stellarPWA\` Vite plugin) with:
 - **Husky** — pre-commit hooks
 `;
 }
+// ---------------------------------------------------------------------------
+//                     GITIGNORE GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `.gitignore` tailored for SvelteKit PWA projects.
+ * Excludes build artifacts, generated SW files, and environment secrets.
+ *
+ * @returns The gitignore content string.
+ */
 function generateGitignore() {
     return `node_modules
 .DS_Store
@@ -640,6 +783,16 @@ static/sw.js
 static/asset-manifest.json
 `;
 }
+// ---------------------------------------------------------------------------
+//                   OFFLINE HTML GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a placeholder offline fallback page (`static/offline.html`).
+ * The service worker serves this when no cached HTML is available.
+ *
+ * @param opts - The install options containing `name`.
+ * @returns The HTML source for `static/offline.html`.
+ */
 function generateOfflineHtml(opts) {
     return `<!-- TODO: Customize this offline fallback page with your app's branding.
      This page is served by the service worker when the app is offline and
@@ -661,6 +814,18 @@ function generateOfflineHtml(opts) {
 </html>
 `;
 }
+// ---------------------------------------------------------------------------
+//                  PLACEHOLDER SVG GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate a placeholder app icon SVG with a coloured background and
+ * a centred text label (typically a single letter).
+ *
+ * @param color - The background fill colour (e.g., `'#6c5ce7'`).
+ * @param label - The text to display (e.g., `'M'` for "My App").
+ * @param fontSize - The font size for the label (default: 64).
+ * @returns The SVG markup string.
+ */
 function generatePlaceholderSvg(color, label, fontSize = 64) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="64" fill="${color}"/>
@@ -668,6 +833,13 @@ function generatePlaceholderSvg(color, label, fontSize = 64) {
 </svg>
 `;
 }
+/**
+ * Generate a monochrome (white background, black text) icon SVG.
+ * Used for the `monochrome` icon variant in the PWA manifest.
+ *
+ * @param label - The text to display.
+ * @returns The SVG markup string.
+ */
 function generateMonochromeSvg(label) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="64" fill="#ffffff"/>
@@ -675,6 +847,12 @@ function generateMonochromeSvg(label) {
 </svg>
 `;
 }
+/**
+ * Generate a splash screen SVG with a dark background and the app's short name.
+ *
+ * @param label - The text to display (typically `shortName`).
+ * @returns The SVG markup string.
+ */
 function generateSplashSvg(label) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="64" fill="#0f0f1a"/>
@@ -682,6 +860,15 @@ function generateSplashSvg(label) {
 </svg>
 `;
 }
+// ---------------------------------------------------------------------------
+//                  EMAIL TEMPLATE PLACEHOLDER
+// ---------------------------------------------------------------------------
+/**
+ * Generate a placeholder HTML email template with a TODO comment.
+ *
+ * @param title - The email template title (e.g., `"Change Email"`).
+ * @returns The HTML source for the email placeholder.
+ */
 function generateEmailPlaceholder(title) {
     return `<!-- TODO: ${title} email template -->
 <!-- See stellar-engine EMAIL_TEMPLATES.md for the full template format -->
@@ -691,6 +878,16 @@ function generateEmailPlaceholder(title) {
 </html>
 `;
 }
+// ---------------------------------------------------------------------------
+//                  SUPABASE SCHEMA GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate the Supabase database schema SQL including helper functions,
+ * the `trusted_devices` table, and commented-out example table patterns.
+ *
+ * @param opts - The install options containing `name`.
+ * @returns The SQL source for `supabase-schema.sql`.
+ */
 function generateSupabaseSchema(opts) {
     return `-- ${opts.name} Database Schema for Supabase
 -- Copy and paste this entire file into your Supabase SQL Editor
@@ -783,6 +980,14 @@ create index idx_trusted_devices_user_id on trusted_devices(user_id);
 alter publication supabase_realtime add table trusted_devices;
 `;
 }
+// ---------------------------------------------------------------------------
+//                   ESLINT CONFIG GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate an ESLint flat config with TypeScript and Svelte support.
+ *
+ * @returns The JavaScript source for `eslint.config.js`.
+ */
 function generateEslintConfig() {
     return `import js from '@eslint/js';
 import ts from 'typescript-eslint';
@@ -856,6 +1061,14 @@ export default [
 ];
 `;
 }
+// ---------------------------------------------------------------------------
+//                   PRETTIER CONFIG GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `.prettierrc` with SvelteKit-friendly defaults.
+ *
+ * @returns The JSON string for `.prettierrc`.
+ */
 function generatePrettierrc() {
     return (JSON.stringify({
         useTabs: false,
@@ -874,6 +1087,11 @@ function generatePrettierrc() {
         ]
     }, null, 2) + '\n');
 }
+/**
+ * Generate a `.prettierignore` excluding build artifacts and generated files.
+ *
+ * @returns The prettierignore content string.
+ */
 function generatePrettierignore() {
     return `.svelte-kit
 build
@@ -884,6 +1102,14 @@ static
 package-lock.json
 `;
 }
+// ---------------------------------------------------------------------------
+//                     KNIP CONFIG GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate a `knip.json` for dead code detection in a SvelteKit project.
+ *
+ * @returns The JSON string for `knip.json`.
+ */
 function generateKnipJson() {
     return (JSON.stringify({
         $schema: 'https://unpkg.com/knip@latest/schema.json',
@@ -895,10 +1121,28 @@ function generateKnipJson() {
         }
     }, null, 2) + '\n');
 }
+// ---------------------------------------------------------------------------
+//                    HUSKY PRE-COMMIT GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate the Husky pre-commit hook script that runs cleanup and validation.
+ *
+ * @returns The shell script content for `.husky/pre-commit`.
+ */
 function generateHuskyPreCommit() {
     return `npm run cleanup && npm run validate && git add -u
 `;
 }
+// ---------------------------------------------------------------------------
+//                    ROOT LAYOUT GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate the root `+layout.ts` with runtime config initialisation,
+ * auth state resolution, and sync engine startup.
+ *
+ * @param opts - The install options containing `name` and `prefix`.
+ * @returns The TypeScript source for `src/routes/+layout.ts`.
+ */
 function generateRootLayoutTs(opts) {
     return `import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
@@ -963,6 +1207,11 @@ export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
 };
 `;
 }
+/**
+ * Generate the root `+layout.svelte` with auth state hydration and TODO stubs.
+ *
+ * @returns The Svelte component source for `src/routes/+layout.svelte`.
+ */
 function generateRootLayoutSvelte() {
     return `<script lang="ts">
   import { hydrateAuthState } from '@prabhask5/stellar-engine/kit';
@@ -989,6 +1238,14 @@ function generateRootLayoutSvelte() {
 {@render children?.()}
 `;
 }
+// ---------------------------------------------------------------------------
+//                      PAGE GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate a minimal home page component with TODO stubs.
+ *
+ * @returns The Svelte component source for `src/routes/+page.svelte`.
+ */
 function generateHomePage() {
     return `<script lang="ts">
   import { getUserProfile } from '@prabhask5/stellar-engine/auth';
@@ -1000,6 +1257,11 @@ function generateHomePage() {
 <!-- TODO: Add home page template -->
 `;
 }
+/**
+ * Generate a minimal error page component.
+ *
+ * @returns The Svelte component source for `src/routes/+error.svelte`.
+ */
 function generateErrorPage() {
     return `<script lang="ts">
   import { page } from '$app/stores';
@@ -1010,6 +1272,11 @@ function generateErrorPage() {
 <!-- TODO: Add error page template (status code display, retry button, go home button) -->
 `;
 }
+/**
+ * Generate the setup page load function with first-setup / admin-only guard.
+ *
+ * @returns The TypeScript source for `src/routes/setup/+page.ts`.
+ */
 function generateSetupPageTs() {
     return `import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
@@ -1033,6 +1300,11 @@ export const load: PageLoad = async () => {
 };
 `;
 }
+/**
+ * Generate the setup wizard page component with TODO stubs.
+ *
+ * @returns The Svelte component source for `src/routes/setup/+page.svelte`.
+ */
 function generateSetupPageSvelte() {
     return `<script lang="ts">
   import { setConfig } from '@prabhask5/stellar-engine/config';
@@ -1045,6 +1317,11 @@ function generateSetupPageSvelte() {
 <!-- TODO: Add setup wizard template (Supabase credentials form, validation, Vercel deployment) -->
 `;
 }
+/**
+ * Generate a minimal privacy policy page component.
+ *
+ * @returns The Svelte component source for `src/routes/policy/+page.svelte`.
+ */
 function generatePolicyPage() {
     return `<script lang="ts">
   // TODO: Add any needed imports
@@ -1053,6 +1330,12 @@ function generatePolicyPage() {
 <!-- TODO: Add privacy policy page content -->
 `;
 }
+/**
+ * Generate the login page component with single-user auth, device
+ * verification, and PIN input TODO stubs.
+ *
+ * @returns The Svelte component source for `src/routes/login/+page.svelte`.
+ */
 function generateLoginPage() {
     return `<script lang="ts">
   import { onMount, onDestroy } from 'svelte';
@@ -1077,6 +1360,12 @@ function generateLoginPage() {
 <!-- TODO: Add login page template (PIN inputs, setup wizard, device verification modal) -->
 `;
 }
+/**
+ * Generate the email confirmation page component that handles token
+ * verification and cross-tab broadcast.
+ *
+ * @returns The Svelte component source for `src/routes/confirm/+page.svelte`.
+ */
 function generateConfirmPage() {
     return `<script lang="ts">
   import { onMount } from 'svelte';
@@ -1121,6 +1410,14 @@ function generateConfirmPage() {
 <!-- TODO: Add confirmation page template (verifying/success/error/can_close states) -->
 `;
 }
+// ---------------------------------------------------------------------------
+//                   API ENDPOINT GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate the `/api/config` server endpoint that returns runtime config.
+ *
+ * @returns The TypeScript source for `src/routes/api/config/+server.ts`.
+ */
 function generateConfigServer() {
     return `import { json } from '@sveltejs/kit';
 import { getServerConfig } from '@prabhask5/stellar-engine/kit';
@@ -1131,6 +1428,11 @@ export const GET: RequestHandler = async () => {
 };
 `;
 }
+/**
+ * Generate the `/api/setup/deploy` server endpoint for Vercel deployment.
+ *
+ * @returns The TypeScript source for `src/routes/api/setup/deploy/+server.ts`.
+ */
 function generateDeployServer() {
     return `import { json } from '@sveltejs/kit';
 import { deployToVercel } from '@prabhask5/stellar-engine/kit';
@@ -1159,6 +1461,11 @@ export const POST: RequestHandler = async ({ request }) => {
 };
 `;
 }
+/**
+ * Generate the `/api/setup/validate` server endpoint for Supabase credential validation.
+ *
+ * @returns The TypeScript source for `src/routes/api/setup/validate/+server.ts`.
+ */
 function generateValidateServer() {
     return `import { createValidateHandler } from '@prabhask5/stellar-engine/kit';
 import type { RequestHandler } from './$types';
@@ -1166,6 +1473,14 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = createValidateHandler();
 `;
 }
+// ---------------------------------------------------------------------------
+//                  CATCHALL & PROTECTED LAYOUT GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate a catch-all route that redirects unknown paths to the home page.
+ *
+ * @returns The TypeScript source for `src/routes/[...catchall]/+page.ts`.
+ */
 function generateCatchallPage() {
     return `import { redirect } from '@sveltejs/kit';
 
@@ -1174,6 +1489,12 @@ export function load() {
 }
 `;
 }
+/**
+ * Generate the protected route group's `+layout.ts` with auth guards
+ * that redirect unauthenticated users to `/login`.
+ *
+ * @returns The TypeScript source for `src/routes/(protected)/+layout.ts`.
+ */
 function generateProtectedLayoutTs() {
     return `import { redirect } from '@sveltejs/kit';
 import { browser } from '$app/environment';
@@ -1204,6 +1525,11 @@ export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> =>
 };
 `;
 }
+/**
+ * Generate the protected route group's `+layout.svelte` pass-through component.
+ *
+ * @returns The Svelte component source for `src/routes/(protected)/+layout.svelte`.
+ */
 function generateProtectedLayoutSvelte() {
     return `<script lang="ts">
   interface Props {
@@ -1218,6 +1544,12 @@ function generateProtectedLayoutSvelte() {
 {@render children?.()}
 `;
 }
+/**
+ * Generate the profile page component with TODO stubs for user settings,
+ * device management, and debug tools.
+ *
+ * @returns The Svelte component source for `src/routes/(protected)/profile/+page.svelte`.
+ */
 function generateProfilePage() {
     return `<script lang="ts">
   import { goto } from '$app/navigation';
@@ -1243,6 +1575,15 @@ function generateProfilePage() {
 <!-- TODO: Add profile page template (forms, cards, device list, debug tools) -->
 `;
 }
+// ---------------------------------------------------------------------------
+//                  COMPONENT GENERATORS
+// ---------------------------------------------------------------------------
+/**
+ * Generate the UpdatePrompt component that monitors the service worker
+ * lifecycle and shows an "update available" notification.
+ *
+ * @returns The Svelte component source for `src/lib/components/UpdatePrompt.svelte`.
+ */
 function generateUpdatePromptComponent() {
     return `<script lang="ts">
   /**
@@ -1310,6 +1651,15 @@ function generateUpdatePromptComponent() {
 -->
 `;
 }
+// ---------------------------------------------------------------------------
+//                   TYPE RE-EXPORT GENERATOR
+// ---------------------------------------------------------------------------
+/**
+ * Generate the app types barrel file that re-exports stellar-engine types
+ * and provides a location for app-specific type definitions.
+ *
+ * @returns The TypeScript source for `src/lib/types.ts`.
+ */
 function generateAppTypes() {
     return `// App types barrel — re-exports from stellar-engine plus app-specific types
 export type { SyncStatus, AuthMode, OfflineCredentials } from '@prabhask5/stellar-engine/types';
@@ -1320,6 +1670,21 @@ export type { SyncStatus, AuthMode, OfflineCredentials } from '@prabhask5/stella
 // =============================================================================
 //                              MAIN FUNCTION
 // =============================================================================
+/**
+ * Main entry point for the CLI scaffolding tool.
+ *
+ * **Execution flow:**
+ *   1. Parse CLI arguments into {@link InstallOptions}.
+ *   2. Write `package.json` (if missing).
+ *   3. Run `npm install` to fetch dependencies.
+ *   4. Write all template files (config, routes, components, assets, docs).
+ *   5. Initialise Husky and write the pre-commit hook.
+ *   6. Print a summary of created/skipped files and next steps.
+ *
+ * @returns A promise that resolves when scaffolding is complete.
+ *
+ * @throws {Error} If `npm install` or `npx husky init` fails.
+ */
 async function main() {
     const opts = parseArgs(process.argv);
     const cwd = process.cwd();
@@ -1394,7 +1759,7 @@ async function main() {
     // 4. Set up husky
     console.log('Setting up husky...');
     execSync('npx husky init', { stdio: 'inherit', cwd });
-    // Overwrite the default pre-commit (husky init creates one with "npm test")
+    /* Overwrite the default pre-commit (husky init creates one with "npm test") */
     const preCommitPath = join(cwd, '.husky/pre-commit');
     writeFileSync(preCommitPath, generateHuskyPreCommit(), 'utf-8');
     createdFiles.push('.husky/pre-commit');

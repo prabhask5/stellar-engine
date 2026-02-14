@@ -19,5 +19,6 @@ export { resolveAuthState } from '../auth/resolveAuthState';
 export type { AuthStateResult } from '../auth/resolveAuthState';
 export { isAdmin } from '../auth/admin';
 export { signInOffline, getOfflineLoginInfo } from '../auth/offlineLogin';
+export { resolveFirstName, resolveUserId, resolveAvatarInitial } from '../auth/displayUtils';
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from '../auth/singleUser';
 //# sourceMappingURL=auth.d.ts.map

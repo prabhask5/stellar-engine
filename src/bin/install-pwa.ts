@@ -1507,12 +1507,20 @@ function generateHomePage(): string {
   // ==========================================================================
 
   /* ── Stellar Engine — Auth & Stores ── */
-  import { getUserProfile } from '@prabhask5/stellar-engine/auth';
+  import { resolveFirstName } from '@prabhask5/stellar-engine/auth';
   import { onSyncComplete, authState } from '@prabhask5/stellar-engine/stores';
 
   // ==========================================================================
   //                           COMPONENT STATE
   // ==========================================================================
+
+  /**
+   * Derive the user's first name for the greeting display.
+   * Falls back through session profile → email username → offline profile → 'Explorer'.
+   */
+  const firstName = $derived(
+    resolveFirstName($authState.session, $authState.offlineProfile)
+  );
 
   // TODO: Add home page state and logic
 </script>
@@ -2060,6 +2068,8 @@ function generateProfilePage(): string {
     changeSingleUserEmail,
     completeSingleUserEmailChange
   } from '@prabhask5/stellar-engine/auth';
+  // TODO: Import resolveFirstName, resolveUserId, resolveAvatarInitial
+  // from '@prabhask5/stellar-engine/auth' for display name and avatar logic
   import { authState } from '@prabhask5/stellar-engine/stores';
   import { isDebugMode, setDebugMode } from '@prabhask5/stellar-engine/utils';
   import {

@@ -8,7 +8,7 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 |---|---|
 | `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `resetDatabase`, `validateSupabaseCredentials` |
 | `@prabhask5/stellar-engine/data` | CRUD + query operations |
-| `@prabhask5/stellar-engine/auth` | Authentication functions |
+| `@prabhask5/stellar-engine/auth` | Authentication functions, display utilities (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions |
 | `@prabhask5/stellar-engine/types` | All type exports (including `Session` from Supabase) |
 | `@prabhask5/stellar-engine/utils` | Utility functions + debug (`snakeToCamel`, etc.) |
@@ -33,6 +33,7 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Authentication](#authentication)
 - [Auth Lifecycle](#auth-lifecycle)
 - [Admin](#admin)
+- [Auth Display Utilities](#auth-display-utilities)
 - [Offline Login](#offline-login)
 - [Single-User Auth](#single-user-auth)
 - [Device Verification](#device-verification)
@@ -739,6 +740,124 @@ function isAdmin(user: User | null): boolean
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `user` | `User \| null` | Supabase User object |
+
+---
+
+## Auth Display Utilities
+
+Pure helper functions that resolve user-facing display values from the auth state. Each handles the full fallback chain across online (Supabase session) and offline (cached credentials) modes. These are stateless and framework-agnostic — wrap in `$derived` for Svelte 5 reactivity.
+
+### `resolveFirstName(session, offlineProfile, fallback?)`
+
+Resolve the user's first name for greeting / display purposes.
+
+```ts
+function resolveFirstName(
+  session: Session | null,
+  offlineProfile: OfflineCredentials | null,
+  fallback?: string
+): string
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `session` | `Session \| null` | — | Current Supabase session |
+| `offlineProfile` | `OfflineCredentials \| null` | — | Cached offline credentials |
+| `fallback` | `string` | `'Explorer'` | Value returned when no name can be resolved |
+
+**Fallback chain:**
+1. `firstName` / `first_name` from Supabase session profile (via `getUserProfile()`)
+2. Email username (before `@`) from Supabase session
+3. `firstName` from offline cached profile
+4. Email username from offline cached profile
+5. `fallback` string
+
+**Example:**
+
+```svelte
+<script lang="ts">
+  import { resolveFirstName } from '@prabhask5/stellar-engine/auth';
+  import { authState } from '@prabhask5/stellar-engine/stores';
+
+  // Reactive — re-derives when auth state changes
+  const firstName = $derived(
+    resolveFirstName($authState.session, $authState.offlineProfile)
+  );
+
+  // With a custom fallback for greetings
+  const greeting = $derived(
+    resolveFirstName($authState.session, $authState.offlineProfile, 'there')
+  );
+</script>
+
+<h1>Hey, {greeting}!</h1>
+```
+
+### `resolveUserId(session, offlineProfile)`
+
+Resolve the current user's UUID from auth state. Checks the Supabase session first, then falls back to the offline credential cache.
+
+```ts
+function resolveUserId(
+  session: Session | null,
+  offlineProfile: OfflineCredentials | null
+): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `session` | `Session \| null` | Current Supabase session |
+| `offlineProfile` | `OfflineCredentials \| null` | Cached offline credentials |
+
+**Returns:** The user's UUID, or `''` if unauthenticated.
+
+**Example:**
+
+```ts
+import { resolveUserId } from '@prabhask5/stellar-engine/auth';
+
+const userId = resolveUserId(data.session, data.offlineProfile);
+if (!userId) {
+  error = 'Not authenticated';
+  return;
+}
+const items = await engineGetAll('items');
+```
+
+### `resolveAvatarInitial(session, offlineProfile, fallback?)`
+
+Resolve a single uppercase initial letter for avatar display. Uses `resolveFirstName()` internally, then returns the first character uppercased.
+
+```ts
+function resolveAvatarInitial(
+  session: Session | null,
+  offlineProfile: OfflineCredentials | null,
+  fallback?: string
+): string
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `session` | `Session \| null` | — | Current Supabase session |
+| `offlineProfile` | `OfflineCredentials \| null` | — | Cached offline credentials |
+| `fallback` | `string` | `'?'` | Character returned when no initial can be derived |
+
+**Returns:** A single uppercase character.
+
+**Example:**
+
+```svelte
+<script lang="ts">
+  import { resolveAvatarInitial } from '@prabhask5/stellar-engine/auth';
+  import { authState } from '@prabhask5/stellar-engine/stores';
+
+  const initial = $derived(
+    resolveAvatarInitial($authState.session, $authState.offlineProfile)
+  );
+</script>
+
+<span class="avatar">{initial}</span>
+```
 
 ---
 

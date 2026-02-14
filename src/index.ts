@@ -176,6 +176,15 @@ export {
 } from './auth/singleUser';
 
 // =============================================================================
+//  Auth Display Utilities
+// =============================================================================
+// Pure helper functions that resolve user-facing display values from the auth
+// state. Each handles the full fallback chain across online (Supabase session)
+// and offline (cached credential) modes.
+
+export { resolveFirstName, resolveUserId, resolveAvatarInitial } from './auth/displayUtils';
+
+// =============================================================================
 //  Device Verification
 // =============================================================================
 // Trust management for multi-device single-user setups:

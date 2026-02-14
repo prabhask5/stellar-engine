@@ -53,5 +53,27 @@ export { signInOffline, getOfflineLoginInfo } from '../auth/offlineLogin';
 //   `completeDeviceVerification`, `pollDeviceVerification`)
 // - Remote configuration (`fetchRemoteGateConfig`, `resetSingleUserRemote`)
 // - Utility (`padPin`, `isSingleUserSetUp`, `getSingleUserInfo`)
+// =============================================================================
+//  Auth Display Utilities
+// =============================================================================
+// Pure helper functions that resolve user-facing display values from the auth
+// state. Each handles the full fallback chain across online (Supabase session)
+// and offline (cached credential) modes:
+// - `resolveFirstName` — display name with configurable fallback.
+// - `resolveUserId` — user UUID from session or offline cache.
+// - `resolveAvatarInitial` — single uppercase letter for avatar circles.
+export { resolveFirstName, resolveUserId, resolveAvatarInitial } from '../auth/displayUtils';
+// =============================================================================
+//  Single-User Auth (PIN/Password Gate)
+// =============================================================================
+// Full lifecycle for single-user (kiosk/personal device) authentication:
+// - Setup and teardown (`setupSingleUser`, `resetSingleUser`, `completeSingleUserSetup`)
+// - Lock/unlock gate (`unlockSingleUser`, `lockSingleUser`, `changeSingleUserGate`)
+// - Profile management (`updateSingleUserProfile`, `changeSingleUserEmail`,
+//   `completeSingleUserEmailChange`)
+// - Device linking and verification (`linkSingleUserDevice`,
+//   `completeDeviceVerification`, `pollDeviceVerification`)
+// - Remote configuration (`fetchRemoteGateConfig`, `resetSingleUserRemote`)
+// - Utility (`padPin`, `isSingleUserSetUp`, `getSingleUserInfo`)
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from '../auth/singleUser';
 //# sourceMappingURL=auth.js.map

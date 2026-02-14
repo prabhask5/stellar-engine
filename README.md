@@ -132,7 +132,7 @@ The command creates a full SvelteKit 2 + Svelte 5 project with:
 |------|---------------------------|--------------------------|
 | `src/routes/+layout.ts` | Auth resolution, config init, sync engine startup via `resolveAuthState()`, `initConfig()`, `startSyncEngine()` | `initEngine()` config with your database schema |
 | `src/routes/+layout.svelte` | Auth state hydration via `hydrateAuthState()` | App shell (navbar, tab bar, overlays) |
-| `src/routes/+page.svelte` | Imports `getUserProfile`, `onSyncComplete`, `authState` | Home page UI |
+| `src/routes/+page.svelte` | Imports `resolveFirstName`, `onSyncComplete`, `authState`; derives `firstName` reactively | Home page UI |
 | `src/routes/+error.svelte` | — | Error page UI |
 | `src/routes/setup/+page.ts` | Config check, session validation, admin check via `getConfig()`, `getValidSession()`, `isAdmin()` | — (fully managed) |
 | `src/routes/setup/+page.svelte` | Imports `setConfig`, `isOnline`, `pollForNewServiceWorker` | Setup wizard UI |
@@ -310,6 +310,9 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `changeEmail(newEmail)` | Request email change (sends confirmation to new address). Returns `{ error, confirmationRequired }`. |
 | `completeEmailChange()` | Finalize email change after confirmation. Refreshes session and updates cached credentials. |
 | `getUserProfile` / `updateProfile` | Profile read/write via Supabase user metadata. |
+| `resolveFirstName(session, offline, fallback?)` | Resolve display name from session or offline profile with configurable fallback. |
+| `resolveUserId(session, offline)` | Extract user UUID from session or offline credentials. |
+| `resolveAvatarInitial(session, offline, fallback?)` | Single uppercase initial for avatar display. |
 
 ### Offline auth
 

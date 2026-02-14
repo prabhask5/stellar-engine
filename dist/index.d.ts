@@ -45,6 +45,7 @@ export { isAdmin } from './auth/admin';
 export { resetLoginGuard } from './auth/loginGuard';
 export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from './auth/singleUser';
+export { resolveFirstName, resolveUserId, resolveAvatarInitial } from './auth/displayUtils';
 export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';
 export { syncStatusStore } from './stores/sync';
 export type { SyncError, RealtimeState } from './stores/sync';

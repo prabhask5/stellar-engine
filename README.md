@@ -105,6 +105,61 @@ if (!auth.singleUserSetUp) {
 }
 ```
 
+## Install PWA Command
+
+Scaffold a complete offline-first PWA project:
+
+```bash
+npx @prabhask5/stellar-engine install pwa --name "My App" --short_name "App" --prefix "myapp" [--description "..."]
+```
+
+### What it generates
+
+The command creates a full SvelteKit 2 + Svelte 5 project with:
+
+**Configuration files (8):** `vite.config.ts`, `tsconfig.json`, `svelte.config.js`, `eslint.config.js`, `.prettierrc`, `.prettierignore`, `knip.json`, `.gitignore`
+
+**Documentation (3):** `README.md`, `ARCHITECTURE.md`, `FRAMEWORKS.md`
+
+**Static assets (13):** `manifest.json`, `offline.html`, placeholder SVG icons (app, dark, maskable, favicon, monochrome, splash, apple-touch), email template placeholders (signup, change-email, device-verification)
+
+**Database (1):** `supabase-schema.sql` with helper functions, example table pattern, and `trusted_devices` table
+
+**Source files (2):** `src/app.html` (PWA-ready with iOS meta tags, landscape blocker, zoom prevention, SW registration), `src/app.d.ts`
+
+**Route files (16):**
+| File | What stellar-engine manages | What you customize (TODO) |
+|------|---------------------------|--------------------------|
+| `src/routes/+layout.ts` | Auth resolution, config init, sync engine startup via `resolveAuthState()`, `initConfig()`, `startSyncEngine()` | `initEngine()` config with your database schema |
+| `src/routes/+layout.svelte` | Auth state hydration via `hydrateAuthState()` | App shell (navbar, tab bar, overlays) |
+| `src/routes/+page.svelte` | Imports `getUserProfile`, `onSyncComplete`, `authState` | Home page UI |
+| `src/routes/+error.svelte` | — | Error page UI |
+| `src/routes/setup/+page.ts` | Config check, session validation, admin check via `getConfig()`, `getValidSession()`, `isAdmin()` | — (fully managed) |
+| `src/routes/setup/+page.svelte` | Imports `setConfig`, `isOnline`, `pollForNewServiceWorker` | Setup wizard UI |
+| `src/routes/policy/+page.svelte` | — | Privacy policy content |
+| `src/routes/login/+page.svelte` | All auth functions: `setupSingleUser`, `unlockSingleUser`, `getSingleUserInfo`, `completeSingleUserSetup`, `completeDeviceVerification`, `pollDeviceVerification`, `fetchRemoteGateConfig`, `linkSingleUserDevice`, `sendDeviceVerification` | Login page UI |
+| `src/routes/confirm/+page.svelte` | Email confirmation via `handleEmailConfirmation()`, `broadcastAuthConfirmed()` | Confirmation page UI |
+| `src/routes/api/config/+server.ts` | Fully managed: `getServerConfig()` | — |
+| `src/routes/api/setup/deploy/+server.ts` | Fully managed: `deployToVercel()` | — |
+| `src/routes/api/setup/validate/+server.ts` | Fully managed: `createValidateHandler()` | — |
+| `src/routes/[...catchall]/+page.ts` | Redirect to `/` | — |
+| `src/routes/(protected)/+layout.ts` | Auth guard via `resolveAuthState()` with login redirect | — (fully managed) |
+| `src/routes/(protected)/+layout.svelte` | — | Protected area chrome |
+| `src/routes/(protected)/profile/+page.svelte` | All profile functions: `changeSingleUserGate`, `updateSingleUserProfile`, `getSingleUserInfo`, `changeSingleUserEmail`, `completeSingleUserEmailChange`, `resetDatabase`, `getTrustedDevices`, `removeTrustedDevice`, `getCurrentDeviceId`, `isDebugMode`, `setDebugMode` | Profile page UI |
+
+**Library (1):** `src/lib/types.ts` with re-exports from stellar-engine + app-specific type stubs
+
+**Git hooks (1):** `.husky/pre-commit` with lint + format + validate
+
+### Parameters
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name` | Yes | Full app name (e.g., "My Stellar App") |
+| `--short_name` | Yes | Short name for PWA home screen |
+| `--prefix` | Yes | App prefix for localStorage keys, SW, debug utils |
+| `--description` | No | App description (default: "A self-hosted offline-first PWA") |
+
 ## Subpath exports
 
 Import only what you need via subpath exports:
@@ -117,7 +172,10 @@ Import only what you need via subpath exports:
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
 | `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, `SingleUserConfig`, etc.) |
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
-| `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`) |
+| `@prabhask5/stellar-engine/actions` | Svelte `use:` actions (`remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation`, `truncateTooltip`) |
+| `@prabhask5/stellar-engine/kit` | SvelteKit route helpers, server APIs, load functions, confirmation, auth hydration |
+| `@prabhask5/stellar-engine/components/SyncStatus` | Sync status indicator Svelte component |
+| `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Cross-device conflict banner Svelte component |
 | `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
 
 The root export (`@prabhask5/stellar-engine`) re-exports everything for backward compatibility.
@@ -367,6 +425,16 @@ When debug mode is enabled, the engine exposes utilities on the `window` object 
 | `remoteChangeAnimation` | Svelte `use:` action that animates an element when a remote change arrives. |
 | `trackEditing` | Action that signals the engine a field is being actively edited (suppresses incoming overwrites). |
 | `triggerLocalAnimation` | Programmatically trigger the local-change animation on a node. |
+| `truncateTooltip` | Action that shows a tooltip with full text when content is truncated via CSS overflow. |
+
+### Svelte components
+
+| Export | Description |
+|---|---|
+| `@prabhask5/stellar-engine/components/SyncStatus` | Full Svelte 5 component for animated sync-state indicator with tooltip and PWA refresh. Shows offline/syncing/synced/error/pending states with live indicator. |
+| `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Full Svelte 5 component for cross-device data conflict notification. Shows when another device pushes changes while user is editing. Provides Update/Dismiss/Show Changes actions with diff preview. |
+
+The `UpdatePrompt` component is **not** shipped as a stellar-engine export. Instead, it is generated by `stellar-engine install pwa` at `src/lib/components/UpdatePrompt.svelte` with TODO UI placeholders. The generated component imports `monitorSwLifecycle` and `handleSwUpdate` from `@prabhask5/stellar-engine/kit` for all SW lifecycle logic.
 
 ## Use cases
 

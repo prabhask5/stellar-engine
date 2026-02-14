@@ -4,3 +4,5 @@ export {
   trackEditing,
   triggerLocalAnimation
 } from '../actions/remoteChange';
+
+export { truncateTooltip } from '../actions/truncateTooltip';

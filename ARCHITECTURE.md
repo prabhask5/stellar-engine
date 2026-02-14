@@ -12,6 +12,7 @@
 9. [Egress Optimization](#9-egress-optimization)
 10. [Data Flow Diagrams](#10-data-flow-diagrams)
 11. [Debug & Observability](#11-debug--observability)
+12. [Install PWA Command & Scaffolding](#12-install-pwa-command--scaffolding)
 
 ---
 
@@ -1368,6 +1369,113 @@ Total egress: 45.23 KB (312 records)
 
 ---
 
+## 12. Install PWA Command & Scaffolding
+
+**File**: `src/bin/install-pwa.ts`
+
+The engine includes a CLI command (`stellar-engine install pwa`) that scaffolds a complete SvelteKit 2 + Svelte 5 PWA project. The scaffolder follows a strict separation: **stellar-engine owns all non-UI logic**; the generated route files import engine functions and leave UI as TODO placeholders.
+
+### 12.1 Architecture Diagram
+
+```
++--------------------------------------------------------------------+
+|                    INSTALL PWA SCAFFOLDER                           |
+|                                                                    |
+|  CLI Entry:  stellar-engine install pwa --name --short_name        |
+|              --prefix [--description]                              |
+|                                                                    |
+|  1. Parse args (name, shortName, prefix, description)              |
+|  2. Write package.json with @prabhask5/stellar-engine dep          |
+|  3. npm install                                                    |
+|  4. Generate 34+ template files                                    |
+|  5. npx husky init + pre-commit hook                               |
+|  6. Print next steps                                               |
++--------------------------------------------------------------------+
+```
+
+### 12.2 File Categories
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Config | 8 | vite.config.ts, tsconfig.json, eslint, prettier, knip |
+| Documentation | 3 | README, ARCHITECTURE, FRAMEWORKS |
+| Static assets | 13 | manifest.json, offline.html, SVG icons, email templates |
+| Database | 1 | supabase-schema.sql |
+| Source | 2 | app.html, app.d.ts |
+| Routes | 16 | All route files below |
+| Library | 1 | src/lib/types.ts |
+| Git hooks | 1 | .husky/pre-commit |
+
+### 12.3 Route File Ownership Model
+
+Each generated route file follows this pattern:
+- **Engine-managed code**: All imports, load functions, API handlers, auth logic, and state management are fully implemented using stellar-engine exports
+- **TODO placeholders**: All UI/template/style code is left as TODO comments for the app developer
+
+```
++--------------------------+     +----------------------------+
+|  stellar-engine          |     |  Generated Route File      |
+|  (fully implemented)     |     |                            |
+|  - resolveAuthState()    |---->|  import { ... } from       |
+|  - initConfig()          |     |    '@prabhask5/            |
+|  - startSyncEngine()     |     |     stellar-engine/...'    |
+|  - hydrateAuthState()    |     |                            |
+|  - getServerConfig()     |     |  // All logic: ✓           |
+|  - deployToVercel()      |     |  // All UI: TODO           |
+|  - createValidateHandler |     |                            |
+|  - handleEmailConfirm()  |     +----------------------------+
+|  - broadcastAuthConfirm()|
++--------------------------+
+
++--------------------------+     +----------------------------+
+|  stellar-engine          |     |  Generated Route File      |
+|  (Svelte components)     |     |  (imports component)       |
+|                          |     |                            |
+|  components/SyncStatus   |---->|  <SyncStatus />            |
+|  components/Deferred...  |---->|  <DeferredChangesBanner /> |
++--------------------------+     +----------------------------+
+
++--------------------------+     +----------------------------+
+|  stellar-engine/kit      |     |  Generated Component       |
+|  (SW lifecycle logic)    |     |  src/lib/components/       |
+|                          |     |  UpdatePrompt.svelte       |
+|  monitorSwLifecycle()    |---->|  (TODO UI placeholder)     |
+|  handleSwUpdate()        |     |                            |
++--------------------------+     +----------------------------+
+```
+
+### 12.4 API Route Handlers
+
+Three API routes are fully managed by stellar-engine with zero app-specific code:
+
+| Route | Handler | Purpose |
+|-------|---------|---------|
+| `/api/config` | `getServerConfig()` | Returns runtime Supabase config for client hydration |
+| `/api/setup/deploy` | `deployToVercel()` | Deploys env vars to Vercel project |
+| `/api/setup/validate` | `createValidateHandler()` | Validates Supabase credentials + schema |
+
+### 12.5 Svelte Components & Generated Components
+
+The engine ships two ready-to-use Svelte 5 components that are imported by generated route files:
+
+| Component | Export Path | Purpose |
+|-----------|-------------|---------|
+| SyncStatus | `./components/SyncStatus` | Animated sync indicator with 5-state morphing icons, tooltip, realtime badge, mobile refresh |
+| DeferredChangesBanner | `./components/DeferredChangesBanner` | Cross-device conflict notification with diff preview |
+
+These are full Svelte components (script + template + styles) that use CSS custom properties for theming, making them work across different app designs.
+
+The scaffolder also generates `src/lib/components/UpdatePrompt.svelte` — a component with fully wired SW lifecycle logic (importing `monitorSwLifecycle` and `handleSwUpdate` from `@prabhask5/stellar-engine/kit`) but TODO placeholder UI. This follows the same pattern as route files: engine owns the logic, developer owns the UI.
+
+### 12.6 Skip-if-exists Safety
+
+The scaffolder uses `writeIfMissing()` — files are only created if they don't already exist. This means:
+- Running the command twice is safe (existing files are skipped)
+- Developers can modify generated files without fear of overwriting
+- The summary output shows which files were created vs skipped
+
+---
+
 ## Summary of Design Complexities
 
 | Aspect | Complexity |
@@ -1381,3 +1489,4 @@ Total egress: 45.23 KB (312 records)
 | **Egress optimization** | Column selection, coalescing, realtime-first, cursor-based, validation caching |
 | **Mutex-protected sync** | Promise-based lock with stale detection, operation timeouts |
 | **Network state machine** | iOS PWA visibility handling, sequential reconnect callbacks |
+| **PWA scaffolding** | CLI generates 34+ files with engine-managed logic and TODO UI placeholders, skip-if-exists safety |

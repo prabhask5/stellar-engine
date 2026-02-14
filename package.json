@@ -40,13 +40,26 @@
     "./vite": {
       "types": "./dist/entries/vite.d.ts",
       "import": "./dist/entries/vite.js"
+    },
+    "./kit": {
+      "types": "./dist/entries/kit.d.ts",
+      "import": "./dist/entries/kit.js"
+    },
+    "./components/SyncStatus": {
+      "svelte": "./src/components/SyncStatus.svelte",
+      "default": "./src/components/SyncStatus.svelte"
+    },
+    "./components/DeferredChangesBanner": {
+      "svelte": "./src/components/DeferredChangesBanner.svelte",
+      "default": "./src/components/DeferredChangesBanner.svelte"
     }
   },
   "bin": {
     "stellar-engine": "./dist/bin/install-pwa.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "src/components"
   ],
   "publishConfig": {
     "access": "public",

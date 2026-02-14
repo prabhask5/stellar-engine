@@ -899,6 +899,424 @@ function generateHuskyPreCommit() {
     return `npm run cleanup && npm run validate && git add -u
 `;
 }
+function generateRootLayoutTs(opts) {
+    return `import { browser } from '$app/environment';
+import { redirect } from '@sveltejs/kit';
+import { goto } from '$app/navigation';
+import { initEngine, startSyncEngine, supabase } from '@prabhask5/stellar-engine';
+import { initConfig } from '@prabhask5/stellar-engine/config';
+import { resolveAuthState, lockSingleUser } from '@prabhask5/stellar-engine/auth';
+import { resolveRootLayout } from '@prabhask5/stellar-engine/kit';
+import type { AuthMode, OfflineCredentials, Session } from '@prabhask5/stellar-engine/types';
+import type { LayoutLoad } from './$types';
+
+export const ssr = true;
+export const prerender = false;
+
+// TODO: Configure initEngine() with your app-specific database schema.
+// Call initEngine({...}) at module scope (guarded by \`if (browser)\`).
+// See the stellar-engine documentation for the full config interface.
+//
+// Example:
+// if (browser) {
+//   initEngine({
+//     tables: [
+//       { supabaseName: 'items', columns: 'id,user_id,name,...' }
+//     ],
+//     database: {
+//       name: '${opts.name.replace(/[^a-zA-Z0-9]/g, '')}DB',
+//       versions: [
+//         { version: 1, stores: { items: 'id, user_id, created_at, updated_at' } }
+//       ]
+//     },
+//     supabase,
+//     prefix: '${opts.prefix}',
+//     auth: { mode: 'single-user', singleUser: { gateType: 'code', codeLength: 6 } },
+//     onAuthStateChange: (event, session) => { /* handle auth events */ },
+//     onAuthKicked: async () => { await lockSingleUser(); goto('/login'); }
+//   });
+// }
+
+export interface LayoutData {
+  session: Session | null;
+  authMode: AuthMode;
+  offlineProfile: OfflineCredentials | null;
+  singleUserSetUp?: boolean;
+}
+
+export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
+  if (browser) {
+    const config = await initConfig();
+    if (!config && url.pathname !== '/setup') {
+      redirect(307, '/setup');
+    }
+    if (!config) {
+      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    }
+    const result = await resolveAuthState();
+    if (result.authMode !== 'none') {
+      await startSyncEngine();
+    }
+    return result;
+  }
+  return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+};
+`;
+}
+function generateRootLayoutSvelte() {
+    return `<script lang="ts">
+  import { hydrateAuthState } from '@prabhask5/stellar-engine/kit';
+  import { authState } from '@prabhask5/stellar-engine/stores';
+  import type { LayoutData } from './+layout';
+
+  interface Props {
+    children?: import('svelte').Snippet;
+    data: LayoutData;
+  }
+
+  let { children, data }: Props = $props();
+
+  $effect(() => {
+    hydrateAuthState(data);
+  });
+
+  // TODO: Add app shell (navbar, tab bar, overlays, sign-out logic, etc.)
+  // TODO: Import and use UpdatePrompt from '$lib/components/UpdatePrompt.svelte'
+  // TODO: Import and use SyncStatus from '@prabhask5/stellar-engine/components/SyncStatus'
+</script>
+
+<!-- TODO: Add your app shell template (navbar, tab bar, page transitions, etc.) -->
+{@render children?.()}
+`;
+}
+function generateHomePage() {
+    return `<script lang="ts">
+  import { getUserProfile } from '@prabhask5/stellar-engine/auth';
+  import { onSyncComplete, authState } from '@prabhask5/stellar-engine/stores';
+
+  // TODO: Add home page state and logic
+</script>
+
+<!-- TODO: Add home page template -->
+`;
+}
+function generateErrorPage() {
+    return `<script lang="ts">
+  import { page } from '$app/stores';
+
+  // TODO: Add error page logic (offline detection, retry handlers, etc.)
+</script>
+
+<!-- TODO: Add error page template (status code display, retry button, go home button) -->
+`;
+}
+function generateSetupPageTs() {
+    return `import { browser } from '$app/environment';
+import { redirect } from '@sveltejs/kit';
+import { getConfig } from '@prabhask5/stellar-engine/config';
+import { getValidSession, isAdmin } from '@prabhask5/stellar-engine/auth';
+import type { PageLoad } from './$types';
+
+export const load: PageLoad = async () => {
+  if (!browser) return {};
+  if (!getConfig()) {
+    return { isFirstSetup: true };
+  }
+  const session = await getValidSession();
+  if (!session?.user) {
+    redirect(307, '/login');
+  }
+  if (!isAdmin(session.user)) {
+    redirect(307, '/');
+  }
+  return { isFirstSetup: false };
+};
+`;
+}
+function generateSetupPageSvelte() {
+    return `<script lang="ts">
+  import { setConfig } from '@prabhask5/stellar-engine/config';
+  import { isOnline } from '@prabhask5/stellar-engine/stores';
+  import { pollForNewServiceWorker } from '@prabhask5/stellar-engine/kit';
+
+  // TODO: Add setup wizard state (steps, form fields, validation, deployment)
+</script>
+
+<!-- TODO: Add setup wizard template (Supabase credentials form, validation, Vercel deployment) -->
+`;
+}
+function generatePolicyPage() {
+    return `<script lang="ts">
+  // TODO: Add any needed imports
+</script>
+
+<!-- TODO: Add privacy policy page content -->
+`;
+}
+function generateLoginPage() {
+    return `<script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+  import { goto, invalidateAll } from '$app/navigation';
+  import { page } from '$app/stores';
+  import {
+    setupSingleUser,
+    unlockSingleUser,
+    getSingleUserInfo,
+    completeSingleUserSetup,
+    completeDeviceVerification,
+    pollDeviceVerification,
+    fetchRemoteGateConfig,
+    linkSingleUserDevice
+  } from '@prabhask5/stellar-engine/auth';
+  import { sendDeviceVerification } from '@prabhask5/stellar-engine';
+
+  // TODO: Add login page state (setup/unlock/link-device modes, PIN inputs, modals)
+  // TODO: Add BroadcastChannel listener for auth-confirmed events from /confirm
+</script>
+
+<!-- TODO: Add login page template (PIN inputs, setup wizard, device verification modal) -->
+`;
+}
+function generateConfirmPage() {
+    return `<script lang="ts">
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
+  import { handleEmailConfirmation, broadcastAuthConfirmed } from '@prabhask5/stellar-engine/kit';
+
+  let status: 'verifying' | 'success' | 'error' | 'redirecting' | 'can_close' = 'verifying';
+  let errorMessage = '';
+
+  const CHANNEL_NAME = 'auth-channel'; // TODO: Customize channel name
+
+  onMount(async () => {
+    const tokenHash = $page.url.searchParams.get('token_hash');
+    const type = $page.url.searchParams.get('type');
+
+    if (tokenHash && type) {
+      const result = await handleEmailConfirmation(
+        tokenHash,
+        type as 'signup' | 'email' | 'email_change' | 'magiclink'
+      );
+
+      if (!result.success) {
+        status = 'error';
+        errorMessage = result.error || 'Unknown error';
+        return;
+      }
+
+      status = 'success';
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+
+    const tabResult = await broadcastAuthConfirmed(CHANNEL_NAME, type || 'signup');
+    if (tabResult === 'can_close') {
+      status = 'can_close';
+    } else if (tabResult === 'no_broadcast') {
+      goto('/', { replaceState: true });
+    }
+  });
+</script>
+
+<!-- TODO: Add confirmation page template (verifying/success/error/can_close states) -->
+`;
+}
+function generateConfigServer() {
+    return `import { json } from '@sveltejs/kit';
+import { getServerConfig } from '@prabhask5/stellar-engine/kit';
+import type { RequestHandler } from './$types';
+
+export const GET: RequestHandler = async () => {
+  return json(getServerConfig());
+};
+`;
+}
+function generateDeployServer() {
+    return `import { json } from '@sveltejs/kit';
+import { deployToVercel } from '@prabhask5/stellar-engine/kit';
+import type { RequestHandler } from './$types';
+
+export const POST: RequestHandler = async ({ request }) => {
+  const { supabaseUrl, supabaseAnonKey, vercelToken } = await request.json();
+
+  if (!supabaseUrl || !supabaseAnonKey || !vercelToken) {
+    return json(
+      { success: false, error: 'Supabase URL, Anon Key, and Vercel Token are required' },
+      { status: 400 }
+    );
+  }
+
+  const projectId = process.env.VERCEL_PROJECT_ID;
+  if (!projectId) {
+    return json(
+      { success: false, error: 'VERCEL_PROJECT_ID not found. This endpoint only works on Vercel.' },
+      { status: 400 }
+    );
+  }
+
+  const result = await deployToVercel({ vercelToken, projectId, supabaseUrl, supabaseAnonKey });
+  return json(result);
+};
+`;
+}
+function generateValidateServer() {
+    return `import { createValidateHandler } from '@prabhask5/stellar-engine/kit';
+import type { RequestHandler } from './$types';
+
+export const POST: RequestHandler = createValidateHandler();
+`;
+}
+function generateCatchallPage() {
+    return `import { redirect } from '@sveltejs/kit';
+
+export function load() {
+  redirect(302, '/');
+}
+`;
+}
+function generateProtectedLayoutTs() {
+    return `import { redirect } from '@sveltejs/kit';
+import { browser } from '$app/environment';
+import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
+import type { AuthMode, OfflineCredentials, Session } from '@prabhask5/stellar-engine/types';
+import type { LayoutLoad } from './$types';
+
+export interface ProtectedLayoutData {
+  session: Session | null;
+  authMode: AuthMode;
+  offlineProfile: OfflineCredentials | null;
+}
+
+export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> => {
+  if (browser) {
+    const result = await resolveAuthState();
+    if (result.authMode === 'none') {
+      const returnUrl = url.pathname + url.search;
+      const loginUrl =
+        returnUrl && returnUrl !== '/'
+          ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
+          : '/login';
+      throw redirect(302, loginUrl);
+    }
+    return result;
+  }
+  return { session: null, authMode: 'none', offlineProfile: null };
+};
+`;
+}
+function generateProtectedLayoutSvelte() {
+    return `<script lang="ts">
+  interface Props {
+    children?: import('svelte').Snippet;
+  }
+
+  let { children }: Props = $props();
+
+  // TODO: Add conditional page backgrounds or other protected-area chrome
+</script>
+
+{@render children?.()}
+`;
+}
+function generateProfilePage() {
+    return `<script lang="ts">
+  import { goto } from '$app/navigation';
+  import {
+    changeSingleUserGate,
+    updateSingleUserProfile,
+    getSingleUserInfo,
+    changeSingleUserEmail,
+    completeSingleUserEmailChange
+  } from '@prabhask5/stellar-engine/auth';
+  import { authState } from '@prabhask5/stellar-engine/stores';
+  import { isDebugMode, setDebugMode } from '@prabhask5/stellar-engine/utils';
+  import {
+    resetDatabase,
+    getTrustedDevices,
+    removeTrustedDevice,
+    getCurrentDeviceId
+  } from '@prabhask5/stellar-engine';
+
+  // TODO: Add profile page state (form fields, device management, debug tools)
+</script>
+
+<!-- TODO: Add profile page template (forms, cards, device list, debug tools) -->
+`;
+}
+function generateUpdatePromptComponent() {
+    return `<script lang="ts">
+  /**
+   * @fileoverview UpdatePrompt — service-worker update notification.
+   *
+   * Uses monitorSwLifecycle() from stellar-engine to detect when a new
+   * version is waiting to activate, and handleSwUpdate() to apply it.
+   */
+
+  import { onMount, onDestroy } from 'svelte';
+  import { monitorSwLifecycle, handleSwUpdate } from '@prabhask5/stellar-engine/kit';
+
+  /** Whether the update prompt is visible */
+  let showPrompt = $state(false);
+
+  /** Guard flag to prevent double-reload */
+  let reloading = false;
+
+  let cleanup: (() => void) | null = null;
+
+  onMount(() => {
+    cleanup = monitorSwLifecycle({
+      onUpdateAvailable: () => {
+        showPrompt = true;
+      }
+    });
+  });
+
+  onDestroy(() => {
+    cleanup?.();
+  });
+
+  /**
+   * Apply the update: sends SKIP_WAITING to the waiting SW,
+   * waits for controllerchange, then reloads the page.
+   */
+  async function handleRefresh() {
+    if (reloading) return;
+    reloading = true;
+    showPrompt = false;
+    await handleSwUpdate();
+  }
+
+  /**
+   * Dismiss the prompt. The update will apply on the next visit.
+   */
+  function handleDismiss() {
+    showPrompt = false;
+  }
+</script>
+
+<!-- TODO: Add your update prompt UI here.
+     Use showPrompt to conditionally render the toast/banner.
+     Call handleRefresh() for the "Refresh" action.
+     Call handleDismiss() for the "Later" / dismiss action.
+
+     Example structure:
+     {#if showPrompt}
+       <div class="update-toast">
+         <span>A new version is available</span>
+         <button onclick={handleDismiss}>Later</button>
+         <button onclick={handleRefresh}>Refresh</button>
+       </div>
+     {/if}
+-->
+`;
+}
+function generateAppTypes() {
+    return `// App types barrel — re-exports from stellar-engine plus app-specific types
+export type { SyncStatus, AuthMode, OfflineCredentials } from '@prabhask5/stellar-engine/types';
+
+// TODO: Add app-specific type definitions below
+`;
+}
 // =============================================================================
 //                              MAIN FUNCTION
 // =============================================================================
@@ -948,7 +1366,27 @@ async function main() {
         ['supabase-schema.sql', generateSupabaseSchema(opts)],
         // Source files
         ['src/app.html', generateAppHtml(opts)],
-        ['src/app.d.ts', generateAppDts(opts)]
+        ['src/app.d.ts', generateAppDts(opts)],
+        // Route files
+        ['src/routes/+layout.ts', generateRootLayoutTs(opts)],
+        ['src/routes/+layout.svelte', generateRootLayoutSvelte()],
+        ['src/routes/+page.svelte', generateHomePage()],
+        ['src/routes/+error.svelte', generateErrorPage()],
+        ['src/routes/setup/+page.ts', generateSetupPageTs()],
+        ['src/routes/setup/+page.svelte', generateSetupPageSvelte()],
+        ['src/routes/policy/+page.svelte', generatePolicyPage()],
+        ['src/routes/login/+page.svelte', generateLoginPage()],
+        ['src/routes/confirm/+page.svelte', generateConfirmPage()],
+        ['src/routes/api/config/+server.ts', generateConfigServer()],
+        ['src/routes/api/setup/deploy/+server.ts', generateDeployServer()],
+        ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
+        ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
+        ['src/routes/(protected)/+layout.ts', generateProtectedLayoutTs()],
+        ['src/routes/(protected)/+layout.svelte', generateProtectedLayoutSvelte()],
+        ['src/routes/(protected)/profile/+page.svelte', generateProfilePage()],
+        ['src/lib/types.ts', generateAppTypes()],
+        // Component files
+        ['src/lib/components/UpdatePrompt.svelte', generateUpdatePromptComponent()]
     ];
     for (const [relativePath, content] of files) {
         writeIfMissing(join(cwd, relativePath), content, createdFiles, skippedFiles);

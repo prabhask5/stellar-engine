@@ -83,6 +83,7 @@ import { resolveConflicts, storeConflictHistory, getPendingOpsForEntity } from '
 import { getPendingEntityIds } from './queue';
 import { remoteChangesStore } from './stores/remoteChanges';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { isDemoMode } from './demo';
 
 // =============================================================================
 // CONSTANTS
@@ -971,6 +972,8 @@ export async function startRealtimeSubscriptions(userId: string): Promise<void> 
      In SSR contexts (e.g., SvelteKit server-side rendering), `window` is
      undefined and we must bail early to avoid runtime errors. */
   if (typeof window === 'undefined') return;
+  /* Demo mode: no realtime subscriptions needed. */
+  if (isDemoMode()) return;
 
   /* Don't attempt connection while offline; the sync engine's `online` event
      will call us again when connectivity is restored. Attempting to connect

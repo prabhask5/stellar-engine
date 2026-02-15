@@ -67,6 +67,7 @@ import { syncStatusStore } from '../stores/sync';
 import { getSession } from '../supabase/auth';
 import { debugLog, debugWarn, debugError } from '../debug';
 import { preCheckLogin, onLoginSuccess, onLoginFailure } from './loginGuard';
+import { isDemoMode } from '../demo';
 import type { PreCheckStrategy } from './loginGuard';
 
 /** Constant key used for the single config record in IndexedDB. */
@@ -267,6 +268,7 @@ export async function setupSingleUser(
   profile: Record<string, unknown>,
   email: string
 ): Promise<{ error: string | null; confirmationRequired: boolean }> {
+  if (isDemoMode()) return { error: null, confirmationRequired: false };
   try {
     const engineConfig = getEngineConfig();
     const singleUserOpts = engineConfig.auth?.singleUser;
@@ -411,6 +413,7 @@ export async function setupSingleUser(
  * @see {@link setupSingleUser} for the initial setup that triggers confirmation
  */
 export async function completeSingleUserSetup(): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     const config = await readConfig();
     if (!config) {
@@ -518,6 +521,7 @@ export async function unlockSingleUser(gate: string): Promise<{
   maskedEmail?: string;
   retryAfterMs?: number;
 }> {
+  if (isDemoMode()) return { error: null };
   try {
     const config = await readConfig();
     if (!config) {
@@ -694,6 +698,7 @@ export async function unlockSingleUser(gate: string): Promise<{
 export async function completeDeviceVerification(
   tokenHash?: string
 ): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     /* If tokenHash is provided, verify it first (called from the confirm page).
        Uses dynamic import to avoid circular dependency issues. */
@@ -768,6 +773,7 @@ export async function completeDeviceVerification(
  * ```
  */
 export async function pollDeviceVerification(): Promise<boolean> {
+  if (isDemoMode()) return false;
   try {
     const {
       data: { user },
@@ -841,6 +847,7 @@ export async function changeSingleUserGate(
   oldGate: string,
   newGate: string
 ): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     const config = await readConfig();
     if (!config) {
@@ -938,6 +945,7 @@ export async function changeSingleUserGate(
 export async function updateSingleUserProfile(
   profile: Record<string, unknown>
 ): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     const config = await readConfig();
     if (!config) {
@@ -1004,6 +1012,7 @@ export async function updateSingleUserProfile(
 export async function changeSingleUserEmail(
   newEmail: string
 ): Promise<{ error: string | null; confirmationRequired: boolean }> {
+  if (isDemoMode()) return { error: null, confirmationRequired: false };
   try {
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     if (isOffline) {
@@ -1051,6 +1060,7 @@ export async function completeSingleUserEmailChange(): Promise<{
   error: string | null;
   newEmail: string | null;
 }> {
+  if (isDemoMode()) return { error: null, newEmail: null };
   try {
     /* Refresh session to get updated user data with the new email */
     const { data, error: refreshError } = await supabase.auth.refreshSession();
@@ -1121,6 +1131,7 @@ export async function completeSingleUserEmailChange(): Promise<{
  * @see {@link resetSingleUserRemote} for server-side account deletion
  */
 export async function resetSingleUser(): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     const { signOut } = await import('../supabase/auth');
     const result = await signOut();
@@ -1178,6 +1189,7 @@ export async function fetchRemoteGateConfig(): Promise<{
   /** The user's profile metadata. */
   profile: Record<string, unknown>;
 } | null> {
+  if (isDemoMode()) return null;
   try {
     const { data, error } = await supabase.rpc('get_extension_config');
     if (error) {
@@ -1238,6 +1250,7 @@ export async function linkSingleUserDevice(
   maskedEmail?: string;
   retryAfterMs?: number;
 }> {
+  if (isDemoMode()) return { error: null };
   try {
     const engineConfig = getEngineConfig();
     const singleUserOpts = engineConfig.auth?.singleUser;
@@ -1358,6 +1371,7 @@ export async function linkSingleUserDevice(
  * @see {@link resetSingleUser} for a local-only reset that preserves the server account
  */
 export async function resetSingleUserRemote(): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     const { error } = await supabase.rpc('reset_single_user');
     if (error) {

@@ -45,6 +45,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { getConfig } from '../runtime/runtimeConfig';
 import { debugLog, debugWarn, debugError } from '../debug';
+import { isDemoMode } from '../demo';
 // =============================================================================
 // SECTION: Client Prefix Configuration
 // =============================================================================
@@ -217,6 +218,16 @@ let realClient = null;
 function getOrCreateClient() {
     if (realClient)
         return realClient;
+    /* In demo mode, create a placeholder client that won't make real API calls.
+       The sync engine, queue, and realtime guards prevent any actual Supabase
+       usage, but some code paths may still access the client proxy. */
+    if (isDemoMode()) {
+        debugLog('[Auth] Demo mode active — creating placeholder Supabase client (no real connections)');
+        realClient = createClient('https://placeholder.supabase.co', 'placeholder', {
+            auth: { persistSession: false, autoRefreshToken: false }
+        });
+        return realClient;
+    }
     const config = getConfig();
     const url = config?.supabaseUrl || 'https://placeholder.supabase.co';
     const key = config?.supabaseAnonKey || 'placeholder';

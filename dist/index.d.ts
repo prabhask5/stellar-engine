@@ -62,6 +62,8 @@ export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes } from '.
 export { getDiagnostics, getSyncDiagnostics, getRealtimeDiagnostics, getQueueDiagnostics, getConflictDiagnostics, getEngineDiagnostics, getNetworkDiagnostics, getErrorDiagnostics } from './diagnostics';
 export type { DiagnosticsSnapshot } from './diagnostics';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
+export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from './demo';
+export type { DemoConfig } from './demo';
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice } from './types';
 export type { Session } from '@supabase/supabase-js';
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';

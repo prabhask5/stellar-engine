@@ -2353,3 +2353,43 @@ interface SingleUserConfig {
   updatedAt: string;
 }
 ```
+
+---
+
+## Demo Mode
+
+### `isDemoMode(): boolean`
+Check whether demo mode is currently active. SSR-safe (returns `false` on server).
+
+### `setDemoMode(enabled: boolean): void`
+Activate or deactivate demo mode via localStorage flag. **Caller must trigger a full page reload** after calling this.
+
+### `seedDemoData(): Promise<void>`
+Seed the demo database with mock data. Idempotent per page load (no-ops if already seeded). Called automatically by `resolveRootLayout()` when in demo mode.
+
+### `cleanupDemoDatabase(dbName: string): Promise<void>`
+Delete the demo Dexie database entirely. Call when deactivating demo mode for a clean exit.
+
+### `DemoConfig` Interface
+```ts
+interface DemoConfig {
+  seedData: (db: Dexie) => Promise<void>;
+  mockProfile: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    [key: string]: unknown;
+  };
+}
+```
+
+### `SyncEngineConfig.demo`
+Optional `DemoConfig` passed to `initEngine()`. When provided, enables the demo mode system.
+
+### `DemoBanner` Component
+Import: `@prabhask5/stellar-engine/components/DemoBanner`
+
+Fixed-position banner at bottom center. Shows "Demo Mode — Changes reset on refresh" with a dismiss button. Only renders when `isDemoMode()` returns `true`. Glass morphism styling, z-index 9000.
+
+### `AuthMode` Type
+Updated to include `'demo'`: `'supabase' | 'offline' | 'demo' | 'none'`

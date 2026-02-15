@@ -57,6 +57,7 @@ import { getEngineConfig } from '../config';
 import { supabase } from '../supabase/client';
 import { getDeviceId } from '../deviceId';
 import { debugLog, debugWarn, debugError } from '../debug';
+import { isDemoMode } from '../demo';
 
 /** Default number of days a device remains trusted before requiring re-verification. */
 const DEFAULT_TRUST_DURATION_DAYS = 90;
@@ -214,6 +215,7 @@ export function maskEmail(email: string): string {
  *   forcing the device verification flow rather than granting access.
  */
 export async function isDeviceTrusted(userId: string): Promise<boolean> {
+  if (isDemoMode()) return true;
   try {
     const deviceId = getDeviceId();
     const trustDays = getTrustDurationDays();
@@ -261,6 +263,7 @@ export async function isDeviceTrusted(userId: string): Promise<boolean> {
  * @see {@link trustPendingDevice} for trusting a remote device via user_metadata
  */
 export async function trustCurrentDevice(userId: string): Promise<void> {
+  if (isDemoMode()) return;
   try {
     const deviceId = getDeviceId();
     const label = getDeviceLabel();
@@ -298,6 +301,7 @@ export async function trustCurrentDevice(userId: string): Promise<void> {
  * @see {@link isDeviceTrusted} which checks the `last_used_at` timestamp
  */
 export async function touchTrustedDevice(userId: string): Promise<void> {
+  if (isDemoMode()) return;
   try {
     const deviceId = getDeviceId();
 
@@ -335,6 +339,7 @@ export async function touchTrustedDevice(userId: string): Promise<void> {
  * @see {@link removeTrustedDevice} for revoking trust on a specific device
  */
 export async function getTrustedDevices(userId: string): Promise<TrustedDevice[]> {
+  if (isDemoMode()) return [];
   try {
     const { data, error } = await supabase
       .from('trusted_devices')
@@ -372,6 +377,7 @@ export async function getTrustedDevices(userId: string): Promise<TrustedDevice[]
  * @security Ensure RLS policies restrict deletion to the owning user.
  */
 export async function removeTrustedDevice(id: string): Promise<void> {
+  if (isDemoMode()) return;
   try {
     const { error } = await supabase.from('trusted_devices').delete().eq('id', id);
 
@@ -415,6 +421,7 @@ export async function removeTrustedDevice(id: string): Promise<void> {
  * @see {@link trustPendingDevice} for trusting the originating device from the confirm page
  */
 export async function sendDeviceVerification(email: string): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     /* Store the pending device info in user_metadata so the confirm page
        can trust THIS device even if the link is opened on a different one.
@@ -472,6 +479,7 @@ export async function sendDeviceVerification(email: string): Promise<{ error: st
  * @see {@link sendDeviceVerification} which stores the pending device ID
  */
 export async function trustPendingDevice(): Promise<void> {
+  if (isDemoMode()) return;
   try {
     const {
       data: { user },
@@ -557,6 +565,7 @@ export async function trustPendingDevice(): Promise<void> {
  * @see {@link trustPendingDevice} which should be called after successful verification
  */
 export async function verifyDeviceCode(tokenHash: string): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   try {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,

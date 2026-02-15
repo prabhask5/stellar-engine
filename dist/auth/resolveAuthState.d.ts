@@ -41,9 +41,10 @@ export interface AuthStateResult {
      * The resolved authentication mode:
      * - `'supabase'` -- Active Supabase session (online or cached in localStorage).
      * - `'offline'` -- Offline session with locally cached credentials.
+     * - `'demo'` -- Demo mode with sandboxed DB and mock data.
      * - `'none'` -- No valid authentication; user must log in.
      */
-    authMode: 'supabase' | 'offline' | 'none';
+    authMode: 'supabase' | 'offline' | 'demo' | 'none';
     /** Offline credentials profile data, populated only when `authMode === 'offline'`. */
     offlineProfile: OfflineCredentials | null;
     /**

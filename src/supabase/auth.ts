@@ -45,6 +45,7 @@ import { debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
 import { syncStatusStore } from '../stores/sync';
 import { authState } from '../stores/authState';
+import { isDemoMode } from '../demo';
 
 // =============================================================================
 // SECTION: Helpers
@@ -113,6 +114,11 @@ export async function signOut(options?: {
   preserveOfflineCredentials?: boolean;
   preserveLocalData?: boolean;
 }): Promise<{ error: string | null }> {
+  if (isDemoMode()) {
+    authState.reset();
+    syncStatusStore.reset();
+    return { error: null };
+  }
   // 1. Stop sync engine (import dynamically to avoid circular deps)
   try {
     const { stopSyncEngine, clearLocalCache, clearPendingSyncQueue } = await import('../engine');
@@ -210,6 +216,7 @@ export async function signOut(options?: {
  * @see {@link getValidSession} — combined convenience wrapper
  */
 export async function getSession(): Promise<Session | null> {
+  if (isDemoMode()) return null;
   const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
   try {
@@ -371,6 +378,7 @@ export function getUserProfile(user: User | null): Record<string, unknown> {
 export async function updateProfile(
   profile: Record<string, unknown>
 ): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   const config = getEngineConfig();
   const metadata = config.auth?.profileToMetadata
     ? config.auth.profileToMetadata(profile)
@@ -412,6 +420,7 @@ export async function updateProfile(
  * ```
  */
 export async function resendConfirmationEmail(email: string): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email,
@@ -444,6 +453,7 @@ export async function verifyOtp(
   tokenHash: string,
   type: 'signup' | 'email' | 'email_change'
 ): Promise<{ error: string | null }> {
+  if (isDemoMode()) return { error: null };
   const { error } = await supabase.auth.verifyOtp({
     token_hash: tokenHash,
     type

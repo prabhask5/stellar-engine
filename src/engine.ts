@@ -95,6 +95,7 @@ import { getValidOfflineSession, createOfflineSession } from './auth/offlineSess
 import { validateSchema } from './supabase/validate';
 import { formatBytes } from './utils';
 import { getDiagnostics } from './diagnostics';
+import { isDemoMode } from './demo';
 
 // =============================================================================
 // CONFIG ACCESSORS
@@ -774,6 +775,7 @@ function notifySyncComplete(): void {
  * ```
  */
 export function scheduleSyncPush(): void {
+  if (isDemoMode()) return;
   if (syncTimeout) {
     clearTimeout(syncTimeout);
   }
@@ -1258,8 +1260,14 @@ async function pushPendingOps(): Promise<PushStats> {
     );
   }
 
+  // Snapshot: capture the IDs to process in THIS cycle. Items queued after
+  // this point are left for the next cycle, allowing the UI to show the
+  // "pending" state between sync cycles instead of silently consuming them.
+  const snapshotItems = await getPendingSync();
+  const snapshotIds = new Set(snapshotItems.map((item) => item.id));
+
   while (iterations < maxIterations) {
-    const pendingItems = await getPendingSync();
+    const pendingItems = (await getPendingSync()).filter((item) => snapshotIds.has(item.id));
     if (pendingItems.length === 0) break;
 
     iterations++;
@@ -1767,6 +1775,7 @@ export async function runFullSync(
   quiet: boolean = false,
   skipPull: boolean = false
 ): Promise<void> {
+  if (isDemoMode()) return;
   if (typeof navigator === 'undefined' || !navigator.onLine) {
     if (!quiet) {
       syncStatusStore.setStatus('offline');
@@ -2586,6 +2595,7 @@ let authStateUnsubscribe: { data: { subscription: { unsubscribe: () => void } } 
  */
 export async function startSyncEngine(): Promise<void> {
   if (typeof window === 'undefined') return;
+  if (isDemoMode()) return;
 
   // Ensure DB is open and upgraded before any access
   await waitForDb();

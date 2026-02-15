@@ -26,6 +26,7 @@
 import { writable, derived, type Readable } from 'svelte/store';
 import type { AuthMode, OfflineCredentials } from '../types';
 import type { Session } from '@supabase/supabase-js';
+import { getDemoConfig } from '../demo';
 
 // =============================================================================
 // Types
@@ -166,6 +167,24 @@ function createAuthStateStore() {
         offlineProfile: null,
         isLoading: false,
         authKickedMessage: kickedMessage || null
+      }));
+    },
+
+    /**
+     * Transition to demo-authenticated mode.
+     *
+     * Used when the app is running in demo mode with a sandboxed database.
+     * No real session or offline profile is stored — the mock profile is
+     * sourced from the registered DemoConfig.
+     */
+    setDemoAuth(): void {
+      update((state) => ({
+        ...state,
+        mode: 'demo',
+        session: null,
+        offlineProfile: null,
+        isLoading: false,
+        authKickedMessage: null
       }));
     },
 
@@ -318,7 +337,11 @@ export const authState = createAuthStateStore();
  */
 export const isAuthenticated: Readable<boolean> = derived(
   authState,
-  ($authState) => $authState.mode !== 'none' && !$authState.isLoading
+  ($authState) =>
+    ($authState.mode === 'supabase' ||
+      $authState.mode === 'offline' ||
+      $authState.mode === 'demo') &&
+    !$authState.isLoading
 );
 
 /**
@@ -356,6 +379,15 @@ export const userDisplayInfo: Readable<{
       profile: $authState.offlineProfile.profile || {},
       email: $authState.offlineProfile.email
     };
+  }
+  if ($authState.mode === 'demo') {
+    const demoConfig = getDemoConfig();
+    if (demoConfig) {
+      return {
+        profile: demoConfig.mockProfile,
+        email: demoConfig.mockProfile.email
+      };
+    }
   }
   return null;
 });

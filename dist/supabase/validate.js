@@ -33,6 +33,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getEngineConfig } from '../config';
 import { supabase } from './client';
 import { debugError, debugLog } from '../debug';
+import { isDemoMode } from '../demo';
 // =============================================================================
 // SECTION: Credential Validation
 // =============================================================================
@@ -158,6 +159,8 @@ export async function validateSupabaseCredentials(url, anonKey, testTable) {
  * @see {@link validateSupabaseCredentials} — for pre-setup credential checks
  */
 export async function validateSchema() {
+    if (isDemoMode())
+        return { valid: true, missingTables: [], errors: [] };
     const config = getEngineConfig();
     const tableNames = config.tables.map((t) => t.supabaseName);
     // device verification requires the trusted_devices table

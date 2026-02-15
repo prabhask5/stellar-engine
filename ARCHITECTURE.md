@@ -1556,3 +1556,41 @@ The scaffolder uses `writeIfMissing()` — files are only created if they don't 
 | **Mutex-protected sync** | Promise-based lock with stale detection, operation timeouts |
 | **Network state machine** | iOS PWA visibility handling, sequential reconnect callbacks |
 | **PWA scaffolding** | CLI generates 34+ files with engine-managed logic and TODO UI placeholders, skip-if-exists safety |
+| **Demo mode sandboxing** | Isolated demo database, mock auth, network guards on all sync/queue/realtime paths |
+
+---
+
+## Demo Mode Sandboxing
+
+Demo mode provides a completely isolated sandbox at the engine level:
+
+### Database Isolation
+- `initEngine()` detects `isDemoMode()` and appends `_demo` to the database name
+- The real database is never opened — zero risk of data contamination
+- On page refresh, the demo DB is re-seeded with fresh mock data
+
+### Auth Isolation
+- `resolveAuthState()` short-circuits and returns `authMode: 'demo'`
+- No Supabase session is created or validated
+- `authState` store uses `setDemoAuth()` — mock profile from `DemoConfig`
+
+### Network Isolation
+- `startSyncEngine()`, `runFullSync()`, `scheduleSyncPush()` — all return early
+- `queueSyncOperation()`, `queueCreateOperation()`, `queueDeleteOperation()` — all return early
+- `startRealtimeSubscriptions()` — returns early
+- Supabase client creates a placeholder with no real credentials
+
+### Data Flow
+```
+User → setDemoMode(true) + page reload
+  → initEngine() → isDemoMode() → DB name: ${name}_demo
+  → resolveAuthState() → authMode: 'demo'
+  → seedDemoData() → consumer's seedData(db) populates mock data
+  → CRUD reads/writes go to demo DB (local only)
+  → Sync/queue/realtime guards prevent any server traffic
+```
+
+### Security Model
+- Demo mode does NOT bypass auth — it replaces the entire data layer
+- If someone manually sets the localStorage flag, they see an empty/seeded demo DB
+- No path to real user data exists (different database, no Supabase client)

@@ -52,6 +52,10 @@
     "./components/DeferredChangesBanner": {
       "svelte": "./src/components/DeferredChangesBanner.svelte",
       "default": "./src/components/DeferredChangesBanner.svelte"
+    },
+    "./components/DemoBanner": {
+      "svelte": "./src/components/DemoBanner.svelte",
+      "default": "./src/components/DemoBanner.svelte"
     }
   },
   "bin": {

@@ -23,6 +23,7 @@
  * @see {@link @supabase/supabase-js} for the Session type
  */
 import { writable, derived } from 'svelte/store';
+import { getDemoConfig } from '../demo';
 // =============================================================================
 // Store Factory
 // =============================================================================
@@ -128,6 +129,23 @@ function createAuthStateStore() {
                 offlineProfile: null,
                 isLoading: false,
                 authKickedMessage: kickedMessage || null
+            }));
+        },
+        /**
+         * Transition to demo-authenticated mode.
+         *
+         * Used when the app is running in demo mode with a sandboxed database.
+         * No real session or offline profile is stored — the mock profile is
+         * sourced from the registered DemoConfig.
+         */
+        setDemoAuth() {
+            update((state) => ({
+                ...state,
+                mode: 'demo',
+                session: null,
+                offlineProfile: null,
+                isLoading: false,
+                authKickedMessage: null
             }));
         },
         /**
@@ -269,7 +287,10 @@ export const authState = createAuthStateStore();
  *
  * @see authState for the underlying state
  */
-export const isAuthenticated = derived(authState, ($authState) => $authState.mode !== 'none' && !$authState.isLoading);
+export const isAuthenticated = derived(authState, ($authState) => ($authState.mode === 'supabase' ||
+    $authState.mode === 'offline' ||
+    $authState.mode === 'demo') &&
+    !$authState.isLoading);
 /**
  * Derived store that projects the user's display-friendly profile info
  * (email and metadata) regardless of the current auth mode.
@@ -300,6 +321,15 @@ export const userDisplayInfo = derived(authState, ($authState) => {
             profile: $authState.offlineProfile.profile || {},
             email: $authState.offlineProfile.email
         };
+    }
+    if ($authState.mode === 'demo') {
+        const demoConfig = getDemoConfig();
+        if (demoConfig) {
+            return {
+                profile: demoConfig.mockProfile,
+                email: demoConfig.mockProfile.email
+            };
+        }
     }
     return null;
 });

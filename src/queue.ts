@@ -67,6 +67,8 @@ import { debugLog, debugWarn } from './debug';
 import { isDebugMode } from './debug';
 import { getEngineConfig } from './config';
 import type { SyncOperationItem } from './types';
+import { isDemoMode } from './demo';
+import { syncStatusStore } from './stores/sync';
 
 // =============================================================================
 // Constants
@@ -907,6 +909,7 @@ export async function getPendingEntityIds(): Promise<Set<string>> {
 export async function queueSyncOperation(
   item: Omit<SyncOperationItem, 'id' | 'timestamp' | 'retries'>
 ): Promise<void> {
+  if (isDemoMode()) return;
   const db = getDb();
   const fullItem: SyncOperationItem = {
     ...item,
@@ -915,6 +918,12 @@ export async function queueSyncOperation(
   };
 
   await db.table('syncQueue').add(fullItem);
+
+  // Eagerly update pending count for instant UI feedback — the SyncStatus
+  // component can immediately show the "pending" badge instead of waiting
+  // until the next sync cycle completes.
+  const count = await db.table('syncQueue').count();
+  syncStatusStore.setPendingCount(count);
 }
 
 /**
@@ -951,6 +960,7 @@ export async function queueCreateOperation(
   entityId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
+  if (isDemoMode()) return;
   await queueSyncOperation({
     table,
     entityId,
@@ -985,6 +995,7 @@ export async function queueCreateOperation(
  *      other operations during coalescing.
  */
 export async function queueDeleteOperation(table: string, entityId: string): Promise<void> {
+  if (isDemoMode()) return;
   await queueSyncOperation({
     table,
     entityId,

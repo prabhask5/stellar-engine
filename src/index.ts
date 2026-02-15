@@ -305,6 +305,19 @@ export type { DiagnosticsSnapshot } from './diagnostics';
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 
 // =============================================================================
+//  Demo Mode
+// =============================================================================
+// Demo mode provides a completely isolated sandbox for consumer apps:
+// - `isDemoMode` — checks whether the app is running in demo mode.
+// - `setDemoMode` — activates or deactivates demo mode (requires page reload).
+// - `seedDemoData` — seeds the demo database with mock data (idempotent).
+// - `cleanupDemoDatabase` — deletes the demo database entirely.
+// - `DemoConfig` — configuration interface for demo mode.
+
+export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from './demo';
+export type { DemoConfig } from './demo';
+
+// =============================================================================
 //  Type Definitions
 // =============================================================================
 // All public TypeScript types and interfaces used across the engine.

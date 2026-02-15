@@ -38,6 +38,7 @@ import { resetSingleUserRemote } from './singleUser';
 import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
+import { isDemoMode } from '../demo';
 
 // =============================================================================
 // TYPES
@@ -54,9 +55,10 @@ export interface AuthStateResult {
    * The resolved authentication mode:
    * - `'supabase'` -- Active Supabase session (online or cached in localStorage).
    * - `'offline'` -- Offline session with locally cached credentials.
+   * - `'demo'` -- Demo mode with sandboxed DB and mock data.
    * - `'none'` -- No valid authentication; user must log in.
    */
-  authMode: 'supabase' | 'offline' | 'none';
+  authMode: 'supabase' | 'offline' | 'demo' | 'none';
 
   /** Offline credentials profile data, populated only when `authMode === 'offline'`. */
   offlineProfile: OfflineCredentials | null;
@@ -101,6 +103,11 @@ export interface AuthStateResult {
  * @see {@link AuthStateResult} for the return type shape.
  */
 export async function resolveAuthState(): Promise<AuthStateResult> {
+  /* Demo mode short-circuit: skip all real auth resolution. */
+  if (isDemoMode()) {
+    return { session: null, authMode: 'demo', offlineProfile: null, singleUserSetUp: true };
+  }
+
   try {
     /* Ensure DB is open and upgraded before any IndexedDB access.
        This is critical during cold start when the DB may still be initializing. */

@@ -35,6 +35,7 @@ import { markEntityModified, scheduleSyncPush } from './engine';
 import { generateId, now } from './utils';
 import { debugError } from './debug';
 import { supabase } from './supabase/client';
+import { isDemoMode } from './demo';
 
 // =============================================================================
 // HELPERS
@@ -499,8 +500,13 @@ export async function engineGet(
   if (local) return local as Record<string, unknown>;
 
   /* Remote fallback: only attempted when explicitly opted in AND the browser
-     reports online status. This avoids unnecessary network errors in offline mode. */
-  if (opts?.remoteFallback && typeof navigator !== 'undefined' && navigator.onLine) {
+     reports online status. Skipped in demo mode (sandboxed, no Supabase). */
+  if (
+    opts?.remoteFallback &&
+    !isDemoMode() &&
+    typeof navigator !== 'undefined' &&
+    navigator.onLine
+  ) {
     try {
       const columns = getTableColumns(table);
       const { data, error } = await supabase
@@ -570,10 +576,11 @@ export async function engineGetAll(
 
   /* Remote fallback only fires when the local table is completely empty.
      This handles the "first device" or "fresh install" scenario where no
-     data has been synced down yet. */
+     data has been synced down yet. Skipped in demo mode (sandboxed). */
   if (
     results.length === 0 &&
     opts?.remoteFallback &&
+    !isDemoMode() &&
     typeof navigator !== 'undefined' &&
     navigator.onLine
   ) {
@@ -647,6 +654,7 @@ export async function engineQuery(
   if (
     results.length === 0 &&
     opts?.remoteFallback &&
+    !isDemoMode() &&
     typeof navigator !== 'undefined' &&
     navigator.onLine
   ) {
@@ -719,6 +727,7 @@ export async function engineQueryRange(
   if (
     results.length === 0 &&
     opts?.remoteFallback &&
+    !isDemoMode() &&
     typeof navigator !== 'undefined' &&
     navigator.onLine
   ) {
@@ -813,8 +822,9 @@ export async function engineGetOrCreate(
   const existing = localResults.find((r: Record<string, unknown>) => !r.deleted);
   if (existing) return existing as Record<string, unknown>;
 
-  /* Step 2: Check remote if requested -- prevents duplicate creation across devices. */
-  if (opts?.checkRemote && typeof navigator !== 'undefined' && navigator.onLine) {
+  /* Step 2: Check remote if requested -- prevents duplicate creation across devices.
+     Skipped in demo mode (sandboxed, no Supabase). */
+  if (opts?.checkRemote && !isDemoMode() && typeof navigator !== 'undefined' && navigator.onLine) {
     try {
       const columns = getTableColumns(table);
       const { data } = await supabase

@@ -59,6 +59,7 @@ import { syncStatusStore } from '../stores/sync';
 import { getSession } from '../supabase/auth';
 import { debugLog, debugWarn, debugError } from '../debug';
 import { preCheckLogin, onLoginSuccess, onLoginFailure } from './loginGuard';
+import { isDemoMode } from '../demo';
 /** Constant key used for the single config record in IndexedDB. */
 const CONFIG_ID = 'config';
 // =============================================================================
@@ -235,6 +236,8 @@ export async function getSingleUserInfo() {
  * @see {@link completeSingleUserSetup} for finalizing after email confirmation
  */
 export async function setupSingleUser(gate, profile, email) {
+    if (isDemoMode())
+        return { error: null, confirmationRequired: false };
     try {
         const engineConfig = getEngineConfig();
         const singleUserOpts = engineConfig.auth?.singleUser;
@@ -367,6 +370,8 @@ export async function setupSingleUser(gate, profile, email) {
  * @see {@link setupSingleUser} for the initial setup that triggers confirmation
  */
 export async function completeSingleUserSetup() {
+    if (isDemoMode())
+        return { error: null };
     try {
         const config = await readConfig();
         if (!config) {
@@ -461,6 +466,8 @@ export async function completeSingleUserSetup() {
  * @see {@link lockSingleUser} for the reverse operation
  */
 export async function unlockSingleUser(gate) {
+    if (isDemoMode())
+        return { error: null };
     try {
         const config = await readConfig();
         if (!config) {
@@ -617,6 +624,8 @@ export async function unlockSingleUser(gate) {
  * @see {@link pollDeviceVerification} for polling-based completion
  */
 export async function completeDeviceVerification(tokenHash) {
+    if (isDemoMode())
+        return { error: null };
     try {
         /* If tokenHash is provided, verify it first (called from the confirm page).
            Uses dynamic import to avoid circular dependency issues. */
@@ -684,6 +693,8 @@ export async function completeDeviceVerification(tokenHash) {
  * ```
  */
 export async function pollDeviceVerification() {
+    if (isDemoMode())
+        return false;
     try {
         const { data: { user }, error } = await supabase.auth.getUser();
         if (error || !user)
@@ -751,6 +762,8 @@ export async function lockSingleUser() {
  * ```
  */
 export async function changeSingleUserGate(oldGate, newGate) {
+    if (isDemoMode())
+        return { error: null };
     try {
         const config = await readConfig();
         if (!config) {
@@ -841,6 +854,8 @@ export async function changeSingleUserGate(oldGate, newGate) {
  * ```
  */
 export async function updateSingleUserProfile(profile) {
+    if (isDemoMode())
+        return { error: null };
     try {
         const config = await readConfig();
         if (!config) {
@@ -902,6 +917,8 @@ export async function updateSingleUserProfile(profile) {
  * @see {@link completeSingleUserEmailChange} for finalizing the change
  */
 export async function changeSingleUserEmail(newEmail) {
+    if (isDemoMode())
+        return { error: null, confirmationRequired: false };
     try {
         const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
         if (isOffline) {
@@ -942,6 +959,8 @@ export async function changeSingleUserEmail(newEmail) {
  * @see {@link changeSingleUserEmail} for initiating the change
  */
 export async function completeSingleUserEmailChange() {
+    if (isDemoMode())
+        return { error: null, newEmail: null };
     try {
         /* Refresh session to get updated user data with the new email */
         const { data, error: refreshError } = await supabase.auth.refreshSession();
@@ -1005,6 +1024,8 @@ export async function completeSingleUserEmailChange() {
  * @see {@link resetSingleUserRemote} for server-side account deletion
  */
 export async function resetSingleUser() {
+    if (isDemoMode())
+        return { error: null };
     try {
         const { signOut } = await import('../supabase/auth');
         const result = await signOut();
@@ -1051,6 +1072,8 @@ export async function resetSingleUser() {
  * @see {@link linkSingleUserDevice} for linking after discovery
  */
 export async function fetchRemoteGateConfig() {
+    if (isDemoMode())
+        return null;
     try {
         const { data, error } = await supabase.rpc('get_extension_config');
         if (error) {
@@ -1103,6 +1126,8 @@ export async function fetchRemoteGateConfig() {
  * @see {@link fetchRemoteGateConfig} for discovering the account to link to
  */
 export async function linkSingleUserDevice(email, pin) {
+    if (isDemoMode())
+        return { error: null };
     try {
         const engineConfig = getEngineConfig();
         const singleUserOpts = engineConfig.auth?.singleUser;
@@ -1211,6 +1236,8 @@ export async function linkSingleUserDevice(email, pin) {
  * @see {@link resetSingleUser} for a local-only reset that preserves the server account
  */
 export async function resetSingleUserRemote() {
+    if (isDemoMode())
+        return { error: null };
     try {
         const { error } = await supabase.rpc('reset_single_user');
         if (error) {

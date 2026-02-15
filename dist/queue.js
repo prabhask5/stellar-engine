@@ -65,6 +65,8 @@
 import { debugLog, debugWarn } from './debug';
 import { isDebugMode } from './debug';
 import { getEngineConfig } from './config';
+import { isDemoMode } from './demo';
+import { syncStatusStore } from './stores/sync';
 // =============================================================================
 // Constants
 // =============================================================================
@@ -832,6 +834,8 @@ export async function getPendingEntityIds() {
  * @see {@link coalescePendingOps} which later reduces redundant queued operations.
  */
 export async function queueSyncOperation(item) {
+    if (isDemoMode())
+        return;
     const db = getDb();
     const fullItem = {
         ...item,
@@ -839,6 +843,11 @@ export async function queueSyncOperation(item) {
         retries: 0
     };
     await db.table('syncQueue').add(fullItem);
+    // Eagerly update pending count for instant UI feedback — the SyncStatus
+    // component can immediately show the "pending" badge instead of waiting
+    // until the next sync cycle completes.
+    const count = await db.table('syncQueue').count();
+    syncStatusStore.setPendingCount(count);
 }
 /**
  * Helper to queue a create operation.
@@ -870,6 +879,8 @@ export async function queueSyncOperation(item) {
  * @see {@link queueSyncOperation} for the underlying enqueue mechanism.
  */
 export async function queueCreateOperation(table, entityId, payload) {
+    if (isDemoMode())
+        return;
     await queueSyncOperation({
         table,
         entityId,
@@ -903,6 +914,8 @@ export async function queueCreateOperation(table, entityId, payload) {
  *      other operations during coalescing.
  */
 export async function queueDeleteOperation(table, entityId) {
+    if (isDemoMode())
+        return;
     await queueSyncOperation({
         table,
         entityId,

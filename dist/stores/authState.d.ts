@@ -98,6 +98,14 @@ export declare const authState: {
      */
     setNoAuth(kickedMessage?: string): void;
     /**
+     * Transition to demo-authenticated mode.
+     *
+     * Used when the app is running in demo mode with a sandboxed database.
+     * No real session or offline profile is stored — the mock profile is
+     * sourced from the registered DemoConfig.
+     */
+    setDemoAuth(): void;
+    /**
      * Update only the loading flag without altering the auth mode or session.
      *
      * Useful during initialization when the auth subsystem needs to signal

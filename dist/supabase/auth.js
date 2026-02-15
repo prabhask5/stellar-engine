@@ -40,6 +40,7 @@ import { debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
 import { syncStatusStore } from '../stores/sync';
 import { authState } from '../stores/authState';
+import { isDemoMode } from '../demo';
 // =============================================================================
 // SECTION: Helpers
 // =============================================================================
@@ -101,6 +102,11 @@ function getConfirmRedirectUrl() {
  * ```
  */
 export async function signOut(options) {
+    if (isDemoMode()) {
+        authState.reset();
+        syncStatusStore.reset();
+        return { error: null };
+    }
     // 1. Stop sync engine (import dynamically to avoid circular deps)
     try {
         const { stopSyncEngine, clearLocalCache, clearPendingSyncQueue } = await import('../engine');
@@ -189,6 +195,8 @@ export async function signOut(options) {
  * @see {@link getValidSession} — combined convenience wrapper
  */
 export async function getSession() {
+    if (isDemoMode())
+        return null;
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     try {
         const { data, error } = await supabase.auth.getSession();
@@ -341,6 +349,8 @@ export function getUserProfile(user) {
  * @see {@link updateOfflineCredentialsProfile} — keeps the offline cache in sync
  */
 export async function updateProfile(profile) {
+    if (isDemoMode())
+        return { error: null };
     const config = getEngineConfig();
     const metadata = config.auth?.profileToMetadata
         ? config.auth.profileToMetadata(profile)
@@ -378,6 +388,8 @@ export async function updateProfile(profile) {
  * ```
  */
 export async function resendConfirmationEmail(email) {
+    if (isDemoMode())
+        return { error: null };
     const { error } = await supabase.auth.resend({
         type: 'signup',
         email,
@@ -405,6 +417,8 @@ export async function resendConfirmationEmail(email) {
  * ```
  */
 export async function verifyOtp(tokenHash, type) {
+    if (isDemoMode())
+        return { error: null };
     const { error } = await supabase.auth.verifyOtp({
         token_hash: tokenHash,
         type

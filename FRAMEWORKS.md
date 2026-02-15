@@ -503,3 +503,33 @@ The engine exports all public types from `src/index.ts` for consumer application
 - `SyncError`, `RealtimeState` -- store-related types
 - `RemoteActionType` -- detected action types for animations
 Consumer apps use these types to implement their repositories, configure the engine, and build type-safe UI integrations.
+
+---
+
+## Demo Mode
+
+### Implementation in Consumer Apps
+
+1. Create `src/lib/demo/mockData.ts` with a `seedData(db)` function
+2. Create `src/lib/demo/config.ts` exporting a `DemoConfig` object
+3. Pass `demo: demoConfig` to `initEngine()` in your root layout
+4. Add `<DemoBanner />` from `@prabhask5/stellar-engine/components/DemoBanner` to your root layout
+5. Create a `/demo` route with Start/Exit Demo buttons using `setDemoMode()`
+
+### Mock Data Seeding Patterns
+
+```ts
+export async function seedDemoData(db: Dexie): Promise<void> {
+  // Use bulkPut for efficient batch insertion
+  await db.table('items').bulkPut([
+    { id: 'demo-1', name: 'Sample Item', order: 1, deleted: false, ... },
+    { id: 'demo-2', name: 'Another Item', order: 2, deleted: false, ... },
+  ]);
+}
+```
+
+### Generated Files
+The `stellar-engine install pwa` scaffolding generates:
+- `src/lib/demo/config.ts` — DemoConfig with mock profile
+- `src/lib/demo/mockData.ts` — Stub seedData function
+- `src/routes/demo/+page.svelte` — Demo landing page

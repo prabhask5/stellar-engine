@@ -35,6 +35,7 @@ import { resetSingleUserRemote } from './singleUser';
 import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
+import { isDemoMode } from '../demo';
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -66,6 +67,10 @@ import { debugLog, debugWarn, debugError } from '../debug';
  * @see {@link AuthStateResult} for the return type shape.
  */
 export async function resolveAuthState() {
+    /* Demo mode short-circuit: skip all real auth resolution. */
+    if (isDemoMode()) {
+        return { session: null, authMode: 'demo', offlineProfile: null, singleUserSetUp: true };
+    }
     try {
         /* Ensure DB is open and upgraded before any IndexedDB access.
            This is critical during cold start when the DB may still be initializing. */

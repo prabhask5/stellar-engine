@@ -25,10 +25,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import type { SingleUserGateType } from './types';
+import type { DemoConfig } from './demo';
 import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
+import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
 import { createDatabase, _setManagedDb, type DatabaseConfig } from './database';
 import { snakeToCamel } from './utils';
 
@@ -110,6 +112,15 @@ export interface SyncEngineConfig {
   visibilitySyncMinAwayMs?: number;
   /** Minimum time (ms) between online-reconnect syncs to avoid duplicate traffic. Default: 120000 (2 min). */
   onlineReconnectCooldownMs?: number;
+
+  /**
+   * Demo mode configuration. When provided, enables the demo mode system.
+   * In demo mode, the app uses a separate sandboxed Dexie database, makes
+   * zero Supabase connections, and seeds mock data on each page load.
+   *
+   * @see {@link DemoConfig} for the configuration shape
+   */
+  demo?: DemoConfig;
 }
 
 /**
@@ -185,6 +196,17 @@ export function initEngine(config: SyncEngineConfig): void {
     _setDeviceIdPrefix(config.prefix);
     _setClientPrefix(config.prefix);
     _setConfigPrefix(config.prefix);
+    _setDemoPrefix(config.prefix);
+  }
+
+  /* Register demo config if provided. */
+  if (config.demo) {
+    registerDemoConfig(config.demo);
+  }
+
+  /* If demo mode is active, switch to a separate sandboxed database. */
+  if (isDemoMode() && config.database) {
+    config.database = { ...config.database, name: config.database.name + '_demo' };
   }
 
   /* Handle database creation — either managed or provided. */

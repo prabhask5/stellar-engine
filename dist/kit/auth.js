@@ -55,7 +55,10 @@ import { authState } from '../stores/authState.js';
 export function hydrateAuthState(layoutData) {
     /* Supabase mode requires both the mode flag AND a valid session object;
        if the session is null the user has been logged out server-side. */
-    if (layoutData.authMode === 'supabase' && layoutData.session) {
+    if (layoutData.authMode === 'demo') {
+        authState.setDemoAuth();
+    }
+    else if (layoutData.authMode === 'supabase' && layoutData.session) {
         authState.setSupabaseAuth(layoutData.session);
     }
     else if (layoutData.authMode === 'offline' && layoutData.offlineProfile) {

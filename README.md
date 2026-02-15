@@ -439,6 +439,47 @@ The `UpdatePrompt` component is **not** shipped as a stellar-engine export. Inst
 - **Personal finance trackers** -- numeric merge fields handle concurrent balance adjustments across devices.
 - **File and asset management UIs** -- fractional ordering keeps drag-and-drop sort order consistent without rewriting every row.
 
+## Demo Mode
+
+stellar-engine includes a built-in demo mode that provides a completely isolated sandbox for consumer apps. When active:
+
+- **Separate database**: Uses `${name}_demo` IndexedDB — the real DB is never opened
+- **No Supabase**: Zero network requests to the backend
+- **Mock auth**: `authMode === 'demo'` — protected routes work with mock data only
+- **Auto-seeded**: Consumer's `seedData(db)` populates the demo DB on each page load
+- **Full isolation**: Page reload required to enter/exit (complete engine teardown)
+
+### Quick Start
+
+1. Define a `DemoConfig` with mock data and profile:
+
+```ts
+import type { DemoConfig } from '@prabhask5/stellar-engine';
+
+const demoConfig: DemoConfig = {
+  seedData: async (db) => {
+    await db.table('items').bulkPut([{ id: '1', name: 'Sample', ... }]);
+  },
+  mockProfile: { email: 'demo@example.com', firstName: 'Demo', lastName: 'User' },
+};
+```
+
+2. Pass it to `initEngine()`:
+
+```ts
+initEngine({ ..., demo: demoConfig });
+```
+
+3. Toggle demo mode:
+
+```ts
+import { setDemoMode } from '@prabhask5/stellar-engine';
+setDemoMode(true);
+window.location.href = '/'; // Full reload required
+```
+
+The `stellar-engine install pwa` scaffolding generates demo files automatically.
+
 ## License
 
 Private -- not yet published under an open-source license.

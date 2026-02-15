@@ -198,6 +198,16 @@ export { getDiagnostics, getSyncDiagnostics, getRealtimeDiagnostics, getQueueDia
 // - `triggerLocalAnimation` — manually fires the animation for local feedback.
 export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './actions/remoteChange';
 // =============================================================================
+//  Demo Mode
+// =============================================================================
+// Demo mode provides a completely isolated sandbox for consumer apps:
+// - `isDemoMode` — checks whether the app is running in demo mode.
+// - `setDemoMode` — activates or deactivates demo mode (requires page reload).
+// - `seedDemoData` — seeds the demo database with mock data (idempotent).
+// - `cleanupDemoDatabase` — deletes the demo database entirely.
+// - `DemoConfig` — configuration interface for demo mode.
+export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from './demo';
+// =============================================================================
 //  Supabase Credential Validation (Server-Side)
 // =============================================================================
 // Server-side utilities for validating Supabase credentials and database

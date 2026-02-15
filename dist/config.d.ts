@@ -24,6 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import type { SingleUserGateType } from './types';
+import type { DemoConfig } from './demo';
 import { type DatabaseConfig } from './database';
 /**
  * Top-level configuration for the sync engine.
@@ -95,6 +96,14 @@ export interface SyncEngineConfig {
     visibilitySyncMinAwayMs?: number;
     /** Minimum time (ms) between online-reconnect syncs to avoid duplicate traffic. Default: 120000 (2 min). */
     onlineReconnectCooldownMs?: number;
+    /**
+     * Demo mode configuration. When provided, enables the demo mode system.
+     * In demo mode, the app uses a separate sandboxed Dexie database, makes
+     * zero Supabase connections, and seeds mock data on each page load.
+     *
+     * @see {@link DemoConfig} for the configuration shape
+     */
+    demo?: DemoConfig;
 }
 /**
  * Per-table sync configuration.

@@ -33,6 +33,7 @@ import { initConfig, getConfig } from '../runtime/runtimeConfig.js';
 import { resolveAuthState } from '../auth/resolveAuthState.js';
 import { startSyncEngine } from '../engine.js';
 import { getValidSession } from '../supabase/auth.js';
+import { isDemoMode, seedDemoData } from '../demo.js';
 import type { AuthStateResult } from '../auth/resolveAuthState.js';
 
 // =============================================================================
@@ -133,20 +134,27 @@ export async function resolveRootLayout(
 
   /* No config yet — this is a first-time user. Return blank state so the
      layout can detect `singleUserSetUp === false` and redirect to /setup.
-     We skip the redirect if already on /setup to avoid an infinite loop. */
-  if (!config && url.pathname !== '/setup') {
+     We skip the redirect if already on /setup to avoid an infinite loop.
+     Exception: demo mode works without runtime config (no Supabase needed). */
+  if (!config && !isDemoMode() && url.pathname !== '/setup') {
     return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
   }
 
   /* Still on setup page with no config — return blank state without
      redirecting, allowing the setup wizard to render normally. */
-  if (!config) {
+  if (!config && !isDemoMode()) {
     return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
   }
 
-  /* Resolve auth — determines Supabase / offline / none based on the
+  /* Resolve auth — determines Supabase / offline / demo / none based on the
      stored runtime config and available credentials. */
   const result = await resolveAuthState();
+
+  /* Demo mode: seed mock data (idempotent per page load) and skip sync. */
+  if (result.authMode === 'demo') {
+    await seedDemoData();
+    return result;
+  }
 
   /* Start sync engine only when the user is actually authenticated;
      the engine requires auth context to connect to the remote database
@@ -255,6 +263,11 @@ export async function resolveSetupAccess(): Promise<{
   data: SetupAccessData;
   redirectUrl: string | null;
 }> {
+  /* Demo mode — grant access without auth checks. */
+  if (isDemoMode()) {
+    return { data: { isFirstSetup: false }, redirectUrl: null };
+  }
+
   /* No config exists — this is the first-time setup, grant public access
      so the wizard can run without requiring authentication. */
   if (!getConfig()) {

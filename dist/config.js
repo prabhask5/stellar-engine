@@ -24,6 +24,7 @@ import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
+import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
 import { createDatabase, _setManagedDb } from './database';
 import { snakeToCamel } from './utils';
 // =============================================================================
@@ -62,6 +63,15 @@ export function initEngine(config) {
         _setDeviceIdPrefix(config.prefix);
         _setClientPrefix(config.prefix);
         _setConfigPrefix(config.prefix);
+        _setDemoPrefix(config.prefix);
+    }
+    /* Register demo config if provided. */
+    if (config.demo) {
+        registerDemoConfig(config.demo);
+    }
+    /* If demo mode is active, switch to a separate sandboxed database. */
+    if (isDemoMode() && config.database) {
+        config.database = { ...config.database, name: config.database.name + '_demo' };
     }
     /* Handle database creation — either managed or provided. */
     if (config.database) {

@@ -34,6 +34,7 @@ import { markEntityModified, scheduleSyncPush } from './engine';
 import { generateId, now } from './utils';
 import { debugError } from './debug';
 import { supabase } from './supabase/client';
+import { isDemoMode } from './demo';
 // =============================================================================
 // HELPERS
 // =============================================================================
@@ -411,8 +412,11 @@ export async function engineGet(table, id, opts) {
     if (local)
         return local;
     /* Remote fallback: only attempted when explicitly opted in AND the browser
-       reports online status. This avoids unnecessary network errors in offline mode. */
-    if (opts?.remoteFallback && typeof navigator !== 'undefined' && navigator.onLine) {
+       reports online status. Skipped in demo mode (sandboxed, no Supabase). */
+    if (opts?.remoteFallback &&
+        !isDemoMode() &&
+        typeof navigator !== 'undefined' &&
+        navigator.onLine) {
         try {
             const columns = getTableColumns(table);
             const { data, error } = await supabase
@@ -476,9 +480,10 @@ export async function engineGetAll(table, opts) {
     }
     /* Remote fallback only fires when the local table is completely empty.
        This handles the "first device" or "fresh install" scenario where no
-       data has been synced down yet. */
+       data has been synced down yet. Skipped in demo mode (sandboxed). */
     if (results.length === 0 &&
         opts?.remoteFallback &&
+        !isDemoMode() &&
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
@@ -542,6 +547,7 @@ export async function engineQuery(table, index, value, opts) {
         .toArray();
     if (results.length === 0 &&
         opts?.remoteFallback &&
+        !isDemoMode() &&
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
@@ -602,6 +608,7 @@ export async function engineQueryRange(table, index, lower, upper, opts) {
     let results = await db.table(dexieTable).where(index).between(lower, upper, true, true).toArray();
     if (results.length === 0 &&
         opts?.remoteFallback &&
+        !isDemoMode() &&
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
@@ -685,8 +692,9 @@ export async function engineGetOrCreate(table, index, value, defaults, opts) {
     const existing = localResults.find((r) => !r.deleted);
     if (existing)
         return existing;
-    /* Step 2: Check remote if requested -- prevents duplicate creation across devices. */
-    if (opts?.checkRemote && typeof navigator !== 'undefined' && navigator.onLine) {
+    /* Step 2: Check remote if requested -- prevents duplicate creation across devices.
+       Skipped in demo mode (sandboxed, no Supabase). */
+    if (opts?.checkRemote && !isDemoMode() && typeof navigator !== 'undefined' && navigator.onLine) {
         try {
             const columns = getTableColumns(table);
             const { data } = await supabase

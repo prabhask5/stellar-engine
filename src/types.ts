@@ -174,9 +174,10 @@ export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
  *
  * - `'supabase'` — Standard Supabase email/password or OAuth auth
  * - `'offline'`  — Using cached credentials (device is offline)
+ * - `'demo'`     — Demo mode with sandboxed DB and mock data (no real auth)
  * - `'none'`     — No active authentication
  */
-export type AuthMode = 'supabase' | 'offline' | 'none';
+export type AuthMode = 'supabase' | 'offline' | 'demo' | 'none';
 
 // =============================================================================
 // Single-User Authentication Types

@@ -858,3 +858,148 @@ export async function engineGetOrCreate(
 
   return payload;
 }
+
+// =============================================================================
+// QUERY HELPERS
+// =============================================================================
+
+/**
+ * Fetch all non-deleted records from a table, sorted by `order`.
+ *
+ * A convenience wrapper around {@link engineGetAll} that applies the two most
+ * common post-processing steps: filtering out soft-deleted records and sorting
+ * by the `order` field. This eliminates the repetitive
+ * `.filter(i => !i.deleted).sort(...)` pattern from every query function.
+ *
+ * @typeParam T - The entity type (must have at least `deleted` and `order` fields).
+ * @param table - The Supabase table name.
+ * @param opts  - Optional configuration.
+ * @param opts.remoteFallback - If `true`, fall back to Supabase when the local
+ *                              table is empty. Defaults to `false`.
+ * @param opts.orderBy        - A Dexie-indexed field to pre-sort by before
+ *                              filtering. Defaults to `undefined`.
+ * @returns An array of non-deleted entity records sorted by `order`.
+ *
+ * @example
+ * ```ts
+ * import { queryAll } from '@prabhask5/stellar-engine/data';
+ *
+ * const categories = await queryAll<TaskCategory>('task_categories');
+ * // Returns only non-deleted records, sorted by order ascending
+ * ```
+ *
+ * @see {@link engineGetAll} for the underlying query
+ */
+export async function queryAll<T extends Record<string, unknown>>(
+  table: string,
+  opts?: { remoteFallback?: boolean; orderBy?: string }
+): Promise<T[]> {
+  const results = await engineGetAll(table, opts);
+  return results
+    .filter((item) => !item.deleted)
+    .sort((a, b) => ((a.order as number) ?? 0) - ((b.order as number) ?? 0)) as T[];
+}
+
+/**
+ * Fetch a single non-deleted record by ID, or `null`.
+ *
+ * A convenience wrapper around {@link engineGet} that returns `null` if the
+ * record exists but is soft-deleted. This prevents callers from accidentally
+ * displaying tombstoned entities in detail views.
+ *
+ * @typeParam T - The entity type.
+ * @param table - The Supabase table name.
+ * @param id    - The primary key of the entity to retrieve.
+ * @param opts  - Optional configuration.
+ * @param opts.remoteFallback - If `true`, fall back to Supabase when the entity
+ *                              is not found locally. Defaults to `false`.
+ * @returns The entity record, or `null` if not found or soft-deleted.
+ *
+ * @example
+ * ```ts
+ * import { queryOne } from '@prabhask5/stellar-engine/data';
+ *
+ * const task = await queryOne<Task>('tasks', taskId);
+ * if (!task) console.log('Not found or deleted');
+ * ```
+ *
+ * @see {@link engineGet} for the underlying query
+ */
+export async function queryOne<T extends Record<string, unknown>>(
+  table: string,
+  id: string,
+  opts?: { remoteFallback?: boolean }
+): Promise<T | null> {
+  const record = await engineGet(table, id, opts);
+  if (!record || record.deleted) return null;
+  return record as T;
+}
+
+// =============================================================================
+// REPOSITORY HELPERS
+// =============================================================================
+
+/**
+ * Update just the `order` field on any entity.
+ *
+ * A thin wrapper around {@link engineUpdate} for the common reorder operation.
+ * Consumer apps typically have identical `reorder` functions across every
+ * repository; this generic version eliminates that duplication.
+ *
+ * @typeParam T - The entity type.
+ * @param table    - The Supabase table name.
+ * @param id       - The primary key of the entity to reorder.
+ * @param newOrder - The new order value.
+ * @returns The updated entity, or `undefined` if not found.
+ *
+ * @example
+ * ```ts
+ * import { reorderEntity } from '@prabhask5/stellar-engine/data';
+ *
+ * const updated = await reorderEntity<Task>('tasks', taskId, 2.5);
+ * ```
+ *
+ * @see {@link engineUpdate} for the underlying update
+ */
+export async function reorderEntity<T extends Record<string, unknown>>(
+  table: string,
+  id: string,
+  newOrder: number
+): Promise<T | undefined> {
+  const result = await engineUpdate(table, id, { order: newOrder });
+  return result as T | undefined;
+}
+
+/**
+ * Compute the next prepend-order value for inserting at the top of a list.
+ *
+ * Queries all non-deleted records matching the given index/value pair, finds
+ * the minimum `order` value, and returns `min - 1`. If no records exist,
+ * returns `0`. This is the standard pattern for "add to top" operations.
+ *
+ * @param table      - The Supabase table name.
+ * @param indexField - The indexed field to filter on (e.g., `'user_id'`).
+ * @param indexValue - The value to match against the index.
+ * @returns The computed order value for prepending.
+ *
+ * @example
+ * ```ts
+ * import { prependOrder } from '@prabhask5/stellar-engine/data';
+ *
+ * const order = await prependOrder('tasks', 'user_id', currentUserId);
+ * await engineCreate('tasks', { ..., order });
+ * ```
+ *
+ * @see {@link engineQuery} for the underlying query
+ */
+export async function prependOrder(
+  table: string,
+  indexField: string,
+  indexValue: string
+): Promise<number> {
+  const records = await engineQuery(table, indexField, indexValue);
+  const active = records.filter((r) => !r.deleted);
+  if (active.length === 0) return 0;
+  const minOrder = Math.min(...active.map((r) => (r.order as number) ?? 0));
+  return minOrder - 1;
+}

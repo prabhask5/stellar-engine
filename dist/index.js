@@ -75,6 +75,15 @@ export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncre
 // - `engineGetOrCreate` — retrieves an entity or creates it with defaults.
 export { engineGet, engineGetAll, engineQuery, engineQueryRange, engineGetOrCreate } from './data';
 // =============================================================================
+//  Query & Repository Helpers
+// =============================================================================
+// Convenience wrappers that eliminate repetitive query and repository patterns:
+// - `queryAll` — fetches all non-deleted records, sorted by order.
+// - `queryOne` — fetches a single non-deleted record by ID.
+// - `reorderEntity` — updates just the order field on any entity.
+// - `prependOrder` — computes the next prepend-order value.
+export { queryAll, queryOne, reorderEntity, prependOrder } from './data';
+// =============================================================================
 //  Supabase Auth — Core Authentication Utilities
 // =============================================================================
 // Sign-out with full teardown, session management, profile CRUD, email
@@ -129,6 +138,12 @@ export { syncStatusStore } from './stores/sync';
 export { remoteChangesStore } from './stores/remoteChanges';
 export { isOnline } from './stores/network';
 export { authState, isAuthenticated, userDisplayInfo } from './stores/authState';
+// =============================================================================
+//  Store Factories
+// =============================================================================
+// Generic factory functions for creating reactive stores with built-in loading
+// state and sync-complete auto-refresh.
+export { createCollectionStore, createDetailStore } from './stores/factories';
 // =============================================================================
 //  Realtime Event Subscriptions
 // =============================================================================

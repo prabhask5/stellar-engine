@@ -12,7 +12,8 @@
 9. [Egress Optimization](#9-egress-optimization)
 10. [Data Flow Diagrams](#10-data-flow-diagrams)
 11. [Debug & Observability](#11-debug--observability)
-12. [Install PWA Command & Scaffolding](#12-install-pwa-command--scaffolding)
+12. [Store & Data Factories](#12-store--data-factories)
+13. [Install PWA Command & Scaffolding](#13-install-pwa-command--scaffolding)
 
 ---
 
@@ -1345,11 +1346,55 @@ Total egress: 45.23 KB (312 records)
 | Debug | `src/debug.ts` | Conditional debug logging system |
 | Config | `src/config.ts` | Engine configuration and constants |
 | Utils | `src/utils.ts` | Shared utility functions |
+| Store Factories | `src/stores/factories.ts` | Generic collection/detail store factories |
 | Entry Point | `src/index.ts` | Public API and exports |
 
 ---
 
-## 12. Install PWA Command & Scaffolding
+## 12. Store & Data Factories
+
+The engine provides generic factory functions and helpers that eliminate repetitive boilerplate in consumer applications.
+
+### 12.1 Store Factories
+
+**File**: `src/stores/factories.ts`
+
+Consumer apps typically create ~10 collection stores and ~4 detail stores, each repeating the same ~50-line scaffolding: writable creation, loading state management, sync-complete listener registration, and refresh logic. The store factories extract this pattern:
+
+```
++-----------------------------------------+     +----------------------------------+
+|  createCollectionStore<T>(config)       |     |  Consumer Store                  |
+|                                         |     |                                  |
+|  Handles automatically:                 |     |  Only needs to define:           |
+|  - writable([]) + loading writable      |---->|  - load: () => queryAll(...)     |
+|  - loading.set(true/false)              |     |  - Custom methods (create,       |
+|  - onSyncComplete auto-refresh          |     |    update, delete, reorder)      |
+|  - typeof window guard                  |     |                                  |
+|  - refresh() without loading toggle     |     |  ~50% less code per store        |
+|  - mutate() for optimistic updates      |     |                                  |
++-----------------------------------------+     +----------------------------------+
+```
+
+The `createDetailStore<T>(config)` follows the same pattern for single-entity views, adding ID tracking so the sync-complete listener refreshes the correct entity.
+
+### 12.2 Query & Repository Helpers
+
+**File**: `src/data.ts` (added to the existing data module)
+
+Four helper functions eliminate the most common repetitive patterns in query and repository code:
+
+| Helper | Pattern Eliminated |
+|--------|--------------------|
+| `queryAll<T>(table)` | `engineGetAll(table).filter(i => !i.deleted).sort((a,b) => a.order - b.order)` |
+| `queryOne<T>(table, id)` | `engineGet(table, id)` + null-if-deleted guard |
+| `reorderEntity<T>(table, id, order)` | `engineUpdate(table, id, { order })` with cast |
+| `prependOrder(table, index, value)` | `engineQuery` + filter deleted + min computation |
+
+These are intentionally thin wrappers — they compose existing engine functions rather than introducing new data access paths.
+
+---
+
+## 13. Install PWA Command & Scaffolding
 
 **File**: `src/bin/install-pwa.ts`
 

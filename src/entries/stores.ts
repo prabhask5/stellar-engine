@@ -59,3 +59,18 @@ export { authState, isAuthenticated, userDisplayInfo } from '../stores/authState
 
 export { onSyncComplete } from '../engine';
 export { onRealtimeDataUpdate } from '../realtime';
+
+// =============================================================================
+//  Store Factories
+// =============================================================================
+// Generic factory functions that create Svelte-compatible reactive stores for
+// common data-loading patterns. These eliminate the repetitive loading-state /
+// sync-listener / refresh boilerplate from every collection or detail store.
+
+export { createCollectionStore, createDetailStore } from '../stores/factories';
+export type {
+  CollectionStore,
+  CollectionStoreConfig,
+  DetailStore,
+  DetailStoreConfig
+} from '../stores/factories';

@@ -17,4 +17,6 @@ export { isOnline } from '../stores/network';
 export { authState, isAuthenticated, userDisplayInfo } from '../stores/authState';
 export { onSyncComplete } from '../engine';
 export { onRealtimeDataUpdate } from '../realtime';
+export { createCollectionStore, createDetailStore } from '../stores/factories';
+export type { CollectionStore, CollectionStoreConfig, DetailStore, DetailStoreConfig } from '../stores/factories';
 //# sourceMappingURL=stores.d.ts.map

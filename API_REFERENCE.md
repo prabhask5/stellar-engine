@@ -7,9 +7,9 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 | Subpath | Contents |
 |---|---|
 | `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `resetDatabase`, `validateSupabaseCredentials` |
-| `@prabhask5/stellar-engine/data` | CRUD + query operations |
+| `@prabhask5/stellar-engine/data` | CRUD + query operations + query/repo helpers |
 | `@prabhask5/stellar-engine/auth` | Authentication functions, display utilities (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`) |
-| `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions |
+| `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions + store factories |
 | `@prabhask5/stellar-engine/types` | All type exports (including `Session` from Supabase) |
 | `@prabhask5/stellar-engine/utils` | Utility functions + debug (`snakeToCamel`, etc.) |
 | `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
@@ -30,6 +30,9 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Credential Validation](#credential-validation)
 - [CRUD Operations](#crud-operations)
 - [Query Operations](#query-operations)
+- [Query Helpers](#query-helpers)
+- [Repository Helpers](#repository-helpers)
+- [Store Factories](#store-factories)
 - [Authentication](#authentication)
 - [Auth Lifecycle](#auth-lifecycle)
 - [Auth Display Utilities](#auth-display-utilities)
@@ -514,6 +517,225 @@ async function engineGetOrCreate(
 | `opts.checkRemote` | `boolean` | If true, check Supabase before creating locally |
 
 **Returns:** The existing or newly created entity.
+
+---
+
+## Query Helpers
+
+Convenience wrappers that apply the most common post-processing to engine queries: filtering out soft-deleted records and sorting by `order`.
+
+### `queryAll<T>(table, opts?)`
+
+Fetch all non-deleted records from a table, sorted by `order`.
+
+```ts
+async function queryAll<T extends Record<string, unknown>>(
+  table: string,
+  opts?: { remoteFallback?: boolean; orderBy?: string }
+): Promise<T[]>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | `string` | Supabase table name |
+| `opts.remoteFallback` | `boolean` | If true, fetch from Supabase when local is empty |
+| `opts.orderBy` | `string` | Dexie index to pre-sort by before filtering |
+
+**Returns:** Non-deleted entity records sorted by `order` ascending.
+
+**Example:**
+
+```ts
+import { queryAll } from '@prabhask5/stellar-engine/data';
+
+const categories = await queryAll<TaskCategory>('task_categories');
+```
+
+### `queryOne<T>(table, id, opts?)`
+
+Fetch a single non-deleted record by ID, or `null`.
+
+```ts
+async function queryOne<T extends Record<string, unknown>>(
+  table: string,
+  id: string,
+  opts?: { remoteFallback?: boolean }
+): Promise<T | null>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | `string` | Supabase table name |
+| `id` | `string` | Entity ID |
+| `opts.remoteFallback` | `boolean` | If true, fetch from Supabase when not found locally |
+
+**Returns:** The entity record, or `null` if not found or soft-deleted.
+
+**Example:**
+
+```ts
+import { queryOne } from '@prabhask5/stellar-engine/data';
+
+const task = await queryOne<Task>('tasks', taskId);
+if (!task) console.log('Not found or deleted');
+```
+
+---
+
+## Repository Helpers
+
+Generic functions for common repository operations across any entity table.
+
+### `reorderEntity<T>(table, id, newOrder)`
+
+Update just the `order` field on any entity.
+
+```ts
+async function reorderEntity<T extends Record<string, unknown>>(
+  table: string,
+  id: string,
+  newOrder: number
+): Promise<T | undefined>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | `string` | Supabase table name |
+| `id` | `string` | Entity ID |
+| `newOrder` | `number` | The new order value |
+
+**Returns:** The updated entity, or `undefined` if not found.
+
+**Example:**
+
+```ts
+import { reorderEntity } from '@prabhask5/stellar-engine/data';
+
+const updated = await reorderEntity<Task>('tasks', taskId, 2.5);
+```
+
+### `prependOrder(table, indexField, indexValue)`
+
+Compute the next prepend-order value for inserting at the top of a list. Returns `min(existing orders) - 1`, or `0` if no records exist.
+
+```ts
+async function prependOrder(
+  table: string,
+  indexField: string,
+  indexValue: string
+): Promise<number>
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `table` | `string` | Supabase table name |
+| `indexField` | `string` | Indexed field to filter on (e.g., `'user_id'`) |
+| `indexValue` | `string` | Value to match against the index |
+
+**Returns:** The computed order value for prepending.
+
+**Example:**
+
+```ts
+import { prependOrder, engineCreate } from '@prabhask5/stellar-engine/data';
+
+const order = await prependOrder('tasks', 'user_id', currentUserId);
+await engineCreate('tasks', { user_id: currentUserId, name: 'New Task', order });
+```
+
+---
+
+## Store Factories
+
+Generic factory functions that create Svelte-compatible reactive stores with built-in loading state management and sync-complete auto-refresh. These eliminate the ~50 lines of boilerplate that every collection or detail store typically requires.
+
+> **Subpath:** `@prabhask5/stellar-engine/stores`
+
+### `createCollectionStore<T>(config)`
+
+Create a reactive store managing a collection of entities.
+
+```ts
+function createCollectionStore<T>(config: CollectionStoreConfig<T>): CollectionStore<T>
+```
+
+**`CollectionStoreConfig<T>`:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `load` | `() => Promise<T[]>` | Async function that fetches the full collection |
+
+**`CollectionStore<T>` methods:**
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `subscribe` | `(run) => unsubscribe` | Standard Svelte store contract |
+| `loading` | `{ subscribe }` | Read-only boolean loading sub-store |
+| `load` | `() => Promise<void>` | Fetch data, set loading state, register sync listener |
+| `refresh` | `() => Promise<void>` | Re-fetch without toggling loading flag |
+| `set` | `(data: T[]) => void` | Replace data directly |
+| `mutate` | `(fn: (items: T[]) => T[]) => void` | Optimistic update |
+
+**Example:**
+
+```ts
+import { createCollectionStore } from '@prabhask5/stellar-engine/stores';
+import { queryAll } from '@prabhask5/stellar-engine/data';
+
+function createTaskCategoriesStore() {
+  const store = createCollectionStore<TaskCategory>({
+    load: () => queryAll<TaskCategory>('task_categories'),
+  });
+
+  return {
+    ...store,
+    create: async (name: string, userId: string) => {
+      await engineCreate('task_categories', { name, user_id: userId });
+      await store.refresh();
+    },
+  };
+}
+```
+
+### `createDetailStore<T>(config)`
+
+Create a reactive store managing a single entity.
+
+```ts
+function createDetailStore<T>(config: DetailStoreConfig<T>): DetailStore<T>
+```
+
+**`DetailStoreConfig<T>`:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `load` | `(id: string) => Promise<T \| null>` | Async function that fetches a single entity by ID |
+
+**`DetailStore<T>` methods:**
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `subscribe` | `(run) => unsubscribe` | Standard Svelte store contract |
+| `loading` | `{ subscribe }` | Read-only boolean loading sub-store |
+| `load` | `(id: string) => Promise<void>` | Fetch entity by ID, register sync listener |
+| `clear` | `() => void` | Reset to null, clear tracked ID |
+| `set` | `(data: T \| null) => void` | Replace data directly |
+| `getCurrentId` | `() => string \| null` | Get the currently tracked entity ID |
+
+**Example:**
+
+```ts
+import { createDetailStore } from '@prabhask5/stellar-engine/stores';
+import { queryOne } from '@prabhask5/stellar-engine/data';
+
+const taskDetail = createDetailStore<Task>({
+  load: (id) => queryOne<Task>('tasks', id),
+});
+
+// In your component:
+await taskDetail.load(taskId);
+// $taskDetail is Task | null
+```
 
 ---
 

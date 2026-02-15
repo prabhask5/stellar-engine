@@ -13,19 +13,22 @@
  *
  * Files are written non-destructively: existing files are skipped, not overwritten.
  *
+ * Launches an interactive walkthrough when invoked as `stellar-engine install pwa`.
+ *
  * @example
  * ```bash
- * stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]
+ * stellar-engine install pwa
  * ```
  *
  * @see {@link main} for the entry point
- * @see {@link parseArgs} for CLI argument parsing
+ * @see {@link runInteractiveSetup} for the interactive walkthrough
  * @see {@link writeIfMissing} for the non-destructive file write strategy
  */
 
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
+import { createInterface } from 'readline';
 
 // =============================================================================
 //                                  TYPES
@@ -65,17 +68,19 @@ interface InstallOptions {
  * @param content - The file content to write.
  * @param createdFiles - Accumulator for newly-created file paths (relative).
  * @param skippedFiles - Accumulator for skipped file paths (relative).
+ * @param quiet - When `true`, suppresses per-file console output (used during animated progress).
  */
 function writeIfMissing(
   filePath: string,
   content: string,
   createdFiles: string[],
-  skippedFiles: string[]
+  skippedFiles: string[],
+  quiet = false
 ): void {
   const relPath = filePath.replace(process.cwd() + '/', '');
   if (existsSync(filePath)) {
     skippedFiles.push(relPath);
-    console.log(`  [skip] ${relPath} already exists`);
+    if (!quiet) console.log(`  [skip] ${relPath} already exists`);
   } else {
     const dir = filePath.substring(0, filePath.lastIndexOf('/'));
     if (!existsSync(dir)) {
@@ -83,71 +88,308 @@ function writeIfMissing(
     }
     writeFileSync(filePath, content, 'utf-8');
     createdFiles.push(relPath);
-    console.log(`  [write] ${relPath}`);
+    if (!quiet) console.log(`  [write] ${relPath}`);
   }
 }
 
 // =============================================================================
-//                              ARG PARSING
+//                           ANSI STYLE HELPERS
+// =============================================================================
+
+/** Wrap text in ANSI bold. */
+const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
+
+/** Wrap text in ANSI dim. */
+const dim = (s: string): string => `\x1b[2m${s}\x1b[22m`;
+
+/** Wrap text in ANSI cyan. */
+const cyan = (s: string): string => `\x1b[36m${s}\x1b[39m`;
+
+/** Wrap text in ANSI green. */
+const green = (s: string): string => `\x1b[32m${s}\x1b[39m`;
+
+/** Wrap text in ANSI yellow. */
+const yellow = (s: string): string => `\x1b[33m${s}\x1b[39m`;
+
+/** Wrap text in ANSI red. */
+const red = (s: string): string => `\x1b[31m${s}\x1b[39m`;
+
+/**
+ * Draw a box around lines of text using Unicode box-drawing characters.
+ *
+ * @param lines - The lines of text to display inside the box.
+ * @param style - `"double"` for `╔═╗║╚═╝`, `"single"` for `┌─┐│└─┘`.
+ * @param title - Optional title to display in the top border.
+ * @returns The formatted box string with leading two-space indent.
+ */
+function box(lines: string[], style: 'double' | 'single', title?: string): string {
+  const [tl, h, tr, v, bl, br] =
+    style === 'double'
+      ? ['\u2554', '\u2550', '\u2557', '\u2551', '\u255a', '\u255d']
+      : ['\u250c', '\u2500', '\u2510', '\u2502', '\u2514', '\u2518'];
+
+  const width = Math.max(...lines.map((l) => l.length), (title ?? '').length + 4, 50);
+
+  let top: string;
+  if (title) {
+    const titleStr = `${h} ${title} `;
+    top = `  ${tl}${titleStr}${h.repeat(width - titleStr.length)}${tr}`;
+  } else {
+    top = `  ${tl}${h.repeat(width)}${tr}`;
+  }
+
+  const mid = lines.map((l) => `  ${v} ${l.padEnd(width - 2)}${v}`).join('\n');
+  const bot = `  ${bl}${h.repeat(width)}${br}`;
+
+  return `${top}\n${mid}\n${bot}`;
+}
+
+/**
+ * Draw a double-bordered box with a header and body separated by a mid-rule.
+ *
+ * @param header - The header line(s) to display above the divider.
+ * @param body - The body lines to display below the divider.
+ * @returns The formatted box string with leading two-space indent.
+ */
+function doubleBoxWithHeader(header: string[], body: string[]): string {
+  const width = Math.max(...header.map((l) => l.length), ...body.map((l) => l.length), 50);
+
+  const top = `  \u2554${'═'.repeat(width)}\u2557`;
+  const headLines = header.map((l) => `  \u2551 ${l.padEnd(width - 2)}\u2551`).join('\n');
+  const mid = `  \u2560${'═'.repeat(width)}\u2563`;
+  const bodyLines = body.map((l) => `  \u2551 ${l.padEnd(width - 2)}\u2551`).join('\n');
+  const bot = `  \u255a${'═'.repeat(width)}\u255d`;
+
+  return `${top}\n${headLines}\n${mid}\n${bodyLines}\n${bot}`;
+}
+
+// =============================================================================
+//                              SPINNER
+// =============================================================================
+
+/** Braille spinner frames for animated progress. */
+const SPINNER_FRAMES = [
+  '\u280b',
+  '\u2819',
+  '\u2839',
+  '\u2838',
+  '\u283c',
+  '\u2834',
+  '\u2826',
+  '\u2827',
+  '\u2807',
+  '\u280f'
+];
+
+/**
+ * Create a terminal spinner that updates a single line in-place.
+ *
+ * @param text - Initial text to display beside the spinner.
+ * @returns An object with `update`, `succeed`, and `stop` methods.
+ */
+function createSpinner(text: string): {
+  update: (newText: string) => void;
+  succeed: (finalText: string) => void;
+  stop: () => void;
+} {
+  let frame = 0;
+  let current = text;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const render = (): void => {
+    const spinner = cyan(SPINNER_FRAMES[frame % SPINNER_FRAMES.length]);
+    process.stdout.write(`\r  ${spinner} ${current}`);
+    frame++;
+  };
+
+  timer = setInterval(render, 80);
+  render();
+
+  return {
+    update(newText: string): void {
+      current = newText;
+    },
+    succeed(finalText: string): void {
+      if (timer) clearInterval(timer);
+      timer = null;
+      process.stdout.write(`\r  ${green('\u2713')} ${finalText}\x1b[K\n`);
+    },
+    stop(): void {
+      if (timer) clearInterval(timer);
+      timer = null;
+      process.stdout.write('\x1b[K');
+    }
+  };
+}
+
+// =============================================================================
+//                         INTERACTIVE SETUP
 // =============================================================================
 
 /**
- * Parse command-line arguments into an {@link InstallOptions} object.
+ * Promisified readline question helper.
  *
- * Expects the format:
- *   `stellar-engine install pwa --name "..." --short_name "..." --prefix "..." [--description "..."]`
- *
- * Exits the process with a usage message if required arguments are missing.
- *
- * @param argv - The raw `process.argv` array.
- * @returns The parsed {@link InstallOptions}.
- *
- * @throws {SystemExit} Exits with code 1 if `--name`, `--short_name`, or `--prefix` are missing.
+ * @param rl - The readline interface.
+ * @param prompt - The prompt string to display.
+ * @returns The user's input string.
  */
-function parseArgs(argv: string[]): InstallOptions {
-  const args = argv.slice(2);
+function ask(rl: ReturnType<typeof createInterface>, prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(prompt, (answer) => resolve(answer));
+  });
+}
 
-  if (args[0] !== 'install' || args[1] !== 'pwa') {
-    console.error(
-      'Usage: stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]'
-    );
-    process.exit(1);
-  }
+/**
+ * Run the interactive setup walkthrough, collecting all required options
+ * from the user via sequential prompts.
+ *
+ * Displays a welcome banner, then prompts for App Name, Short Name, Prefix,
+ * and Description with inline validation. Shows a confirmation summary and
+ * asks the user to proceed before returning.
+ *
+ * @returns A promise that resolves with the validated {@link InstallOptions}.
+ *
+ * @throws {SystemExit} Exits with code 0 if the user declines to proceed.
+ */
+async function runInteractiveSetup(): Promise<InstallOptions> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
 
+  /* ── Welcome banner ── */
+  console.log();
+  console.log(
+    doubleBoxWithHeader(
+      [`       ${bold('\u2726 stellar-engine \u00b7 PWA scaffolder \u2726')}`],
+      [
+        'Creates a complete offline-first SvelteKit PWA ',
+        'with auth, sync, and service worker support.   '
+      ]
+    )
+  );
+  console.log();
+
+  /* ── App Name ── */
   let name = '';
-  let shortName = '';
-  let prefix = '';
-  let description = 'A self-hosted offline-first PWA';
-
-  for (let i = 2; i < args.length; i++) {
-    switch (args[i]) {
-      case '--name':
-        name = args[++i];
-        break;
-      case '--short_name':
-        shortName = args[++i];
-        break;
-      case '--prefix':
-        prefix = args[++i];
-        break;
-      case '--description':
-        description = args[++i];
-        break;
+  while (!name) {
+    console.log(
+      box(
+        [
+          'The full name of your application.             ',
+          'Used in the page title, README, and manifest.  ',
+          `Example: ${dim('"Stellar Planner"')}                       `
+        ],
+        'single',
+        'App Name'
+      )
+    );
+    const input = (await ask(rl, `  ${yellow('\u2192')} App name: `)).trim();
+    if (!input) {
+      console.log(red('  App name is required.\n'));
+    } else {
+      name = input;
     }
   }
+  console.log();
 
-  if (!name || !shortName || !prefix) {
-    console.error(
-      'Error: --name, --short_name, and --prefix are required.\n' +
-        'Usage: stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]'
+  /* ── Short Name ── */
+  let shortName = '';
+  while (!shortName) {
+    console.log(
+      box(
+        [
+          'A short label for the home screen and app bar. ',
+          'Must be under 12 characters.                   ',
+          `Example: ${dim('"Stellar"')}                               `
+        ],
+        'single',
+        'Short Name'
+      )
     );
-    process.exit(1);
+    const input = (await ask(rl, `  ${yellow('\u2192')} Short name: `)).trim();
+    if (!input) {
+      console.log(red('  Short name is required.\n'));
+    } else if (input.length >= 12) {
+      console.log(red('  Short name must be under 12 characters.\n'));
+    } else {
+      shortName = input;
+    }
   }
+  console.log();
+
+  /* ── Prefix ── */
+  const suggestedPrefix = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  let prefix = '';
+  while (!prefix) {
+    console.log(
+      box(
+        [
+          'Lowercase key used for localStorage, caches,   ',
+          'and the service worker scope.                   ',
+          'No spaces. Letters and numbers only.            ',
+          `Suggested: ${dim(`"${suggestedPrefix}"`)}${' '.repeat(Math.max(0, 36 - suggestedPrefix.length - 3))}`
+        ],
+        'single',
+        'Prefix'
+      )
+    );
+    const input = (
+      await ask(rl, `  ${yellow('\u2192')} Prefix ${dim(`(${suggestedPrefix})`)}: `)
+    ).trim();
+    const value = input || suggestedPrefix;
+    if (!/^[a-z][a-z0-9]*$/.test(value)) {
+      console.log(red('  Prefix must be lowercase, start with a letter, no spaces.\n'));
+    } else {
+      prefix = value;
+    }
+  }
+  console.log();
+
+  /* ── Description ── */
+  const defaultDesc = 'A self-hosted offline-first PWA';
+  console.log(
+    box(
+      [
+        'A brief description for meta tags and manifest. ',
+        `Press Enter to use the default.                 `,
+        `Default: ${dim(`"${defaultDesc}"`)}`
+      ],
+      'single',
+      'Description'
+    )
+  );
+  const descInput = (
+    await ask(rl, `  ${yellow('\u2192')} Description ${dim('(optional)')}: `)
+  ).trim();
+  const description = descInput || defaultDesc;
+  console.log();
 
   /* Derive kebab-case name for package.json from the full name */
   const kebabName = name.toLowerCase().replace(/\s+/g, '-');
+  const opts: InstallOptions = { name, shortName, prefix, description, kebabName };
 
-  return { name, shortName, prefix, description, kebabName };
+  /* ── Confirmation summary ── */
+  console.log(
+    box(
+      [
+        `${bold('Name:')}         ${opts.name}${' '.repeat(Math.max(0, 38 - opts.name.length))}`,
+        `${bold('Short name:')}   ${opts.shortName}${' '.repeat(Math.max(0, 38 - opts.shortName.length))}`,
+        `${bold('Prefix:')}       ${opts.prefix}${' '.repeat(Math.max(0, 38 - opts.prefix.length))}`,
+        `${bold('Description:')}  ${opts.description}${' '.repeat(Math.max(0, 38 - opts.description.length))}`
+      ],
+      'single',
+      'Configuration'
+    )
+  );
+  const proceed = (await ask(rl, `  Proceed? ${dim('(Y/n)')}: `)).trim().toLowerCase();
+  if (proceed === 'n' || proceed === 'no') {
+    console.log(dim('\n  Setup cancelled.\n'));
+    rl.close();
+    process.exit(0);
+  }
+
+  rl.close();
+  console.log();
+
+  return opts;
 }
 
 // =============================================================================
@@ -3991,45 +4233,131 @@ export type { SyncStatus, AuthMode, OfflineCredentials } from '@prabhask5/stella
 }
 
 // =============================================================================
+//                           COMMAND ROUTING
+// =============================================================================
+
+/**
+ * Available CLI commands. Add new entries here to register additional commands.
+ */
+const COMMANDS: { name: string; usage: string; description: string }[] = [
+  {
+    name: 'install pwa',
+    usage: 'stellar-engine install pwa',
+    description: 'Scaffold a complete offline-first SvelteKit PWA project'
+  }
+];
+
+/**
+ * Print the help screen listing all available commands.
+ */
+function printHelp(): void {
+  console.log();
+  console.log(
+    doubleBoxWithHeader(
+      [`          ${bold('\u2726 stellar-engine CLI \u2726')}            `],
+      ['Available commands:                              ']
+    )
+  );
+  console.log();
+  for (const cmd of COMMANDS) {
+    console.log(`  ${cyan(cmd.usage)}`);
+    console.log(`  ${dim(cmd.description)}`);
+    console.log();
+  }
+  console.log(`  Run a command to get started.\n`);
+}
+
+/**
+ * Route CLI arguments to the appropriate command handler.
+ * Prints help and exits if the command is not recognised.
+ */
+function routeCommand(): void {
+  const args = process.argv.slice(2);
+  const command = args.slice(0, 2).join(' ');
+
+  if (command === 'install pwa') {
+    main().catch((err) => {
+      console.error('Error:', err);
+      process.exit(1);
+    });
+    return;
+  }
+
+  /* Unrecognised command or no args — show help */
+  printHelp();
+  process.exit(args.length === 0 ? 0 : 1);
+}
+
+// =============================================================================
 //                              MAIN FUNCTION
 // =============================================================================
+
+/**
+ * Write a group of files quietly and return the count written.
+ *
+ * @param entries - Array of `[relativePath, content]` pairs.
+ * @param cwd - The current working directory.
+ * @param createdFiles - Accumulator for newly-created file paths.
+ * @param skippedFiles - Accumulator for skipped file paths.
+ * @returns The number of files in the group.
+ */
+function writeGroup(
+  entries: [string, string][],
+  cwd: string,
+  createdFiles: string[],
+  skippedFiles: string[]
+): number {
+  for (const [rel, content] of entries) {
+    writeIfMissing(join(cwd, rel), content, createdFiles, skippedFiles, true);
+  }
+  return entries.length;
+}
 
 /**
  * Main entry point for the CLI scaffolding tool.
  *
  * **Execution flow:**
- *   1. Parse CLI arguments into {@link InstallOptions}.
+ *   1. Run interactive walkthrough to collect {@link InstallOptions}.
  *   2. Write `package.json` (if missing).
  *   3. Run `npm install` to fetch dependencies.
- *   4. Write all template files (config, routes, components, assets, docs).
+ *   4. Write all template files by category with animated progress.
  *   5. Initialise Husky and write the pre-commit hook.
- *   6. Print a summary of created/skipped files and next steps.
+ *   6. Print a styled summary of created/skipped files and next steps.
  *
  * @returns A promise that resolves when scaffolding is complete.
  *
  * @throws {Error} If `npm install` or `npx husky init` fails.
  */
 async function main(): Promise<void> {
-  const opts = parseArgs(process.argv);
+  const opts = await runInteractiveSetup();
   const cwd = process.cwd();
-
-  console.log(`\n\u2728 stellar-engine install pwa\n   Creating ${opts.name}...\n`);
 
   const createdFiles: string[] = [];
   const skippedFiles: string[] = [];
 
   // 1. Write package.json
-  writeIfMissing(join(cwd, 'package.json'), generatePackageJson(opts), createdFiles, skippedFiles);
+  let sp = createSpinner('Writing package.json');
+  writeIfMissing(
+    join(cwd, 'package.json'),
+    generatePackageJson(opts),
+    createdFiles,
+    skippedFiles,
+    true
+  );
+  sp.succeed('Writing package.json');
 
   // 2. Run npm install
-  console.log('Installing dependencies...');
+  sp = createSpinner('Installing dependencies...');
+  sp.stop();
+  console.log(`  ${cyan(SPINNER_FRAMES[0])} Installing dependencies...\n`);
   execSync('npm install', { stdio: 'inherit', cwd });
+  console.log(`\n  ${green('\u2713')} Installing dependencies`);
 
-  // 3. Write all template files
+  // 3. Write all template files by category
   const firstLetter = opts.shortName.charAt(0).toUpperCase();
 
-  const files: [string, string][] = [
-    // Config files
+  /* ── Config files ── */
+  const configFiles: [string, string][] = [
     ['vite.config.ts', generateViteConfig(opts)],
     ['tsconfig.json', generateTsconfig()],
     ['svelte.config.js', generateSvelteConfig(opts)],
@@ -4037,17 +4365,26 @@ async function main(): Promise<void> {
     ['.prettierrc', generatePrettierrc()],
     ['.prettierignore', generatePrettierignore()],
     ['knip.json', generateKnipJson()],
-    ['.gitignore', generateGitignore()],
+    ['.gitignore', generateGitignore()]
+  ];
+  sp = createSpinner('Config files');
+  const configCount = writeGroup(configFiles, cwd, createdFiles, skippedFiles);
+  sp.succeed(`Config files               ${dim(`${configCount} files`)}`);
 
-    // Documentation
+  /* ── Documentation ── */
+  const docFiles: [string, string][] = [
     ['README.md', generateReadme(opts)],
     ['ARCHITECTURE.md', generateArchitecture(opts)],
-    ['FRAMEWORKS.md', generateFrameworks()],
+    ['FRAMEWORKS.md', generateFrameworks()]
+  ];
+  sp = createSpinner('Documentation');
+  const docCount = writeGroup(docFiles, cwd, createdFiles, skippedFiles);
+  sp.succeed(`Documentation              ${dim(`${docCount} files`)}`);
 
-    // Static assets
+  /* ── Static assets ── */
+  const staticFiles: [string, string][] = [
     ['static/manifest.json', generateManifest(opts)],
     ['static/offline.html', generateOfflineHtml(opts)],
-    // Placeholder icons
     ['static/icons/app.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
     ['static/icons/app-dark.svg', generatePlaceholderSvg('#1a1a2e', firstLetter)],
     ['static/icons/maskable.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
@@ -4055,20 +4392,26 @@ async function main(): Promise<void> {
     ['static/icons/monochrome.svg', generateMonochromeSvg(firstLetter)],
     ['static/icons/splash.svg', generateSplashSvg(opts.shortName)],
     ['static/icons/apple-touch.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
-
-    // Email placeholders
     ['static/change-email.html', generateEmailPlaceholder('Change Email')],
     ['static/device-verification-email.html', generateEmailPlaceholder('Device Verification')],
     ['static/signup-email.html', generateEmailPlaceholder('Signup Email')],
+    ['supabase-schema.sql', generateSupabaseSchema(opts)]
+  ];
+  sp = createSpinner('Static assets');
+  const staticCount = writeGroup(staticFiles, cwd, createdFiles, skippedFiles);
+  sp.succeed(`Static assets             ${dim(`${staticCount} files`)}`);
 
-    // Supabase schema
-    ['supabase-schema.sql', generateSupabaseSchema(opts)],
-
-    // Source files
+  /* ── Source files ── */
+  const sourceFiles: [string, string][] = [
     ['src/app.html', generateAppHtml(opts)],
-    ['src/app.d.ts', generateAppDts(opts)],
+    ['src/app.d.ts', generateAppDts(opts)]
+  ];
+  sp = createSpinner('Source files');
+  const sourceCount = writeGroup(sourceFiles, cwd, createdFiles, skippedFiles);
+  sp.succeed(`Source files               ${dim(`${sourceCount} files`)}`);
 
-    // Route files
+  /* ── Route files ── */
+  const routeFiles: [string, string][] = [
     ['src/routes/+layout.ts', generateRootLayoutTs(opts)],
     ['src/routes/+layout.svelte', generateRootLayoutSvelte(opts)],
     ['src/routes/+page.svelte', generateHomePage(opts)],
@@ -4084,44 +4427,51 @@ async function main(): Promise<void> {
     ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
     ['src/routes/(protected)/+layout.ts', generateProtectedLayoutTs()],
     ['src/routes/(protected)/+layout.svelte', generateProtectedLayoutSvelte()],
-    ['src/routes/(protected)/profile/+page.svelte', generateProfilePage(opts)],
-    ['src/lib/types.ts', generateAppTypes()],
+    ['src/routes/(protected)/profile/+page.svelte', generateProfilePage(opts)]
+  ];
+  sp = createSpinner('Route files');
+  const routeCount = writeGroup(routeFiles, cwd, createdFiles, skippedFiles);
+  sp.succeed(`Route files               ${dim(`${routeCount} files`)}`);
 
-    // Component files
+  /* ── Library & components ── */
+  const libFiles: [string, string][] = [
+    ['src/lib/types.ts', generateAppTypes()],
     ['src/lib/components/UpdatePrompt.svelte', generateUpdatePromptComponent()]
   ];
-
-  for (const [relativePath, content] of files) {
-    writeIfMissing(join(cwd, relativePath), content, createdFiles, skippedFiles);
-  }
+  sp = createSpinner('Library & components');
+  const libCount = writeGroup(libFiles, cwd, createdFiles, skippedFiles);
+  sp.succeed(`Library & components       ${dim(`${libCount} files`)}`);
 
   // 4. Set up husky
-  console.log('Setting up husky...');
-  execSync('npx husky init', { stdio: 'inherit', cwd });
-  /* Overwrite the default pre-commit (husky init creates one with "npm test") */
+  sp = createSpinner('Git hooks');
+  execSync('npx husky init', { stdio: 'pipe', cwd });
   const preCommitPath = join(cwd, '.husky/pre-commit');
   writeFileSync(preCommitPath, generateHuskyPreCommit(), 'utf-8');
   createdFiles.push('.husky/pre-commit');
-  console.log('  [write] .husky/pre-commit');
+  sp.succeed(`Git hooks                  ${dim('1 file')}`);
 
-  // 5. Print summary
-  console.log(`\n\u2705 Done! Created ${createdFiles.length} files.`);
-  if (skippedFiles.length > 0) {
-    console.log(`   Skipped ${skippedFiles.length} existing files.`);
-  }
+  // 5. Print final summary
+  console.log();
+  console.log(
+    doubleBoxWithHeader(
+      [`             ${green(bold('\u2713 Setup complete!'))}                  `],
+      [
+        `Created: ${bold(String(createdFiles.length))} files${' '.repeat(34 - String(createdFiles.length).length)}`,
+        `Skipped: ${bold(String(skippedFiles.length))} files${' '.repeat(34 - String(skippedFiles.length).length)}`
+      ]
+    )
+  );
   console.log(`
-Next steps:
-  1. Set up Supabase and add .env with PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY and PUBLIC_SUPABASE_URL
-  2. Run supabase-schema.sql in the Supabase SQL Editor
-  3. Add your app icons: static/favicon.png, static/icon-192.png, static/icon-512.png
-  4. Start building: npm run dev`);
+  ${bold('Next steps:')}
+    1. Set up Supabase and add .env with your keys
+    2. Run supabase-schema.sql in Supabase SQL Editor
+    3. Add app icons in static/icons/
+    4. Start building: ${cyan('npm run dev')}
+`);
 }
 
 // =============================================================================
 //                                 RUN
 // =============================================================================
 
-main().catch((err) => {
-  console.error('Error:', err);
-  process.exit(1);
-});
+routeCommand();

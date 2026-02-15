@@ -12,13 +12,15 @@
  *
  * Files are written non-destructively: existing files are skipped, not overwritten.
  *
+ * Launches an interactive walkthrough when invoked as `stellar-engine install pwa`.
+ *
  * @example
  * ```bash
- * stellar-engine install pwa --name "App Name" --short_name "Short" --prefix "myprefix" [--description "..."]
+ * stellar-engine install pwa
  * ```
  *
  * @see {@link main} for the entry point
- * @see {@link parseArgs} for CLI argument parsing
+ * @see {@link runInteractiveSetup} for the interactive walkthrough
  * @see {@link writeIfMissing} for the non-destructive file write strategy
  */
 export {};

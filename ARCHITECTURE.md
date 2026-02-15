@@ -1353,7 +1353,7 @@ Total egress: 45.23 KB (312 records)
 
 **File**: `src/bin/install-pwa.ts`
 
-The engine includes a CLI command (`stellar-engine install pwa`) that scaffolds a complete SvelteKit 2 + Svelte 5 PWA project. The scaffolder follows a strict separation: **stellar-engine owns all non-UI logic**; the generated route files import engine functions and leave UI as TODO placeholders.
+The engine includes a CLI command (`stellar-engine install pwa`) that scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkthrough. The scaffolder follows a strict separation: **stellar-engine owns all non-UI logic**; the generated route files import engine functions and leave UI as TODO placeholders.
 
 ### 12.1 Architecture Diagram
 
@@ -1361,15 +1361,14 @@ The engine includes a CLI command (`stellar-engine install pwa`) that scaffolds 
 +--------------------------------------------------------------------+
 |                    INSTALL PWA SCAFFOLDER                           |
 |                                                                    |
-|  CLI Entry:  stellar-engine install pwa --name --short_name        |
-|              --prefix [--description]                              |
+|  CLI Entry:  stellar-engine install pwa                            |
 |                                                                    |
-|  1. Parse args (name, shortName, prefix, description)              |
+|  1. Interactive walkthrough (name, shortName, prefix, description)  |
 |  2. Write package.json with @prabhask5/stellar-engine dep          |
 |  3. npm install                                                    |
-|  4. Generate 34+ template files                                    |
+|  4. Generate 34+ template files (grouped with animated progress)   |
 |  5. npx husky init + pre-commit hook                               |
-|  6. Print next steps                                               |
+|  6. Print styled summary + next steps                              |
 +--------------------------------------------------------------------+
 ```
 

@@ -106,11 +106,13 @@ if (!auth.singleUserSetUp) {
 
 ## Install PWA Command
 
-Scaffold a complete offline-first PWA project:
+Scaffold a complete offline-first PWA project with an interactive walkthrough:
 
 ```bash
-npx @prabhask5/stellar-engine install pwa --name "My App" --short_name "App" --prefix "myapp" [--description "..."]
+npx @prabhask5/stellar-engine install pwa
 ```
+
+The wizard guides you through each option (app name, short name, prefix, description), validates input inline, shows a confirmation summary, then scaffolds with animated progress.
 
 ### What it generates
 
@@ -150,14 +152,14 @@ The command creates a full SvelteKit 2 + Svelte 5 project with:
 
 **Git hooks (1):** `.husky/pre-commit` with lint + format + validate
 
-### Parameters
+### Interactive Prompts
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--name` | Yes | Full app name (e.g., "My Stellar App") |
-| `--short_name` | Yes | Short name for PWA home screen |
-| `--prefix` | Yes | App prefix for localStorage keys, SW, debug utils |
-| `--description` | No | App description (default: "A self-hosted offline-first PWA") |
+| Prompt | Required | Description |
+|--------|----------|-------------|
+| App Name | Yes | Full app name (e.g., "Stellar Planner") |
+| Short Name | Yes | Short name for PWA home screen (under 12 chars) |
+| Prefix | Yes | Lowercase key for localStorage, caches, SW (auto-suggested from name) |
+| Description | No | App description (default: "A self-hosted offline-first PWA") |
 
 ## Subpath exports
 

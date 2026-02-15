@@ -1830,24 +1830,22 @@ function hydrateAuthState(data: AuthLayoutData): void
 
 ### `stellar-engine install pwa`
 
-CLI command that scaffolds a complete offline-first PWA SvelteKit project.
+CLI command that scaffolds a complete offline-first PWA SvelteKit project via an interactive walkthrough.
 
 ```bash
-npx @prabhask5/stellar-engine install pwa \
-  --name "My App" \
-  --short_name "App" \
-  --prefix "myapp" \
-  [--description "A self-hosted offline-first PWA"]
+npx @prabhask5/stellar-engine install pwa
 ```
 
-### Parameters
+The wizard collects all required configuration through step-by-step prompts with inline validation, shows a confirmation summary, then scaffolds the project with animated progress output.
 
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--name` | Yes | — | Full app name |
-| `--short_name` | Yes | — | Short name for PWA home screen |
-| `--prefix` | Yes | — | App prefix for localStorage, SW, debug |
-| `--description` | No | "A self-hosted offline-first PWA" | App description |
+### Interactive Prompts
+
+| Prompt | Required | Validation | Description |
+|--------|----------|------------|-------------|
+| App Name | Yes | Non-empty | Full app name (e.g., "Stellar Planner") |
+| Short Name | Yes | Non-empty, under 12 chars | Short name for PWA home screen |
+| Prefix | Yes | Lowercase, starts with letter, no spaces | App prefix for localStorage, SW, debug (auto-suggested from name) |
+| Description | No | — | App description (default: "A self-hosted offline-first PWA") |
 
 ### Generated Files (34+)
 

@@ -20,6 +20,7 @@
 {#if visible}
   <div class="demo-banner" role="status" aria-live="polite">
     <span class="demo-banner-text">Demo Mode — Changes reset on refresh</span>
+    <a class="demo-banner-link" href="/demo">Demo Page</a>
     <button
       class="demo-banner-close"
       onclick={() => (dismissed = true)}
@@ -58,6 +59,21 @@
 
   .demo-banner-text {
     opacity: 0.95;
+  }
+
+  .demo-banner-link {
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 0.75rem;
+    text-decoration: none;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .demo-banner-link:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
   }
 
   .demo-banner-close {

@@ -5,7 +5,7 @@
  * first function consumers call — it accepts a {@link SyncEngineConfig} object
  * that describes:
  *   - Which Supabase tables to sync and their IndexedDB schemas
- *   - Authentication mode (multi-user, single-user, or none)
+ *   - Authentication configuration (single-user gate, offline auth, etc.)
  *   - Sync timing parameters (debounce, polling interval, tombstone TTL)
  *   - Optional callbacks for auth state changes
  *

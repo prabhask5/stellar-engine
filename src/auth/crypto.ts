@@ -17,10 +17,6 @@
  *   password storage on its own. It is acceptable here because the hashed values
  *   are only stored in the client-side IndexedDB for offline pre-checking and
  *   are never transmitted to a server.
- * - The `isAlreadyHashed` helper uses a regex heuristic (64-char hex). If a
- *   user's actual password happens to be a 64-char hex string, it will be
- *   misidentified as already hashed. This is an acceptable edge case given the
- *   vanishingly low probability and the local-only usage context.
  *
  * @module auth/crypto
  */
@@ -45,7 +41,6 @@
  * // hashed === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' (example)
  * ```
  *
- * @see {@link isAlreadyHashed} to check whether a string is already a hex digest.
  */
 export async function hashValue(value: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -53,25 +48,4 @@ export async function hashValue(value: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Check if a stored value is already hashed (64-character hex string).
- *
- * Used to distinguish between legacy plaintext credentials and modern
- * SHA-256-hashed credentials in IndexedDB, enabling backward-compatible
- * verification without a migration step.
- *
- * @param value - The string to test.
- * @returns `true` if the value matches the pattern of a SHA-256 hex digest
- *          (exactly 64 lowercase hexadecimal characters), `false` otherwise.
- *
- * @example
- * ```ts
- * isAlreadyHashed('abc123');           // false
- * isAlreadyHashed('e3b0c442...b855');  // true (64-char hex)
- * ```
- */
-export function isAlreadyHashed(value: string): boolean {
-  return /^[0-9a-f]{64}$/.test(value);
 }

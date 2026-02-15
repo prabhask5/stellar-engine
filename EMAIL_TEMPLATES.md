@@ -6,8 +6,8 @@ The template HTML files are located in Stellar Planner at `static/`:
 
 | Supabase Template | Subject | File | Triggered by |
 |---|---|---|---|
-| **Confirm signup** | `Confirm Your Email - Stellar` | `static/signup-email.html` | `setupSingleUser()` / `signUp()` |
-| **Change Email Address** | `Confirm Your New Email - Stellar` | `static/change-email.html` | `changeSingleUserEmail()` / `changeEmail()` |
+| **Confirm signup** | `Confirm Your Email - Stellar` | `static/signup-email.html` | `setupSingleUser()` |
+| **Change Email Address** | `Confirm Your New Email - Stellar` | `static/change-email.html` | `changeSingleUserEmail()` |
 | **Magic Link** | `Verify Your Device - Stellar` | `static/device-verification-email.html` | `sendDeviceVerification()` via `signInWithOtp()` |
 
 ## Setup

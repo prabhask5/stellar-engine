@@ -32,7 +32,6 @@ import { initConfig, getConfig } from '../runtime/runtimeConfig.js';
 import { resolveAuthState } from '../auth/resolveAuthState.js';
 import { startSyncEngine } from '../engine.js';
 import { getValidSession } from '../supabase/auth.js';
-import { isAdmin } from '../auth/admin.js';
 // =============================================================================
 //  ROOT LAYOUT
 // =============================================================================
@@ -156,9 +155,8 @@ export async function resolveProtectedLayout(url) {
  *
  *   - **Unconfigured app** (first-time setup): public access, no auth required.
  *     Returns `{ isFirstSetup: true }`.
- *   - **Configured app** (reconfiguration): only authenticated admin users
- *     may access. Non-admins are redirected to `/`, unauthenticated users
- *     to `/login`.
+ *   - **Configured app** (reconfiguration): any authenticated user may access.
+ *     Unauthenticated users are redirected to `/login`.
  *
  * @returns An object containing:
  *   - `data` — setup access info (`{ isFirstSetup }`)
@@ -181,7 +179,6 @@ export async function resolveProtectedLayout(url) {
  *
  * @see {@link SetupAccessData} for the return data shape
  * @see {@link getConfig} for checking whether config exists
- * @see {@link isAdmin} for admin role verification
  */
 export async function resolveSetupAccess() {
     /* No config exists — this is the first-time setup, grant public access
@@ -194,11 +191,6 @@ export async function resolveSetupAccess() {
     if (!session?.user) {
         /* No session — redirect to login so the user can authenticate first. */
         return { data: { isFirstSetup: false }, redirectUrl: '/login' };
-    }
-    if (!isAdmin(session.user)) {
-        /* Authenticated but not an admin — redirect to home. Only admins
-           should be able to change the app's configuration. */
-        return { data: { isFirstSetup: false }, redirectUrl: '/' };
     }
     return { data: { isFirstSetup: false }, redirectUrl: null };
 }

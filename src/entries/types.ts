@@ -34,13 +34,11 @@ export type { DatabaseConfig, DatabaseVersionConfig } from '../database';
 export type { BatchOperation } from '../data';
 
 // =============================================================================
-//  Auth Response Types
+//  Auth State Types
 // =============================================================================
-// - `AuthResponse` — unified return type for all Supabase GoTrue auth calls.
 // - `AuthStateResult` — result of `resolveAuthState`, describing the user's
 //   current authentication status at app startup.
 
-export type { AuthResponse } from '../supabase/auth';
 export type { AuthStateResult } from '../auth/resolveAuthState';
 
 // =============================================================================

@@ -117,7 +117,7 @@ function createAuthStateStore() {
          * authState.setNoAuth();
          *
          * // Forced sign-out with reason
-         * authState.setNoAuth('Your account was deactivated by an administrator.');
+         * authState.setNoAuth('Your session has expired.');
          * ```
          */
         setNoAuth(kickedMessage) {

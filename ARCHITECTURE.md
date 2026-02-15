@@ -18,7 +18,7 @@
 
 ## 1. Authentication System
 
-The engine implements a **dual-mode authentication** system that maintains full functionality offline. Your app can authenticate users through Supabase when online and fall back to cached credentials when offline.
+The engine implements an authentication system that maintains full functionality offline. Your app can authenticate users through Supabase when online and fall back to cached credentials when offline.
 
 ### 1.1 Architecture Diagram
 
@@ -33,7 +33,7 @@ The engine implements a **dual-mode authentication** system that maintains full 
 |         ^                 |                 |                    |
 |         |   +-------------+                 |                    |
 |         |   | On login:                     |                    |
-|         |   | 1. Supabase signIn()          |                    |
+|         |   | 1. unlockSingleUser()         |                    |
 |         |   | 2. Cache credentials to       |                    |
 |         |   |    IndexedDB                  |                    |
 |         |   | 3. Set mode = 'supabase'      |                    |
@@ -132,7 +132,7 @@ Derived stores:
 
 ## 2. Single-User Auth Mode
 
-The engine supports a **single-user auth mode** as an alternative to the standard email/password multi-user authentication described above. In single-user mode, the user provides an email during first-time setup, and a PIN code (or password) that is padded and used as the real Supabase password via `signUp()`. The PIN is verified server-side by Supabase via `signInWithPassword()` — no client-side hash comparison. This gives the same `auth.uid()` as a regular email/password user, enabling proper RLS enforcement.
+The engine uses a **single-user auth mode** with a simplified PIN code or password gate. The user provides an email during first-time setup, and a PIN code (or password) that is padded and used as the real Supabase password via `supabase.auth.signUp()`. The PIN is verified server-side by Supabase via `supabase.auth.signInWithPassword()` — no client-side hash comparison. This gives the same `auth.uid()` as a regular email/password user, enabling proper RLS enforcement.
 
 Optional email confirmation (`emailConfirmation.enabled`) blocks setup until the user confirms their email. Optional device verification (`deviceVerification.enabled`) requires OTP on untrusted devices.
 
@@ -143,7 +143,7 @@ Optional email confirmation (`emailConfirmation.enabled`) blocks setup until the
 |               SINGLE-USER AUTH STATE MACHINE                      |
 |                                                                  |
 |   +-----------+     setupSingleUser()      +----------------+    |
-|   | not setup |-----(calls signUp, may---->| confirming     |    |
+|   | not setup |-----(creates account,----->| confirming     |    |
 |   | (first    |     require email          | email          |    |
 |   |  visit)   |     confirmation)          | (if enabled)   |    |
 |   +-----------+          |                 +-------+--------+    |
@@ -179,7 +179,7 @@ Optional email confirmation (`emailConfirmation.enabled`) blocks setup until the
 
 **File**: `src/auth/singleUser.ts`
 
-When the engine is configured with `auth.mode === 'single-user'`, an additional IndexedDB system table is created:
+When the engine is configured with `auth.singleUser`, an additional IndexedDB system table is created:
 
 ```
 +--------------------+-----------------------------------------------+
@@ -232,7 +232,7 @@ The module exports the following functions:
 |----------|---------|
 | `isSingleUserSetUp()` | Returns `true` if `singleUserConfig` exists in IndexedDB |
 | `getSingleUserInfo()` | Returns non-sensitive display info (profile, gateType, codeLength) |
-| `setupSingleUser(gate, profile, email)` | First-time setup: pads PIN, calls `signUp()` with real email/password, stores config, caches offline credentials. May return `{ confirmationRequired: true }` if email confirmation is enabled |
+| `setupSingleUser(gate, profile, email)` | First-time setup: pads PIN, calls `supabase.auth.signUp()` with real email/password, stores config, caches offline credentials. May return `{ confirmationRequired: true }` if email confirmation is enabled |
 | `unlockSingleUser(gate)` | Calls `signInWithPassword()` with stored email and padded PIN. May return `{ deviceVerificationRequired: true, maskedEmail }` if device verification is enabled and device is untrusted. Falls back to offline hash verification when offline |
 | `completeSingleUserSetup()` | Called after email confirmation completes. Trusts device, sets auth state, starts sync |
 | `completeDeviceVerification(tokenHash?)` | Called after device OTP verification. Trusts device, sets auth state, starts sync |
@@ -304,13 +304,11 @@ unlockSingleUser(gate)
 User enters new email on profile page
   |
   v
-changeSingleUserEmail(newEmail)           changeEmail(newEmail)
-(single-user mode)                        (multi-user mode)
-  |                                         |
-  +---> Validate online (offline rejected)  +---> supabase.auth.updateUser({ email: newEmail })
-  |                                         |
-  +---> supabase.auth.updateUser(           +---> return { confirmationRequired: true }
-  |       { email: newEmail })
+changeSingleUserEmail(newEmail)
+  |
+  +---> Validate online (offline rejected)
+  |
+  +---> supabase.auth.updateUser({ email: newEmail })
   |
   +---> return { confirmationRequired: true }
   |
@@ -327,13 +325,12 @@ verifyOtp({ token_hash, type: 'email_change' })
 BroadcastChannel sends AUTH_CONFIRMED with verificationType: 'email_change'
   |
   v
-completeSingleUserEmailChange()           completeEmailChange()
-(single-user mode)                        (multi-user mode)
-  |                                         |
-  +---> refreshSession()                    +---> refreshSession()
-  +---> Read new email from session         +---> Read new email from session
-  +---> Update IndexedDB singleUserConfig   +---> Update offlineCredentials cache
-  +---> Update offlineCredentials cache     +---> return { newEmail }
+completeSingleUserEmailChange()
+  |
+  +---> refreshSession()
+  +---> Read new email from session
+  +---> Update IndexedDB singleUserConfig
+  +---> Update offlineCredentials cache
   +---> return { newEmail }
 ```
 
@@ -341,7 +338,7 @@ completeSingleUserEmailChange()           completeEmailChange()
 
 **File**: `src/auth/resolveAuthState.ts`
 
-When `auth.mode === 'single-user'`, `resolveAuthState()` delegates to a dedicated `resolveSingleUserAuthState()` function. The result includes a `singleUserSetUp` boolean so the app can distinguish between "not set up" and "locked".
+When `auth.singleUser` is configured, `resolveAuthState()` delegates to a dedicated `resolveSingleUserAuthState()` function. The result includes a `singleUserSetUp` boolean so the app can distinguish between "not set up" and "locked".
 
 Note: `fetchAndCacheRemoteConfig` has been removed since the `single_user_config` Supabase table no longer exists. Auth state resolution now relies solely on local IndexedDB config and Supabase session state.
 
@@ -365,22 +362,6 @@ Resolution logic:
 | Yes | Expired but offline | `authMode: 'supabase'` (usable offline), `singleUserSetUp: true` |
 | Yes | Offline session only | `authMode: 'offline'`, `singleUserSetUp: true` |
 | Yes | No session | `authMode: 'none'`, `singleUserSetUp: true` (locked) |
-
-### 2.9 Admin Is Always True in Single-User Mode
-
-**File**: `src/auth/admin.ts`
-
-In single-user mode, the `isAdmin()` function short-circuits to always return `true`, bypassing the `adminCheck` callback:
-
-```typescript
-export function isAdmin(user: User | null): boolean {
-  const config = getEngineConfig();
-  if (config.auth?.mode === 'single-user') return true;
-  // ... multi-user adminCheck logic
-}
-```
-
-This ensures the single user has full access to all admin-gated features without needing a separate admin configuration.
 
 ---
 
@@ -1351,8 +1332,7 @@ Total egress: 45.23 KB (312 records)
 | Crypto Utils | `src/auth/crypto.ts` | SHA-256 hashing via Web Crypto API |
 | Single-User Auth | `src/auth/singleUser.ts` | PIN gate with real Supabase email/password auth |
 | Device Verification | `src/auth/deviceVerification.ts` | Device trust management + OTP verification |
-| Auth State Resolver | `src/auth/resolveAuthState.ts` | Dual-mode auth state resolution (multi-user & single-user) |
-| Admin Check | `src/auth/admin.ts` | Admin privilege check (always true in single-user mode) |
+| Auth State Resolver | `src/auth/resolveAuthState.ts` | Auth state resolution for single-user mode |
 | Offline Credentials | `src/auth/offlineCredentials.ts` | IndexedDB credential cache |
 | Offline Session | `src/auth/offlineSession.ts` | Offline session token management |
 | Auth State | `src/stores/authState.ts` | Tri-modal auth state store |

@@ -1,25 +1,22 @@
 /**
  * @fileoverview Offline Credentials Management
  *
- * Handles caching, retrieval, verification, and update of user credentials
- * in IndexedDB for offline login support. When the user successfully
- * authenticates online via Supabase, their credentials are cached locally
- * (with the password SHA-256-hashed) so they can log in again while offline.
+ * Handles caching, retrieval, and update of user credentials in IndexedDB
+ * for offline fallback support. When the user successfully authenticates
+ * online via Supabase, their credentials are cached locally (with the
+ * password SHA-256-hashed) so profile data is available while offline.
  *
  * Architecture:
  * - Credentials are stored as a singleton record (key: `'current_user'`) in the
  *   `offlineCredentials` IndexedDB table.
- * - Only one set of credentials is cached at a time. In multi-user apps, the
- *   last successfully authenticated user's credentials are stored.
+ * - Only one set of credentials is cached at a time.
  * - The profile blob is extracted via the host app's `profileExtractor` config
  *   callback, or falls back to raw Supabase `user_metadata`.
  *
  * Security considerations:
  * - Passwords are **always** hashed with SHA-256 before storage. The plaintext
  *   password is never persisted.
- * - Legacy plaintext credentials (from before the hashing migration) are
- *   supported in `verifyOfflineCredentials` via the `isAlreadyHashed` check,
- *   but new writes always hash.
+ * - New writes always hash the password before storage.
  * - A paranoid read-back verification is performed after `cacheOfflineCredentials`
  *   to ensure the password was actually persisted (guards against silent
  *   IndexedDB write failures).
@@ -28,8 +25,8 @@
  * @module auth/offlineCredentials
  */
 import { getEngineConfig } from '../config';
-import { debugWarn, debugError } from '../debug';
-import { hashValue, isAlreadyHashed } from './crypto';
+import { debugError } from '../debug';
+import { hashValue } from './crypto';
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -131,108 +128,8 @@ export async function getOfflineCredentials() {
     return credentials;
 }
 // =============================================================================
-// PUBLIC API -- Verification
-// =============================================================================
-/**
- * Verify email and password against cached credentials.
- *
- * Performs a multi-field comparison:
- * 1. Checks that cached credentials exist.
- * 2. Verifies the `userId` matches (prevents cross-user attacks).
- * 3. Verifies the `email` matches (prevents credential reuse across accounts).
- * 4. Verifies the password by hashing the input and comparing against the
- *    stored hash (or plaintext for legacy records).
- *
- * @param email          - The email to verify against cached credentials.
- * @param password       - The plaintext password to verify.
- * @param expectedUserId - The Supabase user ID that the credentials should belong to.
- *                          Prevents offline login with credentials cached from a
- *                          different user.
- * @returns An object with `valid: true` on success, or `valid: false` with a
- *          `reason` string identifying which check failed.
- *
- * @example
- * ```ts
- * const result = await verifyOfflineCredentials(email, password, userId);
- * if (result.valid) {
- *   await createOfflineSession(userId);
- * } else {
- *   console.warn('Verification failed:', result.reason);
- * }
- * ```
- *
- * @see {@link cacheOfflineCredentials} for how credentials are stored.
- */
-export async function verifyOfflineCredentials(email, password, expectedUserId) {
-    const credentials = await getOfflineCredentials();
-    if (!credentials) {
-        debugWarn('[Auth] No credentials found in database');
-        return { valid: false, reason: 'no_credentials' };
-    }
-    /* SECURITY: Verify all identity fields match. Checking userId AND email
-       provides defense-in-depth -- even if one field is spoofed, the other
-       must also match. */
-    if (credentials.userId !== expectedUserId) {
-        debugWarn('[Auth] Credential userId mismatch:', credentials.userId, '!==', expectedUserId);
-        return { valid: false, reason: 'user_mismatch' };
-    }
-    if (credentials.email !== email) {
-        debugWarn('[Auth] Credential email mismatch:', credentials.email, '!==', email);
-        return { valid: false, reason: 'email_mismatch' };
-    }
-    if (!credentials.password) {
-        debugWarn('[Auth] No password stored in credentials');
-        return { valid: false, reason: 'no_stored_password' };
-    }
-    /* Compare passwords: if the stored password is a 64-char hex string, it is
-       a SHA-256 hash -- hash the input and compare. Otherwise, treat it as a
-       legacy plaintext value for backward compatibility. */
-    let passwordMatch;
-    if (isAlreadyHashed(credentials.password)) {
-        const hashedInput = await hashValue(password);
-        passwordMatch = credentials.password === hashedInput;
-    }
-    else {
-        /* Legacy plaintext comparison -- only applies to credentials cached before
-           the SHA-256 migration. New caches always store hashed passwords. */
-        passwordMatch = credentials.password === password;
-    }
-    if (!passwordMatch) {
-        debugWarn('[Auth] Password mismatch (stored length:', credentials.password.length, ', entered length:', password.length, ')');
-        return { valid: false, reason: 'password_mismatch' };
-    }
-    return { valid: true };
-}
-// =============================================================================
 // PUBLIC API -- Update & Clear
 // =============================================================================
-/**
- * Update the cached password hash after an online password change.
- *
- * Should be called whenever the user changes their password while online,
- * so the offline cache stays in sync and the login guard does not flag
- * the old hash as stale.
- *
- * @param newPassword - The new plaintext password. Will be SHA-256-hashed before storage.
- *
- * @example
- * ```ts
- * await supabase.auth.updateUser({ password: newPassword });
- * await updateOfflineCredentialsPassword(newPassword);
- * ```
- */
-export async function updateOfflineCredentialsPassword(newPassword) {
-    const credentials = await getOfflineCredentials();
-    if (!credentials) {
-        return;
-    }
-    const db = getEngineConfig().db;
-    const hashedPassword = await hashValue(newPassword);
-    await db.table('offlineCredentials').update(CREDENTIALS_ID, {
-        password: hashedPassword,
-        cachedAt: new Date().toISOString()
-    });
-}
 /**
  * Update the user profile in cached credentials after an online profile update.
  *

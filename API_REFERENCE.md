@@ -32,9 +32,7 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Query Operations](#query-operations)
 - [Authentication](#authentication)
 - [Auth Lifecycle](#auth-lifecycle)
-- [Admin](#admin)
 - [Auth Display Utilities](#auth-display-utilities)
-- [Offline Login](#offline-login)
 - [Single-User Auth](#single-user-auth)
 - [Device Verification](#device-verification)
 - [Stores](#stores)
@@ -95,8 +93,7 @@ interface SyncEngineConfig {
   supabase?: SupabaseClient;               // Pre-created Supabase client (backward compat)
   database?: DatabaseConfig;               // Engine creates and owns the Dexie instance
   auth?: {
-    mode?: 'multi-user' | 'single-user';   // Default: 'multi-user'
-    singleUser?: {                          // Required when mode is 'single-user'
+    singleUser?: {
       gateType: SingleUserGateType;         // 'code' or 'password'
       codeLength?: 4 | 6;                   // Required when gateType is 'code'
     };
@@ -105,7 +102,6 @@ interface SyncEngineConfig {
     enableOfflineAuth?: boolean;
     sessionValidationIntervalMs?: number;
     confirmRedirectPath?: string;
-    adminCheck?: (user: User | null) => boolean;
   };
   onAuthStateChange?: (event: string, session: Session | null) => void;
   onAuthKicked?: (message: string) => void;
@@ -523,39 +519,6 @@ async function engineGetOrCreate(
 
 ## Authentication
 
-### `signIn(email, password)`
-
-Sign in with email and password. When cached credentials exist, wrong passwords are rejected locally without hitting Supabase. If no cached credentials exist, rate limiting with exponential backoff is applied. Caches credentials for offline use on success.
-
-```ts
-async function signIn(email: string, password: string): Promise<AuthResponse>
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `email` | `string` | User email |
-| `password` | `string` | User password |
-
-**Returns:** `AuthResponse` — includes `retryAfterMs` when rate-limited.
-
-### `signUp(email, password, profileData)`
-
-Create a new account. Uses `profileToMetadata` from config if provided.
-
-```ts
-async function signUp(
-  email: string,
-  password: string,
-  profileData: Record<string, unknown>
-): Promise<AuthResponse>
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `email` | `string` | User email |
-| `password` | `string` | User password |
-| `profileData` | `Record<string, unknown>` | Profile fields stored in user metadata |
-
 ### `signOut(options?)`
 
 Sign out. Stops sync engine, clears local data, clears offline sessions, and signs out of Supabase.
@@ -571,59 +534,6 @@ async function signOut(options?: {
 |-----------|------|-------------|
 | `options.preserveOfflineCredentials` | `boolean` | If true, keep cached offline credentials |
 | `options.preserveLocalData` | `boolean` | If true, keep local IndexedDB data and sync queue |
-
-### `changePassword(currentPassword, newPassword)`
-
-Change the user's password. Verifies the current password locally against cached credentials when available, falling back to Supabase verification if no cache exists. Updates offline credential cache.
-
-```ts
-async function changePassword(
-  currentPassword: string,
-  newPassword: string
-): Promise<{ error: string | null }>
-```
-
-### `changeEmail(newEmail)`
-
-Initiate an email change for the current user. Supabase sends a confirmation email to the new address. The user must click the confirmation link to complete the change. Use `completeEmailChange()` after confirmation.
-
-```ts
-async function changeEmail(
-  newEmail: string
-): Promise<{ error: string | null; confirmationRequired: boolean }>
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `newEmail` | `string` | The new email address |
-
-**Returns:** `{ error: null, confirmationRequired: true }` on success. `confirmationRequired` is always `true` when there is no error — the caller should show a confirmation modal.
-
-### `completeEmailChange()`
-
-Complete an email change after the user confirms via the email link. Refreshes the session to pick up the new email and updates the offline credentials cache.
-
-```ts
-async function completeEmailChange(): Promise<{ error: string | null; newEmail: string | null }>
-```
-
-**Returns:** `{ error: null, newEmail: 'new@example.com' }` on success.
-
-**Example:**
-
-```ts
-import { changeEmail, completeEmailChange } from '@prabhask5/stellar-engine/auth';
-
-// Step 1: Initiate
-const { error, confirmationRequired } = await changeEmail('new@example.com');
-if (confirmationRequired) {
-  // Show "check your email" modal, listen for BroadcastChannel AUTH_CONFIRMED
-}
-
-// Step 2: After confirmation (e.g., in BroadcastChannel listener)
-const { newEmail } = await completeEmailChange();
-// newEmail === 'new@example.com'
-```
 
 ### `resendConfirmationEmail(email)`
 
@@ -670,19 +580,6 @@ Get the current Supabase session if it exists and is not expired.
 async function getValidSession(): Promise<Session | null>
 ```
 
-### `AuthResponse`
-
-```ts
-interface AuthResponse {
-  user: User | null;
-  session: Session | null;
-  error: string | null;
-  retryAfterMs?: number;
-}
-```
-
-`retryAfterMs` is set when the login guard's rate limiting is active (no cached credentials and too many recent failed attempts). Callers can use this value to show a countdown or disable the login button.
-
 ---
 
 ## Auth Lifecycle
@@ -723,23 +620,7 @@ interface AuthStateResult {
 }
 ```
 
-When `auth.mode` is `'single-user'`, the `singleUserSetUp` field indicates whether the user has completed initial setup. If `false`, the app should show a setup screen. If `true` and `authMode` is `'none'`, the user is locked and should see an unlock screen.
-
----
-
-## Admin
-
-### `isAdmin(user)`
-
-Check if a user has admin privileges. In single-user mode (`auth.mode === 'single-user'`), always returns `true`. Otherwise delegates to `config.auth.adminCheck` if provided, or returns `false`.
-
-```ts
-function isAdmin(user: User | null): boolean
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `user` | `User \| null` | Supabase User object |
+When `auth.singleUser` is configured, the `singleUserSetUp` field indicates whether the user has completed initial setup. If `false`, the app should show a setup screen. If `true` and `authMode` is `'none'`, the user is locked and should see an unlock screen.
 
 ---
 
@@ -861,48 +742,13 @@ function resolveAvatarInitial(
 
 ---
 
-## Offline Login
-
-### `signInOffline(email, password)`
-
-Sign in using cached offline credentials. Verifies email and password against the locally cached credentials, then creates an offline session.
-
-```ts
-async function signInOffline(
-  email: string,
-  password: string
-): Promise<OfflineLoginResult>
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `email` | `string` | User email |
-| `password` | `string` | User password |
-
-**Returns:** `OfflineLoginResult` with `success: boolean`, optional `error` string, and optional `reason` code (`'no_credentials'`, `'no_stored_password'`, `'user_mismatch'`, `'email_mismatch'`, `'password_mismatch'`, `'session_failed'`).
-
-### `getOfflineLoginInfo()`
-
-Get non-sensitive display info about cached offline credentials. Returns `null` if no credentials are cached.
-
-```ts
-async function getOfflineLoginInfo(): Promise<{
-  hasCredentials: boolean;
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-} | null>
-```
-
----
-
 ## Login Guard
 
-The login guard provides local credential pre-checking and rate limiting to minimize unnecessary Supabase auth requests. It is used internally by `signIn()`, `unlockSingleUser()`, and `linkSingleUserDevice()`.
+The login guard provides local credential pre-checking and rate limiting to minimize unnecessary Supabase auth requests. It is used internally by `unlockSingleUser()` and `linkSingleUserDevice()`.
 
 **How it works:**
 
-- When cached credentials exist (offline credentials hash for multi-user, `gateHash` for single-user), passwords are verified locally first. Wrong passwords are rejected without making a Supabase call.
+- When a cached `gateHash` exists, passwords are verified locally first. Wrong passwords are rejected without making a Supabase call.
 - When no cached credentials exist (new device, first login), exponential backoff rate limiting is applied (1s base, 30s max, 2x multiplier). The `retryAfterMs` field in the response indicates how long to wait.
 - If a user changes their password on another device, the local hash will no longer match. After 5 consecutive local rejections, the cached hash is invalidated and the system falls through to rate-limited Supabase authentication. On successful Supabase login, the new hash is cached immediately.
 - If a locally-matched password is rejected by Supabase (stale hash), the cached hash is invalidated so future attempts use Supabase directly.
@@ -935,7 +781,6 @@ This mode is designed for personal apps where there is one user per device/deplo
 initEngine({
   // ...
   auth: {
-    mode: 'single-user',
     singleUser: { gateType: 'code', codeLength: 4 },
     emailConfirmation: { enabled: true },
     deviceVerification: { enabled: true, trustDurationDays: 90 },
@@ -1921,7 +1766,7 @@ function resolveProtectedLayout(url: URL): Promise<ProtectedLayoutData>
 
 #### `resolveSetupAccess()`
 
-Setup page load function helper. Checks config, session, and admin status.
+Setup page load function helper. Checks config and session status.
 
 ```ts
 function resolveSetupAccess(): Promise<SetupAccessData>

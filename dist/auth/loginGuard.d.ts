@@ -57,25 +57,20 @@ export type PreCheckResult = {
 /**
  * Pre-check login credentials locally before calling Supabase.
  *
- * For single-user mode: reads `singleUserConfig.gateHash`, hashes input, compares.
- * For multi-user mode: reads offline credentials, matches email + hashes password, compares.
+ * Reads `singleUserConfig.gateHash`, hashes input, and compares.
  *
  * Returns `{ proceed: true, strategy }` to allow Supabase call,
  * or `{ proceed: false, error, retryAfterMs? }` to reject locally.
  *
  * @param input - The plaintext password or gate code entered by the user.
- * @param mode - The auth mode (`'single-user'` or `'multi-user'`), which
- *               determines which IndexedDB table holds the cached hash.
- * @param email - (Multi-user only) The email address to match against cached
- *                credentials. Ignored in single-user mode.
  * @returns A promise resolving to a {@link PreCheckResult}.
  *
  * @example
  * ```ts
- * const result = await preCheckLogin(password, 'multi-user', email);
+ * const result = await preCheckLogin(password);
  * if (result.proceed) {
  *   const { error } = await supabase.auth.signInWithPassword({ email, password });
- *   if (error) await onLoginFailure(result.strategy, 'multi-user');
+ *   if (error) await onLoginFailure(result.strategy);
  *   else onLoginSuccess();
  * } else {
  *   showError(result.error);
@@ -85,7 +80,7 @@ export type PreCheckResult = {
  * @see {@link onLoginSuccess} -- must be called after a successful Supabase login.
  * @see {@link onLoginFailure} -- must be called after a failed Supabase login.
  */
-export declare function preCheckLogin(input: string, mode: 'single-user' | 'multi-user', email?: string): Promise<PreCheckResult>;
+export declare function preCheckLogin(input: string): Promise<PreCheckResult>;
 /**
  * Called after a successful Supabase login.
  *
@@ -112,19 +107,17 @@ export declare function onLoginSuccess(): void;
  *
  * @param strategy - The {@link PreCheckStrategy} that was returned by
  *                   {@link preCheckLogin} for this attempt.
- * @param mode - The auth mode, used to determine which IndexedDB table to
- *               invalidate if the hash is stale. Defaults to `'multi-user'`.
  *
  * @example
  * ```ts
- * const result = await preCheckLogin(password, 'multi-user', email);
+ * const result = await preCheckLogin(password);
  * if (result.proceed) {
  *   const { error } = await supabase.auth.signInWithPassword({ email, password });
- *   if (error) await onLoginFailure(result.strategy, 'multi-user');
+ *   if (error) await onLoginFailure(result.strategy);
  * }
  * ```
  */
-export declare function onLoginFailure(strategy: PreCheckStrategy, mode?: 'single-user' | 'multi-user'): Promise<void>;
+export declare function onLoginFailure(strategy: PreCheckStrategy): Promise<void>;
 /**
  * Full reset of all login guard state.
  *

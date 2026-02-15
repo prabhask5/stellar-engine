@@ -1,8 +1,8 @@
 /**
  * @fileoverview Device Verification Module
  *
- * Manages the trusted device registry and email-based OTP verification flow
- * for both single-user and multi-user modes. When device verification is
+ * Manages the trusted device registry and email-based OTP verification flow.
+ * When device verification is
  * enabled, only devices present in the Supabase `trusted_devices` table (with
  * a recent `last_used_at` timestamp) are allowed to proceed after
  * authentication. Untrusted devices must complete an email OTP challenge.

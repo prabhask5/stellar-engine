@@ -1,40 +1,31 @@
 /**
  * @fileoverview Auth subpath barrel — `@prabhask5/stellar-engine/auth`
  *
- * Consolidates all authentication-related exports into a single entry point.
- * Covers four authentication strategies:
+ * Consolidates all authentication-related exports into a single entry point
+ * for the single-user PIN/password gate system:
  *
- * 1. **Supabase Auth** — standard email/password sign-in, sign-up, OTP, and
- *    profile management via Supabase GoTrue.
- * 2. **Auth State Resolution** — determines the current auth state on app load
- *    (authenticated, anonymous, expired session, etc.).
- * 3. **Admin** — role-based admin check utility.
- * 4. **Offline Login** — allows cached credential login when the device is offline.
- * 5. **Single-User Auth** — PIN/password gate for single-user (kiosk-style) apps
+ * 1. **Auth Utilities** — sign-out with full teardown, session management,
+ *    profile CRUD, OTP verification, and email confirmation.
+ * 2. **Auth State Resolution** — determines the current auth state on app load.
+ * 3. **Single-User Auth** — PIN/password gate for single-user (kiosk-style) apps
  *    with device linking and remote configuration.
+ * 4. **Display Utilities** — resolve user-facing display values from auth state.
  */
 
 // =============================================================================
-//  Supabase Auth — Core Authentication Operations
+//  Supabase Auth — Core Authentication Utilities
 // =============================================================================
-// Standard Supabase GoTrue operations: sign in/up/out, password and email
-// changes, email confirmation, profile CRUD, OTP verification, and session
-// validation. `AuthResponse` is the unified return type for all auth calls.
+// Sign-out with full teardown, session management, profile CRUD, email
+// confirmation resend, OTP verification, and session validation.
 
 export {
-  signIn,
-  signUp,
   signOut,
-  changePassword,
-  changeEmail,
-  completeEmailChange,
   resendConfirmationEmail,
   getUserProfile,
   updateProfile,
   verifyOtp,
   getValidSession
 } from '../supabase/auth';
-export type { AuthResponse } from '../supabase/auth';
 
 // =============================================================================
 //  Auth State Resolution
@@ -45,37 +36,6 @@ export type { AuthResponse } from '../supabase/auth';
 
 export { resolveAuthState } from '../auth/resolveAuthState';
 export type { AuthStateResult } from '../auth/resolveAuthState';
-
-// =============================================================================
-//  Admin Role Check
-// =============================================================================
-// Utility to check whether the current user has admin privileges, based on
-// metadata stored in the Supabase user profile or local config.
-
-export { isAdmin } from '../auth/admin';
-
-// =============================================================================
-//  Offline Login
-// =============================================================================
-// Enables authentication when the device has no network connectivity. Uses
-// locally cached and encrypted credentials to validate the user. `signInOffline`
-// performs the offline auth flow; `getOfflineLoginInfo` retrieves stored
-// credential metadata for the login UI.
-
-export { signInOffline, getOfflineLoginInfo } from '../auth/offlineLogin';
-
-// =============================================================================
-//  Single-User Auth (PIN/Password Gate)
-// =============================================================================
-// Full lifecycle for single-user (kiosk/personal device) authentication:
-// - Setup and teardown (`setupSingleUser`, `resetSingleUser`, `completeSingleUserSetup`)
-// - Lock/unlock gate (`unlockSingleUser`, `lockSingleUser`, `changeSingleUserGate`)
-// - Profile management (`updateSingleUserProfile`, `changeSingleUserEmail`,
-//   `completeSingleUserEmailChange`)
-// - Device linking and verification (`linkSingleUserDevice`,
-//   `completeDeviceVerification`, `pollDeviceVerification`)
-// - Remote configuration (`fetchRemoteGateConfig`, `resetSingleUserRemote`)
-// - Utility (`padPin`, `isSingleUserSetUp`, `getSingleUserInfo`)
 
 // =============================================================================
 //  Auth Display Utilities

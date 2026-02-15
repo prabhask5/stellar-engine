@@ -31,7 +31,6 @@
  */
 
 import { hashValue } from './crypto';
-import { getOfflineCredentials } from './offlineCredentials';
 import { getEngineConfig } from '../config';
 import { debugLog, debugWarn } from '../debug';
 
@@ -121,44 +120,26 @@ function checkRateLimit(): { allowed: boolean; retryAfterMs?: number } {
 }
 
 /**
- * Invalidate the locally cached password/gate hash in IndexedDB.
+ * Invalidate the locally cached gate hash in IndexedDB.
  *
  * Called when the guard determines the cached hash is stale (e.g., the user
- * changed their password on another device, or too many consecutive local
+ * changed their PIN on another device, or too many consecutive local
  * mismatches have occurred).
- *
- * @param mode - Whether the app is running in single-user or multi-user mode,
- *               which determines which IndexedDB table to update.
  *
  * @throws Never -- errors are caught and logged via `debugWarn`.
  */
-async function invalidateCachedHash(mode: 'single-user' | 'multi-user'): Promise<void> {
+async function invalidateCachedHash(): Promise<void> {
   try {
-    if (mode === 'single-user') {
-      const config = getEngineConfig();
-      const db = config.db;
-      if (db) {
-        const record = await db.table('singleUserConfig').get('config');
-        if (record && record.gateHash) {
-          await db.table('singleUserConfig').update('config', {
-            gateHash: undefined,
-            updatedAt: new Date().toISOString()
-          });
-          debugLog('[LoginGuard] Invalidated single-user gateHash');
-        }
-      }
-    } else {
-      const config = getEngineConfig();
-      const db = config.db;
-      if (db) {
-        const record = await db.table('offlineCredentials').get('current_user');
-        if (record && record.password) {
-          await db.table('offlineCredentials').update('current_user', {
-            password: undefined,
-            cachedAt: new Date().toISOString()
-          });
-          debugLog('[LoginGuard] Invalidated offline credentials password hash');
-        }
+    const config = getEngineConfig();
+    const db = config.db;
+    if (db) {
+      const record = await db.table('singleUserConfig').get('config');
+      if (record && record.gateHash) {
+        await db.table('singleUserConfig').update('config', {
+          gateHash: undefined,
+          updatedAt: new Date().toISOString()
+        });
+        debugLog('[LoginGuard] Invalidated single-user gateHash');
       }
     }
   } catch (e) {
@@ -173,25 +154,20 @@ async function invalidateCachedHash(mode: 'single-user' | 'multi-user'): Promise
 /**
  * Pre-check login credentials locally before calling Supabase.
  *
- * For single-user mode: reads `singleUserConfig.gateHash`, hashes input, compares.
- * For multi-user mode: reads offline credentials, matches email + hashes password, compares.
+ * Reads `singleUserConfig.gateHash`, hashes input, and compares.
  *
  * Returns `{ proceed: true, strategy }` to allow Supabase call,
  * or `{ proceed: false, error, retryAfterMs? }` to reject locally.
  *
  * @param input - The plaintext password or gate code entered by the user.
- * @param mode - The auth mode (`'single-user'` or `'multi-user'`), which
- *               determines which IndexedDB table holds the cached hash.
- * @param email - (Multi-user only) The email address to match against cached
- *                credentials. Ignored in single-user mode.
  * @returns A promise resolving to a {@link PreCheckResult}.
  *
  * @example
  * ```ts
- * const result = await preCheckLogin(password, 'multi-user', email);
+ * const result = await preCheckLogin(password);
  * if (result.proceed) {
  *   const { error } = await supabase.auth.signInWithPassword({ email, password });
- *   if (error) await onLoginFailure(result.strategy, 'multi-user');
+ *   if (error) await onLoginFailure(result.strategy);
  *   else onLoginSuccess();
  * } else {
  *   showError(result.error);
@@ -201,26 +177,15 @@ async function invalidateCachedHash(mode: 'single-user' | 'multi-user'): Promise
  * @see {@link onLoginSuccess} -- must be called after a successful Supabase login.
  * @see {@link onLoginFailure} -- must be called after a failed Supabase login.
  */
-export async function preCheckLogin(
-  input: string,
-  mode: 'single-user' | 'multi-user',
-  email?: string
-): Promise<PreCheckResult> {
+export async function preCheckLogin(input: string): Promise<PreCheckResult> {
   try {
     let cachedHash: string | undefined;
 
-    if (mode === 'single-user') {
-      const config = getEngineConfig();
-      const db = config.db;
-      if (db) {
-        const record = await db.table('singleUserConfig').get('config');
-        cachedHash = record?.gateHash;
-      }
-    } else {
-      const creds = await getOfflineCredentials();
-      if (creds && email && creds.email === email && creds.password) {
-        cachedHash = creds.password;
-      }
+    const config = getEngineConfig();
+    const db = config.db;
+    if (db) {
+      const record = await db.table('singleUserConfig').get('config');
+      cachedHash = record?.gateHash;
     }
 
     if (cachedHash) {
@@ -245,7 +210,7 @@ export async function preCheckLogin(
            on another device). Invalidate it so subsequent attempts go directly
            to Supabase in rate-limited mode. */
         debugWarn('[LoginGuard] Threshold exceeded, invalidating cached hash');
-        await invalidateCachedHash(mode);
+        await invalidateCachedHash();
         consecutiveLocalFailures = 0;
 
         /* Fall through to rate-limited Supabase mode */
@@ -317,27 +282,22 @@ export function onLoginSuccess(): void {
  *
  * @param strategy - The {@link PreCheckStrategy} that was returned by
  *                   {@link preCheckLogin} for this attempt.
- * @param mode - The auth mode, used to determine which IndexedDB table to
- *               invalidate if the hash is stale. Defaults to `'multi-user'`.
  *
  * @example
  * ```ts
- * const result = await preCheckLogin(password, 'multi-user', email);
+ * const result = await preCheckLogin(password);
  * if (result.proceed) {
  *   const { error } = await supabase.auth.signInWithPassword({ email, password });
- *   if (error) await onLoginFailure(result.strategy, 'multi-user');
+ *   if (error) await onLoginFailure(result.strategy);
  * }
  * ```
  */
-export async function onLoginFailure(
-  strategy: PreCheckStrategy,
-  mode: 'single-user' | 'multi-user' = 'multi-user'
-): Promise<void> {
+export async function onLoginFailure(strategy: PreCheckStrategy): Promise<void> {
   if (strategy === 'local-match') {
     /* Stale hash: local match but Supabase rejected -- invalidate the cache
        so the user is not stuck in a loop of false local matches. */
     debugWarn('[LoginGuard] Stale hash detected, invalidating cached hash');
-    await invalidateCachedHash(mode);
+    await invalidateCachedHash();
   } else {
     /* No-cache mode: apply exponential backoff to throttle brute-force
        attempts that bypass the local pre-check. */

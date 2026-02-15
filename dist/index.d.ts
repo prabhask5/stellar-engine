@@ -9,8 +9,8 @@
  * - **Database Access** — get a handle to the IndexedDB instance or reset it.
  * - **Generic CRUD & Query** — create, read, update, delete, batch write,
  *   increment, and query data in the local database.
- * - **Authentication** — Supabase GoTrue auth, offline login, single-user
- *   (kiosk) auth, admin checks, device verification, and login guards.
+ * - **Authentication** — Single-user PIN/password gate auth, device
+ *   verification, login guards, and session management.
  * - **Reactive Stores** — Svelte-compatible stores for sync status, network
  *   state, remote changes, and auth state.
  * - **Realtime Events** — lifecycle hooks for sync completion and realtime
@@ -37,13 +37,10 @@ export { onSyncComplete } from './engine';
 export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncrement } from './data';
 export type { BatchOperation } from './data';
 export { engineGet, engineGetAll, engineQuery, engineQueryRange, engineGetOrCreate } from './data';
-export { signIn, signUp, signOut, changePassword, changeEmail, completeEmailChange, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
-export type { AuthResponse } from './supabase/auth';
+export { signOut, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
 export { resolveAuthState } from './auth/resolveAuthState';
 export type { AuthStateResult } from './auth/resolveAuthState';
-export { isAdmin } from './auth/admin';
 export { resetLoginGuard } from './auth/loginGuard';
-export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from './auth/singleUser';
 export { resolveFirstName, resolveUserId, resolveAvatarInitial } from './auth/displayUtils';
 export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';

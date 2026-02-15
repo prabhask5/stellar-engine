@@ -81,7 +81,6 @@ initEngine({
   tables: [/* ... */],
   database: {/* ... */},
   auth: {
-    mode: 'single-user',
     singleUser: { gateType: 'code', codeLength: 4 },
     enableOfflineAuth: true,
     // emailConfirmation: { enabled: true },       // require email confirmation on setup
@@ -134,7 +133,7 @@ The command creates a full SvelteKit 2 + Svelte 5 project with:
 | `src/routes/+layout.svelte` | Auth state hydration via `hydrateAuthState()` | App shell (navbar, tab bar, overlays) |
 | `src/routes/+page.svelte` | Imports `resolveFirstName`, `onSyncComplete`, `authState`; derives `firstName` reactively | Home page UI |
 | `src/routes/+error.svelte` | — | Error page UI |
-| `src/routes/setup/+page.ts` | Config check, session validation, admin check via `getConfig()`, `getValidSession()`, `isAdmin()` | — (fully managed) |
+| `src/routes/setup/+page.ts` | Config check, session validation via `getConfig()`, `getValidSession()` | — (fully managed) |
 | `src/routes/setup/+page.svelte` | Imports `setConfig`, `isOnline`, `pollForNewServiceWorker` | Setup wizard UI |
 | `src/routes/policy/+page.svelte` | — | Privacy policy content |
 | `src/routes/login/+page.svelte` | All auth functions: `setupSingleUser`, `unlockSingleUser`, `getSingleUserInfo`, `completeSingleUserSetup`, `completeDeviceVerification`, `pollDeviceVerification`, `fetchRemoteGateConfig`, `linkSingleUserDevice`, `sendDeviceVerification` | Login page UI |
@@ -168,7 +167,7 @@ Import only what you need via subpath exports:
 |---|---|
 | `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `validateSupabaseCredentials`, `validateSchema` |
 | `@prabhask5/stellar-engine/data` | All engine CRUD + query operations (`engineCreate`, `engineUpdate`, etc.) |
-| `@prabhask5/stellar-engine/auth` | All auth functions (`signIn`, `signUp`, `resolveAuthState`, `isAdmin`, `changeEmail`, `completeEmailChange`, single-user: `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, `completeSingleUserSetup`, `completeDeviceVerification`, `changeSingleUserEmail`, `completeSingleUserEmailChange`, `padPin`, etc.) |
+| `@prabhask5/stellar-engine/auth` | All auth functions (`resolveAuthState`, `signOut`, `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, `completeSingleUserSetup`, `completeDeviceVerification`, `changeSingleUserEmail`, `completeSingleUserEmailChange`, `padPin`, etc.) |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions (`syncStatusStore`, `authState`, `onSyncComplete`, etc.) |
 | `@prabhask5/stellar-engine/types` | All type exports (`Session`, `SyncEngineConfig`, `BatchOperation`, `SingleUserConfig`, etc.) |
 | `@prabhask5/stellar-engine/utils` | Utility functions (`generateId`, `now`, `calculateNewOrder`, `snakeToCamel`, `debug`, etc.) |
@@ -300,30 +299,22 @@ Alternatively, you can provide a pre-created Dexie instance via the `db` config 
 | `markEntityModified(table, id)` | Record that an entity was recently modified locally (prevents incoming realtime from overwriting). |
 | `onSyncComplete(callback)` | Register a callback invoked after each successful sync cycle. |
 
-### Auth
+### Auth Utilities
 
 | Export | Description |
 |---|---|
-| `signIn` / `signUp` / `signOut` | Supabase auth wrappers that also manage offline credential caching. |
-| `getSession` / `isSessionExpired` | Session inspection helpers. |
-| `changePassword` / `resendConfirmationEmail` | Account management. |
-| `changeEmail(newEmail)` | Request email change (sends confirmation to new address). Returns `{ error, confirmationRequired }`. |
-| `completeEmailChange()` | Finalize email change after confirmation. Refreshes session and updates cached credentials. |
+| `signOut` | Full teardown: stops sync, clears caches, signs out of Supabase. |
+| `resendConfirmationEmail` | Resend signup confirmation email. |
 | `getUserProfile` / `updateProfile` | Profile read/write via Supabase user metadata. |
+| `verifyOtp` | Verify OTP token hash from confirmation email links. |
+| `getValidSession` | Get a non-expired Supabase session, or `null`. |
 | `resolveFirstName(session, offline, fallback?)` | Resolve display name from session or offline profile with configurable fallback. |
 | `resolveUserId(session, offline)` | Extract user UUID from session or offline credentials. |
 | `resolveAvatarInitial(session, offline, fallback?)` | Single uppercase initial for avatar display. |
 
-### Offline auth
-
-| Export | Description |
-|---|---|
-| `cacheOfflineCredentials` / `getOfflineCredentials` / `verifyOfflineCredentials` / `clearOfflineCredentials` | Store and verify credentials locally for offline sign-in. |
-| `createOfflineSession` / `getValidOfflineSession` / `clearOfflineSession` | Manage offline session tokens in IndexedDB. |
-
 ### Single-user auth
 
-For personal apps that use a simplified PIN or password gate. Uses real Supabase email/password auth where the PIN is padded to meet minimum password length. Enable by setting `auth.mode: 'single-user'` in the engine config.
+For personal apps that use a simplified PIN or password gate. Uses real Supabase email/password auth where the PIN is padded to meet minimum password length. Enable by setting `auth.singleUser` in the engine config.
 
 | Export | Description |
 |---|---|

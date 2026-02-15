@@ -5,7 +5,7 @@
  * first function consumers call — it accepts a {@link SyncEngineConfig} object
  * that describes:
  *   - Which Supabase tables to sync and their IndexedDB schemas
- *   - Authentication mode (multi-user, single-user, or none)
+ *   - Authentication configuration (single-user gate, offline auth, etc.)
  *   - Sync timing parameters (debounce, polling interval, tombstone TTL)
  *   - Optional callbacks for auth state changes
  *
@@ -20,7 +20,7 @@
  * @see {@link database.ts} for Dexie instance creation
  * @see {@link engine.ts} for the sync lifecycle that consumes this config
  */
-import type { SupabaseClient, User } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import type { SingleUserGateType } from './types';
@@ -54,9 +54,7 @@ export interface SyncEngineConfig {
     database?: DatabaseConfig;
     /** Authentication configuration. */
     auth?: {
-        /** Auth mode: `'multi-user'` (default) or `'single-user'` (anonymous Supabase auth with local gate). */
-        mode?: 'multi-user' | 'single-user';
-        /** Single-user mode gate configuration (required when `mode === 'single-user'`). */
+        /** Single-user mode gate configuration. */
         singleUser?: {
             gateType: SingleUserGateType;
             /** Required when `gateType === 'code'`. */
@@ -72,8 +70,6 @@ export interface SyncEngineConfig {
         sessionValidationIntervalMs?: number;
         /** Path to redirect to after email confirmation (e.g., `'/auth/confirm'`). */
         confirmRedirectPath?: string;
-        /** Predicate to determine if a user has admin privileges. */
-        adminCheck?: (user: User | null) => boolean;
         /** Device verification for untrusted devices (requires email OTP). */
         deviceVerification?: {
             enabled: boolean;

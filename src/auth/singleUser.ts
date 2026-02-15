@@ -532,7 +532,7 @@ export async function unlockSingleUser(gate: string): Promise<{
 
       /* Pre-check credentials locally before calling Supabase to enforce
          client-side rate limiting and avoid unnecessary network requests */
-      const preCheck = await preCheckLogin(gate, 'single-user');
+      const preCheck = await preCheckLogin(gate);
       if (!preCheck.proceed) {
         return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
       }
@@ -546,7 +546,7 @@ export async function unlockSingleUser(gate: string): Promise<{
       });
 
       if (error) {
-        await onLoginFailure(strategy, 'single-user');
+        await onLoginFailure(strategy);
         debugWarn('[SingleUser] signInWithPassword failed:', error.message);
         /* Return generic error to avoid leaking whether the account exists */
         return { error: 'Incorrect code' };
@@ -1246,7 +1246,7 @@ export async function linkSingleUserDevice(
 
     /* Pre-check with rate limiting. New devices always use the 'no-cache'
        strategy since there are no local credentials to compare against. */
-    const preCheck = await preCheckLogin(pin, 'single-user', email);
+    const preCheck = await preCheckLogin(pin);
     if (!preCheck.proceed) {
       return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
     }
@@ -1259,7 +1259,7 @@ export async function linkSingleUserDevice(
     });
 
     if (error) {
-      await onLoginFailure('no-cache', 'single-user');
+      await onLoginFailure('no-cache');
       debugWarn('[SingleUser] linkSingleUserDevice signIn failed:', error.message);
       return { error: 'Incorrect code' };
     }

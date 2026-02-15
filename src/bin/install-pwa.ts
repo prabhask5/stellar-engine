@@ -1357,7 +1357,7 @@ export const prerender = false;
 //     },
 //     supabase,
 //     prefix: '${opts.prefix}',
-//     auth: { mode: 'single-user', singleUser: { gateType: 'code', codeLength: 6 } },
+//     auth: { singleUser: { gateType: 'code', codeLength: 6 } },
 //     onAuthStateChange: (event, session) => { /* handle auth events */ },
 //     onAuthKicked: async () => { await lockSingleUser(); goto('/login'); }
 //   });
@@ -1420,7 +1420,7 @@ export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
  *
  * @returns The Svelte component source for `src/routes/+layout.svelte`.
  */
-function generateRootLayoutSvelte(): string {
+function generateRootLayoutSvelte(opts: InstallOptions): string {
   return `<!--
   @fileoverview Root layout component — app shell, auth hydration,
   navigation chrome, overlays, and PWA lifecycle.
@@ -1432,48 +1432,236 @@ function generateRootLayoutSvelte(): string {
 -->
 <script lang="ts">
   /**
-   * @fileoverview Root layout script — imports, props, and reactive auth hydration.
+   * @fileoverview Root layout script — auth state management, navigation logic,
+   * service worker communication, and global event handlers.
    */
 
-  // ==========================================================================
-  //                                IMPORTS
-  // ==========================================================================
+  // =============================================================================
+  //  Imports
+  // =============================================================================
+
+  /* ── Svelte Lifecycle & Transitions ── */
+  import { onMount, onDestroy } from 'svelte';
+
+  /* ── SvelteKit Utilities ── */
+  import { page } from '$app/stores';
+  import { browser } from '$app/environment';
 
   /* ── Stellar Engine — Auth & Stores ── */
+  import { lockSingleUser } from '@prabhask5/stellar-engine/auth';
+  import { debug } from '@prabhask5/stellar-engine/utils';
   import { hydrateAuthState } from '@prabhask5/stellar-engine/kit';
-  import { authState } from '@prabhask5/stellar-engine/stores';
 
   /* ── Types ── */
   import type { LayoutData } from './+layout';
 
-  // ==========================================================================
-  //                                 PROPS
-  // ==========================================================================
+  // =============================================================================
+  //  Props
+  // =============================================================================
 
   interface Props {
-    /** Default slot content (the routed page component). */
+    /** Default slot content — the matched page component. */
     children?: import('svelte').Snippet;
-    /** Layout data returned by the root \`+layout.ts\` load function. */
+
+    /** Layout data from \`+layout.ts\` — session, auth mode, offline profile. */
     data: LayoutData;
   }
 
   let { children, data }: Props = $props();
 
-  // ==========================================================================
-  //                           COMPONENT STATE
-  // ==========================================================================
+  // =============================================================================
+  //  Component State
+  // =============================================================================
+
+  /* ── Toast Notification ── */
+  /** Whether the toast notification is currently visible. */
+  let showToast = $state(false);
+
+  /** The text content of the current toast notification. */
+  let toastMessage = $state('');
+
+  /** The visual style of the toast — \`'info'\` (purple) or \`'error'\` (pink). */
+  let toastType = $state<'info' | 'error'>('info');
+
+  /* ── Sign-Out ── */
+  /** When \`true\`, a full-screen overlay is shown to mask the sign-out transition. */
+  let isSigningOut = $state(false);
+
+  /* ── Cleanup References ── */
+  /** Stored reference to the chunk error handler so we can remove it on destroy. */
+  let chunkErrorHandler: ((event: PromiseRejectionEvent) => void) | null = null;
+
+  // =============================================================================
+  //  Reactive Effects
+  // =============================================================================
 
   /**
-   * Hydrate the global auth store whenever the load function returns
-   * fresh data (e.g. after navigation or token refresh).
+   * Effect: hydrate the global \`authState\` store from layout load data.
+   *
+   * Runs whenever \`data\` changes (e.g. after navigation or revalidation).
+   * Maps the three possible auth modes to the corresponding store setter:
+   * - \`'supabase'\` + session → \`setSupabaseAuth\`
+   * - \`'offline'\` + cached profile → \`setOfflineAuth\`
+   * - anything else → \`setNoAuth\`
    */
   $effect(() => {
     hydrateAuthState(data);
   });
 
-  // TODO: Add app shell (navbar, tab bar, overlays, sign-out logic, etc.)
-  // TODO: Import and use UpdatePrompt from '$lib/components/UpdatePrompt.svelte'
-  // TODO: Import and use SyncStatus from '@prabhask5/stellar-engine/components/SyncStatus'
+  // =============================================================================
+  //  Lifecycle — Mount
+  // =============================================================================
+
+  onMount(() => {
+    // ── Chunk Error Handler ────────────────────────────────────────────────
+    // When navigating offline to a page whose JS chunks aren't cached,
+    // the dynamic import fails and shows a cryptic error. Catch and show a friendly message.
+    chunkErrorHandler = (event: PromiseRejectionEvent) => {
+      const error = event.reason;
+      // Check if this is a chunk loading error (fetch failed or syntax error from 503 response)
+      const isChunkError =
+        error?.message?.includes('Failed to fetch dynamically imported module') ||
+        error?.message?.includes('error loading dynamically imported module') ||
+        error?.message?.includes('Importing a module script failed') ||
+        error?.name === 'ChunkLoadError' ||
+        (error?.message?.includes('Loading chunk') && error?.message?.includes('failed'));
+
+      if (isChunkError && !navigator.onLine) {
+        event.preventDefault(); // Prevent default error handling
+        // Show offline navigation toast
+        toastMessage = "This page isn't available offline. Please reconnect or go back.";
+        toastType = 'info';
+        showToast = true;
+        setTimeout(() => {
+          showToast = false;
+        }, 5000);
+      }
+    };
+
+    window.addEventListener('unhandledrejection', chunkErrorHandler);
+
+    // ── Sign-Out Event Listener ───────────────────────────────────────────
+    // Listen for sign out requests from child pages (e.g. mobile profile page)
+    window.addEventListener('${opts.prefix}:signout', handleSignOut);
+
+    // ── Service Worker — Background Precaching ────────────────────────────
+    // Proactively cache all app chunks for full offline support.
+    // This runs in the background after page load, so it doesn't affect Lighthouse scores.
+    if ('serviceWorker' in navigator) {
+      // Listen for precache completion messages from service worker
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'PRECACHE_COMPLETE') {
+          const { cached, total } = event.data;
+          debug('log', \`[PWA] Background precaching complete: \${cached}/\${total} assets cached\`);
+          if (cached === total) {
+            debug('log', '[PWA] Full offline support ready - all pages accessible offline');
+          } else {
+            debug('warn', \`[PWA] Some assets failed to cache: \${total - cached} missing\`);
+          }
+        }
+      });
+
+      // Wait for service worker to be ready (handles first load case)
+      navigator.serviceWorker.ready.then((registration) => {
+        debug('log', '[PWA] Service worker ready, scheduling background precache...');
+
+        // Give the page time to fully load, then trigger background precaching
+        setTimeout(() => {
+          const controller = navigator.serviceWorker.controller || registration.active;
+          if (!controller) {
+            debug('warn', '[PWA] No service worker controller available');
+            return;
+          }
+
+          // First, cache current page's assets (scripts + stylesheets)
+          const scripts = Array.from(document.querySelectorAll('script[src]'))
+            .map((el) => (el as HTMLScriptElement).src)
+            .filter((src) => src.startsWith(location.origin));
+
+          const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+            .map((el) => (el as HTMLLinkElement).href)
+            .filter((href) => href.startsWith(location.origin));
+
+          const urls = [...scripts, ...styles];
+
+          if (urls.length > 0) {
+            debug('log', \`[PWA] Caching \${urls.length} current page assets...\`);
+            controller.postMessage({
+              type: 'CACHE_URLS',
+              urls
+            });
+          }
+
+          // Then trigger full background precaching for all app chunks.
+          // This ensures offline support for all pages, not just visited ones.
+          debug('log', '[PWA] Triggering background precache of all app chunks...');
+          controller.postMessage({
+            type: 'PRECACHE_ALL'
+          });
+        }, 500); // Cache assets quickly to reduce window for uncached refreshes
+      });
+    }
+  });
+
+  // =============================================================================
+  //  Lifecycle — Destroy
+  // =============================================================================
+
+  onDestroy(() => {
+    if (browser) {
+      // Cleanup chunk error handler
+      if (chunkErrorHandler) {
+        window.removeEventListener('unhandledrejection', chunkErrorHandler);
+      }
+      // Cleanup sign out listener
+      window.removeEventListener('${opts.prefix}:signout', handleSignOut);
+    }
+  });
+
+  // =============================================================================
+  //  Event Handlers
+  // =============================================================================
+
+  /**
+   * Handles the sign-out flow with a visual transition.
+   *
+   * 1. Shows a full-screen "Locking..." overlay immediately.
+   * 2. Waits 250ms for the overlay fade-in to complete.
+   * 3. Calls \`lockSingleUser()\` to stop the engine and clear the session
+   *    (but NOT destroy user data).
+   * 4. Hard-navigates to \`/login\` (full page reload to reset all state).
+   */
+  async function handleSignOut() {
+    // Show full-screen overlay immediately
+    isSigningOut = true;
+
+    // Wait for overlay to fully appear
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    // Lock the single-user session (stops engine, resets auth state, does NOT destroy data)
+    await lockSingleUser();
+
+    // Navigate to login
+    window.location.href = '/login';
+  }
+
+  /**
+   * Checks whether a given route \`href\` matches the current page path.
+   * Used to highlight the active nav item.
+   *
+   * @param href - The route path to check (e.g. \`'/agenda'\`)
+   * @returns \`true\` if the current path starts with \`href\`
+   */
+  function isActive(href: string): boolean {
+    return $page.url.pathname.startsWith(href);
+  }
+
+  /**
+   * Dismisses the currently visible toast notification.
+   */
+  function dismissToast() {
+    showToast = false;
+  }
 </script>
 
 <!-- TODO: Add your app shell template (navbar, tab bar, page transitions, etc.) -->
@@ -1490,7 +1678,7 @@ function generateRootLayoutSvelte(): string {
  *
  * @returns The Svelte component source for `src/routes/+page.svelte`.
  */
-function generateHomePage(): string {
+function generateHomePage(opts: InstallOptions): string {
   return `<!--
   @fileoverview Home / landing page — welcome screen and primary content.
 
@@ -1522,8 +1710,30 @@ function generateHomePage(): string {
     resolveFirstName($authState.session, $authState.offlineProfile)
   );
 
+    // =============================================================================
+  //  Reactive Effects
+  // =============================================================================
+
+  /**
+   * Effect: auth redirect guard.
+   *
+   * Once the auth store finishes loading and resolves to \`'none'\` (no session),
+   * redirect to \`/login\` with a \`redirect\` query param so the login page knows
+   * this was an automatic redirect rather than direct navigation.
+   */
+  $effect(() => {
+    if (!$authState.isLoading && $authState.mode === 'none') {
+      // Include redirect param so login page knows this was a redirect, not direct navigation
+      goto('/login?redirect=%2F', { replaceState: true });
+    }
+  });
+
   // TODO: Add home page state and logic
 </script>
+
+<svelte:head>
+  <title>Home - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add home page template -->
 `;
@@ -1534,7 +1744,7 @@ function generateHomePage(): string {
  *
  * @returns The Svelte component source for `src/routes/+error.svelte`.
  */
-function generateErrorPage(): string {
+function generateErrorPage(opts: InstallOptions): string {
   return `<!--
   @fileoverview Error boundary — handles three scenarios:
     1. **Offline** — device has no connectivity, show a friendly offline message
@@ -1556,27 +1766,69 @@ function generateErrorPage(): string {
   //                                 STATE
   // ==========================================================================
 
-  // TODO: Add error page logic (offline detection, retry handlers, etc.)
+  /** Whether the user is currently offline — drives which error variant is shown. */
+  let isOffline = $state(false);
 
   // ==========================================================================
   //                          REACTIVE EFFECTS
   // ==========================================================================
 
-  // TODO: Add reactive effects (e.g. watch online/offline status)
+  /**
+   * Effect: tracks the browser's online/offline status in real time.
+   * Sets \`isOffline\` on mount and attaches \`online\` / \`offline\` event listeners.
+   * Returns a cleanup function that removes the listeners on destroy.
+   */
+  $effect(() => {
+    if (browser) {
+      isOffline = !navigator.onLine;
+
+      const handleOnline = () => {
+        isOffline = false;
+      };
+      const handleOffline = () => {
+        isOffline = true;
+      };
+
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      };
+    }
+  });
 
   // ==========================================================================
   //                          EVENT HANDLERS
   // ==========================================================================
 
-  // TODO: Add event handlers (retry, go home, etc.)
+  /**
+   * Reload the current page — useful when the user regains connectivity or
+   * wants to retry after a transient server error.
+   */
+  function handleRetry() {
+    window.location.reload();
+  }
+
+  /**
+   * Navigate back to the home page via SvelteKit client-side routing.
+   */
+  function handleGoHome() {
+    goto('/');
+  }
 </script>
+
+<svelte:head>
+  <title>Error - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add error page template (status code display, retry button, go home button) -->
 `;
 }
 
 /**
- * Generate the setup page load function with first-setup / admin-only guard.
+ * Generate the setup page load function with first-setup / auth guard.
  *
  * @returns The TypeScript source for `src/routes/setup/+page.ts`.
  */
@@ -1587,18 +1839,18 @@ function generateSetupPageTs(): string {
  * Two modes:
  *   - **Unconfigured** — no runtime config exists yet; anyone can access the
  *     setup wizard to perform first-time Supabase configuration.
- *   - **Configured + admin** — config already saved; only authenticated admin
- *     users may revisit the setup page to update credentials or redeploy.
+ *   - **Configured** — config already saved; only authenticated users may
+ *     revisit the setup page to update credentials or redeploy.
  */
 
 import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { getConfig } from '@prabhask5/stellar-engine/config';
-import { getValidSession, isAdmin } from '@prabhask5/stellar-engine/auth';
+import { getValidSession } from '@prabhask5/stellar-engine/auth';
 import type { PageLoad } from './$types';
 
 /**
- * Guard the setup route — allow first-time setup or admin-only access.
+ * Guard the setup route — allow first-time setup or authenticated access.
  *
  * @returns Page data with an \`isFirstSetup\` flag.
  */
@@ -1612,9 +1864,6 @@ export const load: PageLoad = async () => {
   if (!session?.user) {
     redirect(307, '/login');
   }
-  if (!isAdmin(session.user)) {
-    redirect(307, '/');
-  }
   return { isFirstSetup: false };
 };
 `;
@@ -1625,7 +1874,7 @@ export const load: PageLoad = async () => {
  *
  * @returns The Svelte component source for `src/routes/setup/+page.svelte`.
  */
-function generateSetupPageSvelte(): string {
+function generateSetupPageSvelte(opts: InstallOptions): string {
   return `<!--
   @fileoverview Five-step Supabase configuration wizard.
 
@@ -1634,12 +1883,218 @@ function generateSetupPageSvelte(): string {
   and reloading the app with the new config active.
 -->
 <script lang="ts">
+  /**
+   * @fileoverview Setup wizard page — first-time Supabase configuration.
+   *
+   * Guides the user through a five-step process to connect their own
+   * Supabase backend to Stellar:
+   *
+   * 1. Create a Supabase project (instructions only).
+   * 2. Configure authentication (enable anonymous sign-ins).
+   * 3. Initialize the database by running the schema SQL.
+   * 4. Enter and validate Supabase credentials (URL + anon key).
+   * 5. Persist configuration via Vercel API (set env vars + redeploy).
+   *
+   * After a successful deploy the page polls for a new service-worker
+   * version — once detected the user is prompted to refresh.
+   *
+   * Access is controlled by the companion \`+page.ts\` load function:
+   * - Unconfigured → anyone can reach this page (\`isFirstSetup: true\`).
+   * - Configured → authenticated users only (\`isFirstSetup: false\`).
+   */
+
+  import { page } from '$app/stores';
   import { setConfig } from '@prabhask5/stellar-engine/config';
   import { isOnline } from '@prabhask5/stellar-engine/stores';
   import { pollForNewServiceWorker } from '@prabhask5/stellar-engine/kit';
 
-  // TODO: Add setup wizard state (steps, form fields, validation, deployment)
+  // =============================================================================
+  //  Form State — Supabase + Vercel credentials
+  // =============================================================================
+
+  /** Supabase project URL entered by the user */
+  let supabaseUrl = $state('');
+
+  /** Supabase public anon key entered by the user */
+  let supabaseAnonKey = $state('');
+
+  /** One-time Vercel API token for setting env vars */
+  let vercelToken = $state('');
+
+  // =============================================================================
+  //  UI State — Validation & Deployment feedback
+  // =============================================================================
+
+  /** Whether the "Test Connection" request is in-flight */
+  let validating = $state(false);
+
+  /** Whether the deploy/redeploy flow is in-flight */
+  let deploying = $state(false);
+
+  /** Error from credential validation, if any */
+  let validateError = $state<string | null>(null);
+
+  /** \`true\` after credentials have been successfully validated */
+  let validateSuccess = $state(false);
+
+  /** Error from the deployment step, if any */
+  let deployError = $state<string | null>(null);
+
+  /** Current deployment pipeline stage — drives the progress UI */
+  let deployStage = $state<'idle' | 'setting-env' | 'deploying' | 'ready'>('idle');
+
+  /** URL returned by Vercel for the triggered deployment (informational) */
+  let _deploymentUrl = $state('');
+
+  // =============================================================================
+  //  Derived State
+  // =============================================================================
+
+  /** Whether this is a first-time setup (public) or reconfiguration */
+  const isFirstSetup = $derived(($page.data as { isFirstSetup?: boolean }).isFirstSetup ?? false);
+
+  /**
+   * Snapshot of the credentials at validation time — used to detect
+   * if the user edits the inputs *after* a successful validation.
+   */
+  let validatedUrl = $state('');
+  let validatedKey = $state('');
+
+  /**
+   * \`true\` when the user changes credentials after a successful
+   * validation — the "Continue" button should be re-disabled.
+   */
+  const credentialsChanged = $derived(
+    validateSuccess && (supabaseUrl !== validatedUrl || supabaseAnonKey !== validatedKey)
+  );
+
+  // =============================================================================
+  //  Effects
+  // =============================================================================
+
+  /**
+   * Auto-reset validation state when the user modifies credentials
+   * after they were already validated — forces re-validation.
+   */
+  $effect(() => {
+    if (credentialsChanged) {
+      validateSuccess = false;
+      validateError = null;
+    }
+  });
+
+  // =============================================================================
+  //  Validation — "Test Connection"
+  // =============================================================================
+
+  /**
+   * Send the entered Supabase credentials to \`/api/setup/validate\`
+   * and update UI state based on the result. On success, also
+   * cache the config locally via \`setConfig\` so the app is usable
+   * immediately after the deployment finishes.
+   */
+  async function handleValidate() {
+    validateError = null;
+    validateSuccess = false;
+    validating = true;
+
+    try {
+      const res = await fetch('/api/setup/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supabaseUrl, supabaseAnonKey })
+      });
+
+      const data = await res.json();
+
+      if (data.valid) {
+        validateSuccess = true;
+        validatedUrl = supabaseUrl;
+        validatedKey = supabaseAnonKey;
+        /* Cache config locally so the app works immediately after deploy */
+        setConfig({
+          supabaseUrl,
+          supabaseAnonKey,
+          configured: true
+        });
+      } else {
+        validateError = data.error || 'Validation failed';
+      }
+    } catch (e) {
+      validateError = e instanceof Error ? e.message : 'Network error';
+    }
+
+    validating = false;
+  }
+
+  // =============================================================================
+  //  Deployment Polling
+  // =============================================================================
+
+  /**
+   * Poll for a new service-worker version to detect when the Vercel
+   * redeployment has finished. Uses the engine's \`pollForNewServiceWorker\`
+   * helper which checks \`registration.update()\` at regular intervals.
+   *
+   * Resolves a Promise when a new SW is detected in the waiting state.
+   */
+  function pollForDeployment(): Promise<void> {
+    return new Promise((resolve) => {
+      pollForNewServiceWorker({
+        intervalMs: 3000,
+        maxAttempts: 200,
+        onFound: () => {
+          deployStage = 'ready';
+          resolve();
+        }
+      });
+    });
+  }
+
+  // =============================================================================
+  //  Deployment — Set env vars + trigger Vercel redeploy
+  // =============================================================================
+
+  /**
+   * Send credentials and the Vercel token to \`/api/setup/deploy\`,
+   * which sets the environment variables on the Vercel project and
+   * triggers a fresh deployment. Then poll until the new build is live.
+   */
+  async function handleDeploy() {
+    deployError = null;
+    deploying = true;
+    deployStage = 'setting-env';
+
+    try {
+      const res = await fetch('/api/setup/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supabaseUrl, supabaseAnonKey, vercelToken })
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        deployStage = 'deploying';
+        _deploymentUrl = data.deploymentUrl || '';
+        /* Poll for the new SW version → marks \`deployStage = 'ready'\` */
+        await pollForDeployment();
+      } else {
+        deployError = data.error || 'Deployment failed';
+        deployStage = 'idle';
+      }
+    } catch (e) {
+      deployError = e instanceof Error ? e.message : 'Network error';
+      deployStage = 'idle';
+    }
+
+    deploying = false;
+  }
 </script>
+
+<svelte:head>
+  <title>Setup - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add setup wizard template (Supabase credentials form, validation, Vercel deployment) -->
 `;
@@ -1650,7 +2105,7 @@ function generateSetupPageSvelte(): string {
  *
  * @returns The Svelte component source for `src/routes/policy/+page.svelte`.
  */
-function generatePolicyPage(): string {
+function generatePolicyPage(opts: InstallOptions): string {
   return `<!--
   @fileoverview Privacy policy page.
 
@@ -1660,6 +2115,10 @@ function generatePolicyPage(): string {
 <script lang="ts">
   // TODO: Add any needed imports
 </script>
+
+<svelte:head>
+  <title>Privacy Policy - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add privacy policy page content -->
 `;
@@ -1671,7 +2130,7 @@ function generatePolicyPage(): string {
  *
  * @returns The Svelte component source for `src/routes/login/+page.svelte`.
  */
-function generateLoginPage(): string {
+function generateLoginPage(opts: InstallOptions): string {
   return `<!--
   @fileoverview Login page — three modes:
     1. **Setup**       — first-time account creation (email + PIN)
@@ -1701,14 +2160,711 @@ function generateLoginPage(): string {
   //                        LAYOUT / PAGE DATA
   // ==========================================================================
 
-  // TODO: Add login page state (setup/unlock/link-device modes, PIN inputs, modals)
+  /** Whether the single-user account has already been set up on this device */
+  const singleUserSetUp = $derived($page.data.singleUserSetUp);
+
+  /** Post-login redirect URL extracted from \`?redirect=\` query param */
+  const redirectUrl = $derived($page.url.searchParams.get('redirect') || '/');
 
   // ==========================================================================
   //                          SHARED UI STATE
   // ==========================================================================
 
-  // TODO: Add BroadcastChannel listener for auth-confirmed events from /confirm
+  /** \`true\` while any async auth operation is in-flight */
+  let loading = $state(false);
+
+  /** Current error message shown to the user (null = no error) */
+  let error = $state<string | null>(null);
+
+  /** Triggers the CSS shake animation on the login card */
+  let shaking = $state(false);
+
+  /** Set to \`true\` after the component mounts — enables entrance animation */
+  let mounted = $state(false);
+
+  // =============================================================================
+  //  Setup Mode State (step 1 → email/name, step 2 → PIN creation)
+  // =============================================================================
+
+  /** User's email address for account creation */
+  let email = $state('');
+
+  /** User's first name */
+  let firstName = $state('');
+
+  /** User's last name (optional) */
+  let lastName = $state('');
+
+  /** Individual digit values for the 6-digit PIN code */
+  let codeDigits = $state(['', '', '', '', '', '']);
+
+  /** Individual digit values for the PIN confirmation */
+  let confirmDigits = $state(['', '', '', '', '', '']);
+
+  /** Concatenated PIN code — derived from \`codeDigits\` */
+  const code = $derived(codeDigits.join(''));
+
+  /** Concatenated confirmation code — derived from \`confirmDigits\` */
+  const confirmCode = $derived(confirmDigits.join(''));
+
+  /** Current setup wizard step: 1 = email + name, 2 = PIN creation */
+  let setupStep = $state(1); // 1 = email + name, 2 = code
+
+  // =============================================================================
+  //  Unlock Mode State (returning user on this device)
+  // =============================================================================
+
+  /** Individual digit values for the unlock PIN */
+  let unlockDigits = $state(['', '', '', '', '', '']);
+
+  /** Concatenated unlock code — derived from \`unlockDigits\` */
+  const unlockCode = $derived(unlockDigits.join(''));
+
+  /** Cached user profile info (first/last name) for the welcome message */
+  let userInfo = $state<{ firstName: string; lastName: string } | null>(null);
+
+  // =============================================================================
+  //  Link Device Mode State (new device, existing remote user)
+  // =============================================================================
+
+  /** Individual digit values for the device-linking PIN */
+  let linkDigits = $state(['', '', '', '', '', '']);
+
+  /** Concatenated link code — derived from \`linkDigits\` */
+  const linkCode = $derived(linkDigits.join(''));
+
+  /**
+   * Remote user info fetched from the gate config — contains email,
+   * gate type, code length, and profile data for the welcome message.
+   */
+  let remoteUser = $state<{
+    email: string;
+    gateType: string;
+    codeLength: number;
+    profile: Record<string, unknown>;
+  } | null>(null);
+
+  /** \`true\` when we detected a remote user and entered link-device mode */
+  let linkMode = $state(false);
+
+  /** Loading state specific to the link-device flow */
+  let linkLoading = $state(false);
+
+  /** \`true\` when offline and no local setup exists — shows offline card */
+  let offlineNoSetup = $state(false);
+
+  // =============================================================================
+  //  Rate-Limit Countdown State
+  // =============================================================================
+
+  /** Seconds remaining before the user can retry after a rate-limit */
+  let retryCountdown = $state(0);
+
+  /** Interval handle for the retry countdown timer */
+  let retryTimer: ReturnType<typeof setInterval> | null = null;
+
+  // =============================================================================
+  //  Modal State — Email Confirmation & Device Verification
+  // =============================================================================
+
+  /** Show the "check your email" modal after initial signup */
+  let showConfirmationModal = $state(false);
+
+  /** Show the "new device detected" verification modal */
+  let showDeviceVerificationModal = $state(false);
+
+  /** Masked email address displayed in the device-verification modal */
+  let maskedEmail = $state('');
+
+  /** Seconds remaining before the "resend" button re-enables */
+  let resendCooldown = $state(0);
+
+  /** Interval handle for the resend cooldown timer */
+  let resendTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Interval handle for polling device verification status */
+  let verificationPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Guard flag to prevent double-execution of verification completion */
+  let verificationCompleting = false; // guard against double execution
+
+  // =============================================================================
+  //  Input Refs — DOM references for focus management
+  // =============================================================================
+
+  /** References to the 6 setup-code \`<input>\` elements */
+  let codeInputs: HTMLInputElement[] = $state([]);
+
+  /** References to the 6 confirm-code \`<input>\` elements */
+  let confirmInputs: HTMLInputElement[] = $state([]);
+
+  /** References to the 6 unlock-code \`<input>\` elements */
+  let unlockInputs: HTMLInputElement[] = $state([]);
+
+  /** References to the link-code \`<input>\` elements */
+  let linkInputs: HTMLInputElement[] = $state([]);
+
+  // =============================================================================
+  //  Cross-Tab Communication
+  // =============================================================================
+
+  /** BroadcastChannel instance for receiving \`AUTH_CONFIRMED\` from \`/confirm\` */
+  let authChannel: BroadcastChannel | null = null;
+
+  // =============================================================================
+  //  Lifecycle — onMount
+  // =============================================================================
+
+  onMount(async () => {
+    mounted = true;
+
+    /* ── Existing local account → fetch user info for the welcome card ──── */
+    if (singleUserSetUp) {
+      const info = await getSingleUserInfo();
+      if (info) {
+        userInfo = {
+          firstName: (info.profile.firstName as string) || '',
+          lastName: (info.profile.lastName as string) || ''
+        };
+      }
+    } else {
+      /* ── No local setup → check for a remote user to link to ──── */
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      if (isOffline) {
+        offlineNoSetup = true;
+      } else {
+        try {
+          const remote = await fetchRemoteGateConfig();
+          if (remote) {
+            remoteUser = remote;
+            linkMode = true;
+          }
+        } catch {
+          /* No remote user found — fall through to normal setup */
+        }
+      }
+    }
+
+    /* ── Listen for auth confirmation from the \`/confirm\` page ──── */
+    try {
+      authChannel = new BroadcastChannel('stellar-auth-channel');
+      authChannel.onmessage = async (event) => {
+        if (event.data?.type === 'AUTH_CONFIRMED') {
+          /* Bring this tab to the foreground before the confirm tab closes */
+          window.focus();
+          if (showConfirmationModal) {
+            /* Setup confirmation complete → finalize account */
+            const result = await completeSingleUserSetup();
+            if (!result.error) {
+              showConfirmationModal = false;
+              await invalidateAll();
+              goto('/');
+            } else {
+              error = result.error;
+              showConfirmationModal = false;
+            }
+          } else if (showDeviceVerificationModal) {
+            /* Device verification complete (same-browser broadcast) */
+            await handleVerificationComplete();
+          }
+        }
+      };
+    } catch {
+      /* BroadcastChannel not supported — user must manually refresh */
+    }
+  });
+
+  // =============================================================================
+  //  Lifecycle — onDestroy (cleanup timers & channels)
+  // =============================================================================
+
+  onDestroy(() => {
+    authChannel?.close();
+    if (resendTimer) clearInterval(resendTimer);
+    if (retryTimer) clearInterval(retryTimer);
+    stopVerificationPolling();
+  });
+
+  // =============================================================================
+  //  Device Verification Polling
+  // =============================================================================
+
+  /**
+   * Start polling the engine every 3 seconds to check whether the
+   * device has been trusted (the user clicked the email link on
+   * another device/browser).
+   */
+  function startVerificationPolling() {
+    stopVerificationPolling();
+    verificationPollTimer = setInterval(async () => {
+      if (verificationCompleting) return;
+      const trusted = await pollDeviceVerification();
+      if (trusted) {
+        await handleVerificationComplete();
+      }
+    }, 3000);
+  }
+
+  /**
+   * Stop the verification polling interval and clear the handle.
+   */
+  function stopVerificationPolling() {
+    if (verificationPollTimer) {
+      clearInterval(verificationPollTimer);
+      verificationPollTimer = null;
+    }
+  }
+
+  /**
+   * Finalize device verification — calls \`completeDeviceVerification\`
+   * and redirects on success. Guarded by \`verificationCompleting\` to
+   * prevent double-execution from both polling and BroadcastChannel.
+   */
+  async function handleVerificationComplete() {
+    if (verificationCompleting) return;
+    verificationCompleting = true;
+    stopVerificationPolling();
+
+    const result = await completeDeviceVerification();
+    if (!result.error) {
+      showDeviceVerificationModal = false;
+      await invalidateAll();
+      goto(redirectUrl);
+    } else {
+      error = result.error;
+      showDeviceVerificationModal = false;
+      verificationCompleting = false;
+    }
+  }
+
+  // =============================================================================
+  //  Resend & Retry Cooldowns
+  // =============================================================================
+
+  /**
+   * Start a 30-second cooldown on the "Resend email" button to
+   * prevent spamming the email service.
+   */
+  function startResendCooldown() {
+    resendCooldown = 30;
+    if (resendTimer) clearInterval(resendTimer);
+    resendTimer = setInterval(() => {
+      resendCooldown--;
+      if (resendCooldown <= 0 && resendTimer) {
+        clearInterval(resendTimer);
+        resendTimer = null;
+      }
+    }, 1000);
+  }
+
+  /**
+   * Start a countdown after receiving a rate-limit response from the
+   * server. Disables the code inputs and auto-clears the error when
+   * the countdown reaches zero.
+   *
+   * @param ms - The \`retryAfterMs\` value from the server response
+   */
+  function startRetryCountdown(ms: number) {
+    retryCountdown = Math.ceil(ms / 1000);
+    if (retryTimer) clearInterval(retryTimer);
+    retryTimer = setInterval(() => {
+      retryCountdown--;
+      if (retryCountdown <= 0) {
+        retryCountdown = 0;
+        error = null;
+        if (retryTimer) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+        }
+      }
+    }, 1000);
+  }
+
+  // =============================================================================
+  //  Email Resend Handler
+  // =============================================================================
+
+  /**
+   * Resend the confirmation or verification email depending on
+   * which modal is currently visible. Respects the resend cooldown.
+   */
+  async function handleResendEmail() {
+    if (resendCooldown > 0) return;
+    startResendCooldown();
+    /* For setup confirmation → resend the signup email */
+    if (showConfirmationModal) {
+      const { resendConfirmationEmail } = await import('@prabhask5/stellar-engine');
+      await resendConfirmationEmail(email);
+    }
+    /* For device verification → resend the OTP email */
+    if (showDeviceVerificationModal) {
+      const info = await getSingleUserInfo();
+      if (info?.email) {
+        await sendDeviceVerification(info.email);
+      }
+    }
+  }
+
+  // =============================================================================
+  //  Digit Input Handlers — Shared across all PIN-code fields
+  // =============================================================================
+
+  /**
+   * Handle a single digit being typed into a PIN input box. Filters
+   * non-numeric characters, auto-advances focus, and triggers
+   * \`onComplete\` when the last digit is filled.
+   *
+   * @param digits    - The reactive digit array being edited
+   * @param index     - Which position in the array this input represents
+   * @param event     - The native \`input\` DOM event
+   * @param inputs    - Array of \`HTMLInputElement\` refs for focus management
+   * @param onComplete - Optional callback invoked when all digits are filled
+   */
+  function handleDigitInput(
+    digits: string[],
+    index: number,
+    event: Event,
+    inputs: HTMLInputElement[],
+    onComplete?: () => void
+  ) {
+    const input = event.target as HTMLInputElement;
+    const value = input.value.replace(/[^0-9]/g, '');
+
+    if (value.length > 0) {
+      digits[index] = value.charAt(value.length - 1);
+      input.value = digits[index];
+      /* Auto-focus the next input box */
+      if (index < digits.length - 1 && inputs[index + 1]) {
+        inputs[index + 1].focus();
+      }
+      /* Auto-submit when the last digit is entered (brief delay for UX) */
+      if (index === digits.length - 1 && onComplete && digits.every((d) => d !== '')) {
+        setTimeout(() => onComplete(), 300);
+      }
+    } else {
+      digits[index] = '';
+    }
+  }
+
+  /**
+   * Handle backspace in a PIN input — moves focus to the previous
+   * input when the current one is already empty.
+   *
+   * @param digits - The reactive digit array
+   * @param index  - Current position index
+   * @param event  - The native \`keydown\` event
+   * @param inputs - Array of \`HTMLInputElement\` refs
+   */
+  function handleDigitKeydown(
+    digits: string[],
+    index: number,
+    event: KeyboardEvent,
+    inputs: HTMLInputElement[]
+  ) {
+    if (event.key === 'Backspace') {
+      if (digits[index] === '' && index > 0 && inputs[index - 1]) {
+        inputs[index - 1].focus();
+        digits[index - 1] = '';
+      } else {
+        digits[index] = '';
+      }
+    }
+  }
+
+  /**
+   * Handle paste into a PIN input — distributes pasted digits across
+   * all input boxes and auto-submits if the full code was pasted.
+   *
+   * @param digits     - The reactive digit array
+   * @param event      - The native \`paste\` clipboard event
+   * @param inputs     - Array of \`HTMLInputElement\` refs
+   * @param onComplete - Optional callback invoked when all digits are filled
+   */
+  function handleDigitPaste(
+    digits: string[],
+    event: ClipboardEvent,
+    inputs: HTMLInputElement[],
+    onComplete?: () => void
+  ) {
+    event.preventDefault();
+    const pasted = (event.clipboardData?.getData('text') || '').replace(/[^0-9]/g, '');
+    for (let i = 0; i < digits.length && i < pasted.length; i++) {
+      digits[i] = pasted[i];
+      if (inputs[i]) inputs[i].value = pasted[i];
+    }
+    const focusIndex = Math.min(pasted.length, digits.length - 1);
+    if (inputs[focusIndex]) inputs[focusIndex].focus();
+    /* Auto-submit if the full code was pasted at once */
+    if (pasted.length >= digits.length && onComplete && digits.every((d) => d !== '')) {
+      onComplete();
+    }
+  }
+
+  // =============================================================================
+  //  Setup Mode — Step Navigation
+  // =============================================================================
+
+  /**
+   * Validate email and first name, then advance to the PIN-creation
+   * step (step 2). Shows an error if validation fails.
+   */
+  function goToCodeStep() {
+    if (!email.trim() || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email.trim())) {
+      error = 'Please enter a valid email address';
+      return;
+    }
+    if (!firstName.trim()) {
+      error = 'First name is required';
+      return;
+    }
+    error = null;
+    setupStep = 2;
+  }
+
+  /**
+   * Navigate back from step 2 (PIN creation) to step 1 (email/name).
+   */
+  function goBackToNameStep() {
+    setupStep = 1;
+    error = null;
+  }
+
+  /**
+   * Auto-focus the first confirm-code input when the primary code
+   * is fully entered.
+   */
+  function autoFocusConfirm() {
+    if (confirmInputs[0]) confirmInputs[0].focus();
+  }
+
+  /**
+   * Trigger setup submission when the confirm-code auto-completes.
+   */
+  function autoSubmitSetup() {
+    if (confirmDigits.every((d) => d !== '')) {
+      handleSetup();
+    }
+  }
+
+  /**
+   * Trigger unlock submission when the unlock-code auto-completes.
+   */
+  function autoSubmitUnlock() {
+    handleUnlock();
+  }
+
+  // =============================================================================
+  //  Setup Mode — Account Creation
+  // =============================================================================
+
+  /**
+   * Handle the full setup flow: validate the code matches its
+   * confirmation, call \`setupSingleUser\`, and handle the response
+   * (which may require email confirmation or succeed immediately).
+   */
+  async function handleSetup() {
+    if (loading) return;
+
+    error = null;
+
+    if (code.length !== 6) {
+      error = 'Please enter a 6-digit code';
+      return;
+    }
+
+    /* Verify code and confirmation match */
+    if (code !== confirmCode) {
+      error = 'Codes do not match';
+      shaking = true;
+      setTimeout(() => {
+        shaking = false;
+      }, 500);
+      /* Clear confirm digits and refocus the first confirm input */
+      confirmDigits = ['', '', '', '', '', ''];
+      if (confirmInputs[0]) confirmInputs[0].focus();
+      return;
+    }
+
+    loading = true;
+
+    try {
+      const result = await setupSingleUser(
+        code,
+        {
+          firstName: firstName.trim(),
+          lastName: lastName.trim()
+        },
+        email.trim()
+      );
+      if (result.error) {
+        error = result.error;
+        shaking = true;
+        setTimeout(() => {
+          shaking = false;
+        }, 500);
+        codeDigits = ['', '', '', '', '', ''];
+        confirmDigits = ['', '', '', '', '', ''];
+        if (codeInputs[0]) codeInputs[0].focus();
+        return;
+      }
+      if (result.confirmationRequired) {
+        /* Email confirmation needed → show the "check your email" modal */
+        showConfirmationModal = true;
+        startResendCooldown();
+        return;
+      }
+      /* No confirmation needed → go straight to the app */
+      await invalidateAll();
+      goto('/');
+    } catch (err: unknown) {
+      error = err instanceof Error ? err.message : 'Setup failed. Please try again.';
+      shaking = true;
+      setTimeout(() => {
+        shaking = false;
+      }, 500);
+      codeDigits = ['', '', '', '', '', ''];
+      confirmDigits = ['', '', '', '', '', ''];
+      if (codeInputs[0]) codeInputs[0].focus();
+    } finally {
+      loading = false;
+    }
+  }
+
+  // =============================================================================
+  //  Unlock Mode — PIN Entry for Returning Users
+  // =============================================================================
+
+  /**
+   * Attempt to unlock the local account with the entered 6-digit PIN.
+   * Handles rate-limiting, device verification requirements, and
+   * error feedback with shake animation.
+   */
+  async function handleUnlock() {
+    if (loading || retryCountdown > 0) return;
+
+    error = null;
+
+    if (unlockCode.length !== 6) {
+      error = 'Please enter your 6-digit code';
+      return;
+    }
+
+    loading = true;
+
+    try {
+      const result = await unlockSingleUser(unlockCode);
+      if (result.error) {
+        error = result.error;
+        if (result.retryAfterMs) {
+          startRetryCountdown(result.retryAfterMs);
+        }
+        shaking = true;
+        setTimeout(() => {
+          shaking = false;
+        }, 500);
+        unlockDigits = ['', '', '', '', '', ''];
+        return;
+      }
+      if (result.deviceVerificationRequired) {
+        /* Untrusted device → show verification modal + start polling */
+        maskedEmail = result.maskedEmail || '';
+        showDeviceVerificationModal = true;
+        startResendCooldown();
+        startVerificationPolling();
+        return;
+      }
+      /* Success → navigate to the redirect target */
+      await invalidateAll();
+      goto(redirectUrl);
+    } catch (err: unknown) {
+      error = err instanceof Error ? err.message : 'Incorrect code';
+      shaking = true;
+      setTimeout(() => {
+        shaking = false;
+      }, 500);
+      unlockDigits = ['', '', '', '', '', ''];
+    } finally {
+      loading = false;
+      if (error) {
+        await tick();
+        if (unlockInputs[0]) unlockInputs[0].focus();
+      }
+    }
+  }
+
+  // =============================================================================
+  //  Link Device Mode — Connect a New Device to an Existing Account
+  // =============================================================================
+
+  /**
+   * Trigger link submission when the link-code auto-completes.
+   */
+  function autoSubmitLink() {
+    if (linkDigits.every((d) => d !== '')) {
+      handleLink();
+    }
+  }
+
+  /**
+   * Attempt to link this device to the remote user account by
+   * submitting the PIN. Similar flow to unlock — may require device
+   * verification or trigger rate-limiting.
+   */
+  async function handleLink() {
+    if (linkLoading || !remoteUser || retryCountdown > 0) return;
+
+    error = null;
+
+    if (linkCode.length !== remoteUser.codeLength) {
+      error = \`Please enter a \${remoteUser.codeLength}-digit code\`;
+      return;
+    }
+
+    linkLoading = true;
+    try {
+      const result = await linkSingleUserDevice(remoteUser.email, linkCode);
+      if (result.error) {
+        error = result.error;
+        if (result.retryAfterMs) {
+          startRetryCountdown(result.retryAfterMs);
+        }
+        shaking = true;
+        setTimeout(() => {
+          shaking = false;
+        }, 500);
+        linkDigits = Array(remoteUser.codeLength).fill('');
+        return;
+      }
+      if (result.deviceVerificationRequired) {
+        maskedEmail = result.maskedEmail || '';
+        showDeviceVerificationModal = true;
+        startResendCooldown();
+        startVerificationPolling();
+        return;
+      }
+      /* Success → navigate to the redirect target */
+      await invalidateAll();
+      goto(redirectUrl);
+    } catch (err: unknown) {
+      error = err instanceof Error ? err.message : 'Incorrect code';
+      shaking = true;
+      setTimeout(() => {
+        shaking = false;
+      }, 500);
+      linkDigits = Array(remoteUser.codeLength).fill('');
+    } finally {
+      linkLoading = false;
+      if (error) {
+        await tick();
+        if (linkInputs[0]) linkInputs[0].focus();
+      }
+    }
+  }
 </script>
+
+<svelte:head>
+  <title>Login - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add login page template (PIN inputs, setup wizard, device verification modal) -->
 `;
@@ -1720,7 +2876,7 @@ function generateLoginPage(): string {
  *
  * @returns The Svelte component source for `src/routes/confirm/+page.svelte`.
  */
-function generateConfirmPage(): string {
+function generateConfirmPage(opts: InstallOptions): string {
   return `<!--
   @fileoverview Email confirmation page — token verification, BroadcastChannel
   relay, and close/redirect flow.
@@ -1742,6 +2898,7 @@ function generateConfirmPage(): string {
 
   /** Current page state — drives which UI variant is rendered. */
   let status: 'verifying' | 'success' | 'error' | 'redirecting' | 'can_close' = 'verifying';
+
   /** Human-readable error message when verification fails. */
   let errorMessage = '';
 
@@ -1750,7 +2907,7 @@ function generateConfirmPage(): string {
   // ==========================================================================
 
   /** BroadcastChannel name shared with the login page. */
-  const CHANNEL_NAME = 'auth-channel'; // TODO: Customize channel name
+  const CHANNEL_NAME = '${opts.prefix}-auth-channel';
 
   // ==========================================================================
   //                              LIFECYCLE
@@ -1793,14 +2950,32 @@ function generateConfirmPage(): string {
   // ==========================================================================
 
   /**
-   * Navigate to the app root when no originating tab is available to
-   * receive the BroadcastChannel message (e.g. the user opened the
-   * confirmation link in a different browser).
+   * Broadcast a confirmation event to any listening login tab, then
+   * attempt to close this browser tab. Falls back to a static
+   * "you can close this tab" message when \`window.close()\` is denied.
    */
-  function focusOrRedirect() {
-    goto('/', { replaceState: true });
+  async function focusOrRedirect() {
+    status = 'redirecting';
+
+    const type = $page.url.searchParams.get('type') || 'signup';
+
+    const result = await broadcastAuthConfirmed(CHANNEL_NAME, type);
+
+    if (result === 'no_broadcast') {
+      /* BroadcastChannel unsupported — redirect to home directly */
+      goto('/', { replaceState: true });
+    } else {
+      /* 'can_close' — window.close() was blocked by browser */
+      setTimeout(() => {
+        status = 'can_close';
+      }, 200);
+    }
   }
 </script>
+
+<svelte:head>
+  <title>Confirming... - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add confirmation page template (verifying/success/error/can_close states) -->
 `;
@@ -1948,50 +3123,46 @@ export function load() {
  */
 function generateProtectedLayoutTs(): string {
   return `/**
- * @fileoverview Auth Guard — protected route group layout loader.
+ * @fileoverview Protected Layout Load Function — Auth Guard
  *
- * Redirects unauthenticated users to \`/login\`, preserving the intended
- * destination as a \`?redirect=\` query parameter so the login page can
- * navigate back after successful authentication.
+ * Runs on every navigation into the \`(protected)\` route group.
+ * Resolves the current authentication state via \`stellar-engine\` and
+ * redirects unauthenticated users to \`/login\` (preserving the intended
+ * destination as a \`?redirect=\` query parameter).
+ *
+ * On the server (SSR), returns a neutral "unauthenticated" payload so
+ * that the actual auth check happens exclusively in the browser where
+ * cookies / local storage are available.
  */
 
 import { redirect } from '@sveltejs/kit';
 import { browser } from '$app/environment';
-import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
-import type { AuthMode, OfflineCredentials, Session } from '@prabhask5/stellar-engine/types';
+import { resolveProtectedLayout } from '@prabhask5/stellar-engine/kit';
+import type { ProtectedLayoutData } from '@prabhask5/stellar-engine/kit';
 import type { LayoutLoad } from './$types';
 
-/**
- * Data returned by the protected layout load function.
- */
-export interface ProtectedLayoutData {
-  /** Active Supabase session, or \`null\` when offline. */
-  session: Session | null;
-  /** Current authentication mode (\`'online'\`, \`'offline'\`, or \`'none'\`). */
-  authMode: AuthMode;
-  /** Cached offline credentials when auth mode is offline. */
-  offlineProfile: OfflineCredentials | null;
-}
+export type { ProtectedLayoutData };
 
 /**
- * Enforce authentication — redirect to login if the user has no session.
+ * SvelteKit universal \`load\` function for the \`(protected)\` layout.
  *
- * @param params - SvelteKit load params (provides the current URL).
- * @returns Protected layout data with guaranteed auth state.
+ * - **Browser**: resolves the auth state; redirects to \`/login\` if \`authMode\` is \`'none'\`.
+ * - **Server**: short-circuits with a neutral payload (auth is client-side only).
+ *
+ * @param url — The current page URL, used to build the redirect target.
+ * @returns Resolved \`ProtectedLayoutData\` for downstream pages and layouts.
  */
 export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> => {
   if (browser) {
-    const result = await resolveAuthState();
-    if (result.authMode === 'none') {
-      const returnUrl = url.pathname + url.search;
-      const loginUrl =
-        returnUrl && returnUrl !== '/'
-          ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
-          : '/login';
-      throw redirect(302, loginUrl);
+    const { data, redirectUrl } = await resolveProtectedLayout(url);
+
+    if (redirectUrl) {
+      throw redirect(302, redirectUrl);
     }
-    return result;
+
+    return data;
   }
+
   /* SSR fallback — no auth info available on the server */
   return { session: null, authMode: 'none', offlineProfile: null };
 };
@@ -2033,6 +3204,7 @@ function generateProtectedLayoutSvelte(): string {
   // TODO: Add conditional page backgrounds or other protected-area chrome
 </script>
 
+<!-- Render child route content -->
 {@render children?.()}
 `;
 }
@@ -2043,9 +3215,9 @@ function generateProtectedLayoutSvelte(): string {
  *
  * @returns The Svelte component source for `src/routes/(protected)/profile/+page.svelte`.
  */
-function generateProfilePage(): string {
+function generateProfilePage(opts: InstallOptions): string {
   return `<!--
-  @fileoverview Profile & administration page.
+  @fileoverview Profile & settings page.
 
   Capabilities:
     - View / edit display name and avatar
@@ -2056,9 +3228,9 @@ function generateProfilePage(): string {
     - Reset local database (destructive — requires confirmation)
 -->
 <script lang="ts">
-  // ==========================================================================
-  //                                IMPORTS
-  // ==========================================================================
+  // =============================================================================
+  //                               IMPORTS
+  // =============================================================================
 
   import { goto } from '$app/navigation';
   import {
@@ -2066,10 +3238,10 @@ function generateProfilePage(): string {
     updateSingleUserProfile,
     getSingleUserInfo,
     changeSingleUserEmail,
-    completeSingleUserEmailChange
+    completeSingleUserEmailChange,
+    resolveUserId,
+    resolveAvatarInitial
   } from '@prabhask5/stellar-engine/auth';
-  // TODO: Import resolveFirstName, resolveUserId, resolveAvatarInitial
-  // from '@prabhask5/stellar-engine/auth' for display name and avatar logic
   import { authState } from '@prabhask5/stellar-engine/stores';
   import { isDebugMode, setDebugMode } from '@prabhask5/stellar-engine/utils';
   import {
@@ -2078,13 +3250,612 @@ function generateProfilePage(): string {
     removeTrustedDevice,
     getCurrentDeviceId
   } from '@prabhask5/stellar-engine';
+  import type { TrustedDevice } from '@prabhask5/stellar-engine';
+  import { onMount } from 'svelte';
 
-  // ==========================================================================
-  //                           COMPONENT STATE
-  // ==========================================================================
+  // =============================================================================
+  //                         COMPONENT STATE
+  // =============================================================================
 
-  // TODO: Add profile page state (form fields, device management, debug tools)
+  /* ── Profile form fields ──── */
+  let firstName = $state('');
+  let lastName = $state('');
+
+  /* ── Gate (6-digit code) change — digit-array approach ──── */
+  let oldCodeDigits = $state(['', '', '', '', '', '']);
+  let newCodeDigits = $state(['', '', '', '', '', '']);
+  let confirmCodeDigits = $state(['', '', '', '', '', '']);
+
+  /** Concatenated old code string → derived from individual digit inputs */
+  const oldCode = $derived(oldCodeDigits.join(''));
+  /** Concatenated new code string → derived from individual digit inputs */
+  const newCode = $derived(newCodeDigits.join(''));
+  /** Concatenated confirm code string — must match \`newCode\` */
+  const confirmNewCode = $derived(confirmCodeDigits.join(''));
+
+  /* ── Input element refs for auto-focus advancement ──── */
+  let oldCodeInputs: HTMLInputElement[] = $state([]);
+  let newCodeInputs: HTMLInputElement[] = $state([]);
+  let confirmCodeInputs: HTMLInputElement[] = $state([]);
+
+  /* ── Email change fields ──── */
+  let currentEmail = $state('');
+  let newEmail = $state('');
+  let emailLoading = $state(false);
+  let emailError = $state<string | null>(null);
+  let emailSuccess = $state<string | null>(null);
+  /** Whether the email confirmation modal overlay is visible */
+  let showEmailConfirmationModal = $state(false);
+  /** Seconds remaining before the user can re-send the confirmation email */
+  let emailResendCooldown = $state(0);
+
+  /* ── General UI / feedback state ──── */
+  let profileLoading = $state(false);
+  let codeLoading = $state(false);
+  let profileError = $state<string | null>(null);
+  let profileSuccess = $state<string | null>(null);
+  let codeError = $state<string | null>(null);
+  let codeSuccess = $state<string | null>(null);
+  let debugMode = $state(isDebugMode());
+  let resetting = $state(false);
+
+  /* ── Debug tools loading flags ──── */
+  let forceSyncing = $state(false);
+  let triggeringSyncManual = $state(false);
+  let resettingCursor = $state(false);
+  let checkingConnection = $state(false);
+  let viewingTombstones = $state(false);
+  let cleaningTombstones = $state(false);
+
+  /* ── Trusted devices ──── */
+  let trustedDevices = $state<TrustedDevice[]>([]);
+  let currentDeviceId = $state('');
+  let devicesLoading = $state(true);
+  /** ID of the device currently being removed — shows spinner on that row */
+  let removingDeviceId = $state<string | null>(null);
+
+  // =============================================================================
+  //                           LIFECYCLE
+  // =============================================================================
+
+  /** Populate form fields from the engine and load trusted devices on mount. */
+  onMount(async () => {
+    const info = await getSingleUserInfo();
+    if (info) {
+      firstName = (info.profile.firstName as string) || '';
+      lastName = (info.profile.lastName as string) || '';
+      currentEmail = info.email || '';
+    }
+
+    // Load trusted devices
+    currentDeviceId = getCurrentDeviceId();
+    try {
+      const userId = resolveUserId($authState?.session, $authState?.offlineProfile);
+      if (userId) {
+        trustedDevices = await getTrustedDevices(userId);
+      }
+    } catch {
+      // Ignore errors loading devices
+    }
+    devicesLoading = false;
+  });
+
+  // =============================================================================
+  //                     DIGIT INPUT HELPERS
+  // =============================================================================
+
+  /**
+   * Handle single-digit input in a code field.
+   * Auto-advances focus to the next input when a digit is entered.
+   * @param digits  - Reactive digit array to mutate
+   * @param index   - Position in the 6-digit code (0–5)
+   * @param event   - Native input event
+   * @param inputs  - Array of \`<input>\` refs for focus management
+   */
+  function handleDigitInput(
+    digits: string[],
+    index: number,
+    event: Event,
+    inputs: HTMLInputElement[]
+  ) {
+    const input = event.target as HTMLInputElement;
+    const value = input.value.replace(/[^0-9]/g, '');
+    if (value.length > 0) {
+      digits[index] = value.charAt(value.length - 1);
+      input.value = digits[index];
+      if (index < 5 && inputs[index + 1]) {
+        inputs[index + 1].focus();
+      }
+    } else {
+      digits[index] = '';
+    }
+  }
+
+  /**
+   * Handle Backspace in a digit field — moves focus backward when the current
+   * digit is already empty.
+   * @param digits  - Reactive digit array to mutate
+   * @param index   - Position in the 6-digit code (0–5)
+   * @param event   - Native keyboard event
+   * @param inputs  - Array of \`<input>\` refs for focus management
+   */
+  function handleDigitKeydown(
+    digits: string[],
+    index: number,
+    event: KeyboardEvent,
+    inputs: HTMLInputElement[]
+  ) {
+    if (event.key === 'Backspace') {
+      if (digits[index] === '' && index > 0 && inputs[index - 1]) {
+        inputs[index - 1].focus();
+        digits[index - 1] = '';
+      } else {
+        digits[index] = '';
+      }
+    }
+  }
+
+  /**
+   * Handle paste into a digit field — distributes pasted digits across all 6 inputs.
+   * @param digits  - Reactive digit array to mutate
+   * @param event   - Native clipboard event
+   * @param inputs  - Array of \`<input>\` refs for focus management
+   */
+  function handleDigitPaste(digits: string[], event: ClipboardEvent, inputs: HTMLInputElement[]) {
+    event.preventDefault();
+    const pasted = (event.clipboardData?.getData('text') || '').replace(/[^0-9]/g, '');
+    for (let i = 0; i < 6 && i < pasted.length; i++) {
+      digits[i] = pasted[i];
+      if (inputs[i]) inputs[i].value = pasted[i];
+    }
+    const focusIndex = Math.min(pasted.length, 5);
+    if (inputs[focusIndex]) inputs[focusIndex].focus();
+  }
+
+  // =============================================================================
+  //                      FORM SUBMISSION HANDLERS
+  // =============================================================================
+
+  /**
+   * Submit profile name changes to the engine and update the auth store
+   * so the navbar reflects changes immediately.
+   * @param e - Form submit event
+   */
+  async function handleProfileSubmit(e: Event) {
+    e.preventDefault();
+    profileLoading = true;
+    profileError = null;
+    profileSuccess = null;
+
+    try {
+      await updateSingleUserProfile({
+        firstName: firstName.trim(),
+        lastName: lastName.trim()
+      });
+      // Update auth state to immediately reflect changes in navbar
+      authState.updateUserProfile({ first_name: firstName.trim(), last_name: lastName.trim() });
+      profileSuccess = 'Profile updated successfully';
+      setTimeout(() => (profileSuccess = null), 3000);
+    } catch (err: unknown) {
+      profileError = err instanceof Error ? err.message : 'Failed to update profile';
+    }
+
+    profileLoading = false;
+  }
+
+  /**
+   * Validate and submit a 6-digit gate code change.
+   * Resets all digit arrays on success.
+   * @param e - Form submit event
+   */
+  async function handleCodeSubmit(e: Event) {
+    e.preventDefault();
+
+    if (oldCode.length !== 6) {
+      codeError = 'Please enter your current 6-digit code';
+      return;
+    }
+
+    if (newCode.length !== 6) {
+      codeError = 'Please enter a new 6-digit code';
+      return;
+    }
+
+    if (newCode !== confirmNewCode) {
+      codeError = 'New codes do not match';
+      return;
+    }
+
+    codeLoading = true;
+    codeError = null;
+    codeSuccess = null;
+
+    try {
+      await changeSingleUserGate(oldCode, newCode);
+      codeSuccess = 'Code changed successfully';
+      oldCodeDigits = ['', '', '', '', '', ''];
+      newCodeDigits = ['', '', '', '', '', ''];
+      confirmCodeDigits = ['', '', '', '', '', ''];
+      setTimeout(() => (codeSuccess = null), 3000);
+    } catch (err: unknown) {
+      codeError = err instanceof Error ? err.message : 'Failed to change code';
+    }
+
+    codeLoading = false;
+  }
+
+  // =============================================================================
+  //                      EMAIL CHANGE FLOW
+  // =============================================================================
+
+  /**
+   * Initiate an email change — sends a confirmation link to the new address.
+   * Opens the confirmation modal and starts listening for the cross-tab
+   * \`BroadcastChannel\` auth event.
+   * @param e - Form submit event
+   */
+  async function handleEmailSubmit(e: Event) {
+    e.preventDefault();
+    emailError = null;
+    emailSuccess = null;
+
+    if (!newEmail.trim()) {
+      emailError = 'Please enter a new email address';
+      return;
+    }
+
+    if (newEmail.trim() === currentEmail) {
+      emailError = 'New email is the same as your current email';
+      return;
+    }
+
+    emailLoading = true;
+
+    try {
+      const result = await changeSingleUserEmail(newEmail.trim());
+      if (result.error) {
+        emailError = result.error;
+      } else if (result.confirmationRequired) {
+        showEmailConfirmationModal = true;
+        startResendCooldown();
+        listenForEmailConfirmation();
+      }
+    } catch (err: unknown) {
+      emailError = err instanceof Error ? err.message : 'Failed to change email';
+    }
+
+    emailLoading = false;
+  }
+
+  /** Start a 30-second countdown preventing repeated confirmation emails. */
+  function startResendCooldown() {
+    emailResendCooldown = 30;
+    const interval = setInterval(() => {
+      emailResendCooldown--;
+      if (emailResendCooldown <= 0) clearInterval(interval);
+    }, 1000);
+  }
+
+  /** Re-send the email change confirmation (guarded by cooldown). */
+  async function handleResendEmailChange() {
+    if (emailResendCooldown > 0) return;
+    try {
+      await changeSingleUserEmail(newEmail.trim());
+      startResendCooldown();
+    } catch {
+      // Ignore resend errors
+    }
+  }
+
+  /**
+   * Listen on a \`BroadcastChannel\` for the confirmation tab to signal
+   * that the user clicked the email-change link. Once received, complete
+   * the email change server-side and update local state.
+   */
+  function listenForEmailConfirmation() {
+    if (!('BroadcastChannel' in window)) return;
+    const channel = new BroadcastChannel('stellar-auth-channel');
+    channel.onmessage = async (event) => {
+      if (
+        event.data?.type === 'AUTH_CONFIRMED' &&
+        event.data?.verificationType === 'email_change'
+      ) {
+        // Bring this tab to the foreground before the confirm tab closes
+        window.focus();
+        const result = await completeSingleUserEmailChange();
+        if (!result.error && result.newEmail) {
+          currentEmail = result.newEmail;
+          emailSuccess = 'Email changed successfully';
+          newEmail = '';
+          setTimeout(() => (emailSuccess = null), 5000);
+        } else {
+          emailError = result.error || 'Failed to complete email change';
+        }
+        showEmailConfirmationModal = false;
+        channel.close();
+      }
+    };
+  }
+
+  /** Close the email confirmation modal without completing the change. */
+  function dismissEmailModal() {
+    showEmailConfirmationModal = false;
+  }
+
+  // =============================================================================
+  //                     ADMINISTRATION HANDLERS
+  // =============================================================================
+
+  /** Toggle debug mode on/off — requires a page refresh to take full effect. */
+  function toggleDebugMode() {
+    debugMode = !debugMode;
+    setDebugMode(debugMode);
+  }
+
+  /** Navigate back to the main tasks view. */
+  function goBack() {
+    goto('/tasks');
+  }
+
+  /**
+   * Delete and recreate the local IndexedDB, then reload the page.
+   * Session is preserved in localStorage so the app will re-hydrate.
+   */
+  async function handleResetDatabase() {
+    if (
+      !confirm(
+        'This will delete all local data and reload. Your data will be re-synced from the server. Continue?'
+      )
+    ) {
+      return;
+    }
+    resetting = true;
+    try {
+      await resetDatabase();
+      // Reload the page — session is preserved in localStorage, so the app
+      // will re-create the DB, fetch config from Supabase, and re-hydrate.
+      window.location.reload();
+    } catch (err) {
+      alert('Reset failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      resetting = false;
+    }
+  }
+
+  /**
+   * Remove a trusted device by ID and update the local list.
+   * @param id - Database ID of the trusted device row
+   */
+  async function handleRemoveDevice(id: string) {
+    removingDeviceId = id;
+    try {
+      await removeTrustedDevice(id);
+      trustedDevices = trustedDevices.filter((d) => d.id !== id);
+    } catch {
+      // Ignore errors
+    }
+    removingDeviceId = null;
+  }
+
+  // =============================================================================
+  //                     DEBUG TOOL HANDLERS
+  // =============================================================================
+
+  /**
+   * Cast \`window\` to an untyped record for accessing runtime-injected
+   * debug helpers (e.g., \`__${opts.prefix}Sync\`, \`__${opts.prefix}SyncStats\`).
+   * @returns The global \`window\` as a loose \`Record\`
+   */
+  function getDebugWindow(): Record<string, unknown> {
+    return window as unknown as Record<string, unknown>;
+  }
+
+  /** Resets the sync cursor and re-downloads all data from Supabase. */
+  async function handleForceFullSync() {
+    if (
+      !confirm(
+        'This will reset the sync cursor and re-download all data from the server. Continue?'
+      )
+    )
+      return;
+    forceSyncing = true;
+    try {
+      const fn = getDebugWindow().__${opts.prefix}Sync as
+        | { forceFullSync: () => Promise<void> }
+        | undefined;
+      if (fn?.forceFullSync) {
+        await fn.forceFullSync();
+        alert('Force full sync complete.');
+      } else {
+        alert('Debug mode must be enabled and the page refreshed to use this tool.');
+      }
+    } catch (err) {
+      alert('Force full sync failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+    forceSyncing = false;
+  }
+
+  /** Manually trigger a single push/pull sync cycle. */
+  async function handleTriggerSync() {
+    triggeringSyncManual = true;
+    try {
+      const fn = getDebugWindow().__${opts.prefix}Sync as { sync: () => Promise<void> } | undefined;
+      if (fn?.sync) {
+        await fn.sync();
+        alert('Sync cycle complete.');
+      } else {
+        alert('Debug mode must be enabled and the page refreshed to use this tool.');
+      }
+    } catch (err) {
+      alert('Sync failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+    triggeringSyncManual = false;
+  }
+
+  /** Reset the sync cursor so the next cycle pulls all remote data. */
+  async function handleResetSyncCursor() {
+    resettingCursor = true;
+    try {
+      const fn = getDebugWindow().__${opts.prefix}Sync as
+        | { resetSyncCursor: () => Promise<void> }
+        | undefined;
+      if (fn?.resetSyncCursor) {
+        await fn.resetSyncCursor();
+        alert('Sync cursor reset. The next sync will pull all data.');
+      } else {
+        alert('Debug mode must be enabled and the page refreshed to use this tool.');
+      }
+    } catch (err) {
+      alert('Reset cursor failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+    resettingCursor = false;
+  }
+
+  /** Test connectivity to Supabase and show the result in an alert. */
+  async function handleCheckConnection() {
+    checkingConnection = true;
+    try {
+      const fn = getDebugWindow().__${opts.prefix}Sync as
+        | {
+            checkConnection: () => Promise<{
+              connected: boolean;
+              error?: string;
+              records?: number;
+            }>;
+          }
+        | undefined;
+      if (fn?.checkConnection) {
+        const result = await fn.checkConnection();
+        if (result.connected) {
+          alert('Connection OK. Supabase is reachable.');
+        } else {
+          alert('Connection failed: ' + (result.error || 'Unknown error'));
+        }
+      } else {
+        alert('Debug mode must be enabled and the page refreshed to use this tool.');
+      }
+    } catch (err) {
+      alert('Connection check failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+    checkingConnection = false;
+  }
+
+  /** Display current sync cursor and pending operations count in an alert. */
+  function handleGetSyncStatus() {
+    const fn = getDebugWindow().__${opts.prefix}Sync as
+      | { getStatus: () => { cursor: unknown; pendingOps: Promise<number> } }
+      | undefined;
+    if (fn?.getStatus) {
+      const status = fn.getStatus();
+      const cursorDisplay =
+        typeof status.cursor === 'object'
+          ? JSON.stringify(status.cursor)
+          : String(status.cursor || 'None');
+      status.pendingOps.then((count: number) => {
+        alert(\`Sync Status:\n\nCursor: \${cursorDisplay}\nPending operations: \${count}\`);
+      });
+    } else {
+      alert('Debug mode must be enabled and the page refreshed to use this tool.');
+    }
+  }
+
+  /** Show the realtime WebSocket connection state and health. */
+  function handleRealtimeStatus() {
+    const fn = getDebugWindow().__${opts.prefix}Sync as
+      | { realtimeStatus: () => { state: string; healthy: boolean } }
+      | undefined;
+    if (fn?.realtimeStatus) {
+      const status = fn.realtimeStatus();
+      alert(
+        \`Realtime Status:\n\nState: \${status.state}\nHealthy: \${status.healthy ? 'Yes' : 'No'}\`
+      );
+    } else {
+      alert('Debug mode must be enabled and the page refreshed to use this tool.');
+    }
+  }
+
+  /** Display sync cycle stats in an alert; full details logged to console. */
+  function handleViewSyncStats() {
+    const fn = getDebugWindow().__${opts.prefix}SyncStats as
+      | (() => { totalSyncCycles: number; recentMinute: number; recent: unknown[] })
+      | undefined;
+    if (fn) {
+      const stats = fn();
+      alert(
+        \`Sync Stats:\n\nTotal cycles: \${stats.totalSyncCycles}\nCycles in last minute: \${stats.recentMinute}\nRecent cycles logged to console.\`
+      );
+    } else {
+      alert('Debug mode must be enabled and the page refreshed to use this tool.');
+    }
+  }
+
+  /** Display data-transfer / egress stats; per-table breakdown in console. */
+  function handleViewEgress() {
+    const fn = getDebugWindow().__${opts.prefix}Egress as
+      | (() => { totalFormatted: string; totalRecords: number; sessionStart: string })
+      | undefined;
+    if (fn) {
+      const stats = fn();
+      alert(
+        \`Egress Stats:\n\nTotal data transferred: \${stats.totalFormatted}\nTotal records: \${stats.totalRecords}\nSession started: \${new Date(stats.sessionStart).toLocaleString()}\n\nFull breakdown logged to console.\`
+      );
+    } else {
+      alert('Debug mode must be enabled and the page refreshed to use this tool.');
+    }
+  }
+
+  /** Log soft-deleted record counts per table to the browser console. */
+  async function handleViewTombstones() {
+    viewingTombstones = true;
+    try {
+      const fn = getDebugWindow().__${opts.prefix}Tombstones as
+        | ((opts?: { cleanup?: boolean; force?: boolean }) => Promise<void>)
+        | undefined;
+      if (fn) {
+        await fn();
+        alert('Tombstone details logged to console. Open DevTools to view.');
+      } else {
+        alert('Debug mode must be enabled and the page refreshed to use this tool.');
+      }
+    } catch (err) {
+      alert('View tombstones failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+    viewingTombstones = false;
+  }
+
+  /** Permanently remove old soft-deleted records from local + remote DBs. */
+  async function handleCleanupTombstones() {
+    if (
+      !confirm(
+        'This will permanently remove old soft-deleted records from local and server databases. Continue?'
+      )
+    )
+      return;
+    cleaningTombstones = true;
+    try {
+      const fn = getDebugWindow().__${opts.prefix}Tombstones as
+        | ((opts?: { cleanup?: boolean; force?: boolean }) => Promise<void>)
+        | undefined;
+      if (fn) {
+        await fn({ cleanup: true });
+        alert('Tombstone cleanup complete. Details logged to console.');
+      } else {
+        alert('Debug mode must be enabled and the page refreshed to use this tool.');
+      }
+    } catch (err) {
+      alert('Tombstone cleanup failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+    cleaningTombstones = false;
+  }
+
+  /** Dispatch a custom event that the app shell listens for to sign out on mobile. */
+  function handleMobileSignOut() {
+    window.dispatchEvent(new CustomEvent('${opts.prefix}:signout'));
+  }
 </script>
+
+<svelte:head>
+  <title>Profile - ${opts.name}</title>
+</svelte:head>
 
 <!-- TODO: Add profile page template (forms, cards, device list, debug tools) -->
 `;
@@ -2299,21 +4070,21 @@ async function main(): Promise<void> {
 
     // Route files
     ['src/routes/+layout.ts', generateRootLayoutTs(opts)],
-    ['src/routes/+layout.svelte', generateRootLayoutSvelte()],
-    ['src/routes/+page.svelte', generateHomePage()],
-    ['src/routes/+error.svelte', generateErrorPage()],
+    ['src/routes/+layout.svelte', generateRootLayoutSvelte(opts)],
+    ['src/routes/+page.svelte', generateHomePage(opts)],
+    ['src/routes/+error.svelte', generateErrorPage(opts)],
     ['src/routes/setup/+page.ts', generateSetupPageTs()],
-    ['src/routes/setup/+page.svelte', generateSetupPageSvelte()],
-    ['src/routes/policy/+page.svelte', generatePolicyPage()],
-    ['src/routes/login/+page.svelte', generateLoginPage()],
-    ['src/routes/confirm/+page.svelte', generateConfirmPage()],
+    ['src/routes/setup/+page.svelte', generateSetupPageSvelte(opts)],
+    ['src/routes/policy/+page.svelte', generatePolicyPage(opts)],
+    ['src/routes/login/+page.svelte', generateLoginPage(opts)],
+    ['src/routes/confirm/+page.svelte', generateConfirmPage(opts)],
     ['src/routes/api/config/+server.ts', generateConfigServer()],
     ['src/routes/api/setup/deploy/+server.ts', generateDeployServer()],
     ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
     ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
     ['src/routes/(protected)/+layout.ts', generateProtectedLayoutTs()],
     ['src/routes/(protected)/+layout.svelte', generateProtectedLayoutSvelte()],
-    ['src/routes/(protected)/profile/+page.svelte', generateProfilePage()],
+    ['src/routes/(protected)/profile/+page.svelte', generateProfilePage(opts)],
     ['src/lib/types.ts', generateAppTypes()],
 
     // Component files

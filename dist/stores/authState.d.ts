@@ -41,7 +41,7 @@ interface AuthState {
     /**
      * Message to display when the user is forcibly signed out.
      * Set by `setNoAuth()` when a kicked reason is provided (e.g., session
-     * expiry, admin revocation). Cleared on next successful auth transition.
+     * expiry). Cleared on next successful auth transition.
      */
     authKickedMessage: string | null;
 }
@@ -93,7 +93,7 @@ export declare const authState: {
      * authState.setNoAuth();
      *
      * // Forced sign-out with reason
-     * authState.setNoAuth('Your account was deactivated by an administrator.');
+     * authState.setNoAuth('Your session has expired.');
      * ```
      */
     setNoAuth(kickedMessage?: string): void;

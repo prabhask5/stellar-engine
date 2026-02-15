@@ -9,8 +9,8 @@
  * - **Database Access** — get a handle to the IndexedDB instance or reset it.
  * - **Generic CRUD & Query** — create, read, update, delete, batch write,
  *   increment, and query data in the local database.
- * - **Authentication** — Supabase GoTrue auth, offline login, single-user
- *   (kiosk) auth, admin checks, device verification, and login guards.
+ * - **Authentication** — Single-user PIN/password gate auth, device
+ *   verification, login guards, and session management.
  * - **Reactive Stores** — Svelte-compatible stores for sync status, network
  *   state, remote changes, and auth state.
  * - **Realtime Events** — lifecycle hooks for sync completion and realtime
@@ -75,12 +75,11 @@ export { engineCreate, engineUpdate, engineDelete, engineBatchWrite, engineIncre
 // - `engineGetOrCreate` — retrieves an entity or creates it with defaults.
 export { engineGet, engineGetAll, engineQuery, engineQueryRange, engineGetOrCreate } from './data';
 // =============================================================================
-//  Supabase Auth — Core Authentication Operations
+//  Supabase Auth — Core Authentication Utilities
 // =============================================================================
-// Standard Supabase GoTrue operations: sign in/up/out, password and email
-// changes, email confirmation resend, profile CRUD, OTP verification, and
-// session validation.
-export { signIn, signUp, signOut, changePassword, changeEmail, completeEmailChange, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
+// Sign-out with full teardown, session management, profile CRUD, email
+// confirmation resend, OTP verification, and session validation.
+export { signOut, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
 // =============================================================================
 //  Auth State Resolution
 // =============================================================================
@@ -89,22 +88,11 @@ export { signIn, signUp, signOut, changePassword, changeEmail, completeEmailChan
 // anonymous, has an expired session, or needs setup.
 export { resolveAuthState } from './auth/resolveAuthState';
 // =============================================================================
-//  Admin Role Check
-// =============================================================================
-// Utility to check whether the current user has admin privileges.
-export { isAdmin } from './auth/admin';
-// =============================================================================
 //  Login Guard
 // =============================================================================
 // Prevents duplicate login attempts by maintaining a transient lock.
 // `resetLoginGuard` clears the lock (e.g. after a failed attempt).
 export { resetLoginGuard } from './auth/loginGuard';
-// =============================================================================
-//  Offline Login
-// =============================================================================
-// Enables authentication when the device has no network connectivity, using
-// locally cached and encrypted credentials.
-export { signInOffline, getOfflineLoginInfo } from './auth/offlineLogin';
 // =============================================================================
 //  Single-User Auth (PIN/Password Gate)
 // =============================================================================

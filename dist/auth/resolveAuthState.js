@@ -1,18 +1,16 @@
 /**
  * @fileoverview Auth State Resolution
  *
- * Determines the current authentication state by checking Supabase session,
- * offline session, and cached credentials. Used by app layouts and route guards
- * to determine whether the user is authenticated and in which mode (online
- * Supabase session vs. offline cached session).
+ * Determines the current authentication state for single-user mode by checking
+ * Supabase session, offline session, and cached credentials. Used by app layouts
+ * and route guards to determine whether the user is authenticated and in which
+ * mode (online Supabase session vs. offline cached session).
  *
  * Architecture:
- * - Two resolution paths based on engine config:
- *   1. **Multi-user mode** (default): checks online/offline status, Supabase
- *      session validity, and falls back to offline session + credential matching.
- *   2. **Single-user mode**: checks local `singleUserConfig` in IndexedDB,
- *      handles legacy migration, PIN length migration, session refresh, and
- *      offline fallback.
+ * - Requires `auth.singleUser` to be configured in the engine config.
+ *   If not configured, returns `authMode: 'none'` immediately.
+ * - Checks local `singleUserConfig` in IndexedDB, handles legacy migration,
+ *   PIN length migration, session refresh, and offline fallback.
  * - The resolver does NOT start the sync engine -- callers decide whether to
  *   start sync based on the returned `authMode`.
  * - On catastrophic failure (corrupted auth state), all Supabase localStorage
@@ -20,8 +18,6 @@
  *   user can start fresh rather than being permanently locked out.
  *
  * Security considerations:
- * - Offline sessions are cross-validated against cached credentials by userId
- *   to prevent stale or cross-user sessions from granting access.
  * - In single-user mode, legacy configs without an email (from the anonymous
  *   auth era) are nuked entirely -- anonymous data is inaccessible under
  *   ownership-based RLS anyway.
@@ -34,8 +30,7 @@
  * @module auth/resolveAuthState
  */
 import { getSession, isSessionExpired } from '../supabase/auth';
-import { getValidOfflineSession, clearOfflineSession } from './offlineSession';
-import { getOfflineCredentials } from './offlineCredentials';
+import { getValidOfflineSession } from './offlineSession';
 import { resetSingleUserRemote } from './singleUser';
 import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
@@ -46,9 +41,9 @@ import { debugLog, debugWarn, debugError } from '../debug';
 /**
  * Resolve the current authentication state.
  *
- * Inspects the engine config mode and delegates to the appropriate resolver:
- * - Single-user mode: {@link resolveSingleUserAuthState}
- * - Multi-user mode: inline resolution checking Supabase session, then offline session.
+ * Requires `auth.singleUser` to be configured. Delegates to
+ * {@link resolveSingleUserAuthState} for the full resolution flow.
+ * If single-user mode is not configured, returns `authMode: 'none'`.
  *
  * Handles corrupted state cleanup by purging `sb-*` localStorage keys if
  * session retrieval throws.
@@ -58,11 +53,11 @@ import { debugLog, debugWarn, debugError } from '../debug';
  *
  * @example
  * ```ts
- * const { authMode, session, offlineProfile } = await resolveAuthState();
+ * const { authMode, session, singleUserSetUp } = await resolveAuthState();
  * if (authMode === 'supabase') {
  *   startSyncEngine(session);
  * } else if (authMode === 'offline') {
- *   enterOfflineMode(offlineProfile);
+ *   enterOfflineMode();
  * } else {
  *   redirectToLogin();
  * }
@@ -75,48 +70,11 @@ export async function resolveAuthState() {
         /* Ensure DB is open and upgraded before any IndexedDB access.
            This is critical during cold start when the DB may still be initializing. */
         await waitForDb();
-        // =========================================================================
-        // SINGLE-USER MODE
-        // =========================================================================
         const engineConfig = getEngineConfig();
-        if (engineConfig.auth?.mode === 'single-user') {
+        if (engineConfig.auth?.singleUser) {
             return resolveSingleUserAuthState();
         }
-        // =========================================================================
-        // MULTI-USER MODE (default)
-        // =========================================================================
-        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-        /* Get session once and reuse throughout this function to avoid multiple
-           Supabase getSession() calls (egress/latency optimization). */
-        const session = await getSession();
-        const hasValidSession = session && !isSessionExpired(session);
-        // -- ONLINE: Always use Supabase authentication --
-        if (!isOffline) {
-            if (hasValidSession) {
-                return { session, authMode: 'supabase', offlineProfile: null };
-            }
-            /* No valid Supabase session while online -- user needs to login. */
-            return { session: null, authMode: 'none', offlineProfile: null };
-        }
-        // -- OFFLINE: Try Supabase session from localStorage first, then offline session --
-        if (hasValidSession) {
-            return { session, authMode: 'supabase', offlineProfile: null };
-        }
-        /* No valid Supabase session -- check for offline session. */
-        const offlineSession = await getValidOfflineSession();
-        if (offlineSession) {
-            /* SECURITY: Verify offline session matches cached credentials by userId.
-               This prevents a scenario where credentials were updated (different user
-               logged in) but the old session record remains. */
-            const profile = await getOfflineCredentials();
-            if (profile && profile.userId === offlineSession.userId) {
-                return { session: null, authMode: 'offline', offlineProfile: profile };
-            }
-            /* Mismatch: credentials changed after session created -- clear the stale session. */
-            debugWarn('[Auth] Offline session userId does not match credentials - clearing session');
-            await clearOfflineSession();
-        }
-        /* No valid session while offline. */
+        /* Single-user mode not configured -- no auth available. */
         return { session: null, authMode: 'none', offlineProfile: null };
     }
     catch (e) {

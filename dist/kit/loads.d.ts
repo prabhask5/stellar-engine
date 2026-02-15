@@ -60,7 +60,7 @@ export interface ProtectedLayoutData {
  * Data returned by `resolveSetupAccess`.
  *
  * Tells the setup page whether this is a first-time configuration
- * (public access) or a reconfiguration (admin-only).
+ * (public access) or a reconfiguration (authenticated users only).
  */
 export interface SetupAccessData {
     /**
@@ -155,9 +155,8 @@ export declare function resolveProtectedLayout(url: {
  *
  *   - **Unconfigured app** (first-time setup): public access, no auth required.
  *     Returns `{ isFirstSetup: true }`.
- *   - **Configured app** (reconfiguration): only authenticated admin users
- *     may access. Non-admins are redirected to `/`, unauthenticated users
- *     to `/login`.
+ *   - **Configured app** (reconfiguration): any authenticated user may access.
+ *     Unauthenticated users are redirected to `/login`.
  *
  * @returns An object containing:
  *   - `data` — setup access info (`{ isFirstSetup }`)
@@ -180,7 +179,6 @@ export declare function resolveProtectedLayout(url: {
  *
  * @see {@link SetupAccessData} for the return data shape
  * @see {@link getConfig} for checking whether config exists
- * @see {@link isAdmin} for admin role verification
  */
 export declare function resolveSetupAccess(): Promise<{
     data: SetupAccessData;

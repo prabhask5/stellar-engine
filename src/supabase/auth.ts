@@ -1,36 +1,31 @@
 /**
  * @fileoverview Supabase Authentication Module
  *
- * Provides a complete authentication layer on top of Supabase Auth, with
- * built-in support for:
+ * Provides core authentication utilities on top of Supabase Auth for the
+ * single-user PIN/password gate system:
  *
- * - **Offline credential caching**: On successful login, credentials are hashed
- *   and persisted locally so that users can re-authenticate even when the device
- *   is offline (airplane mode, poor connectivity, etc.).
+ * - **Sign-out & teardown**: Full 10-step teardown sequence to ensure no stale
+ *   data leaks across sessions.
  *
- * - **Login guard / brute-force protection**: Every sign-in attempt passes
- *   through a local pre-check (`loginGuard`) that enforces rate-limiting and
- *   multi-user strategy rules *before* hitting the Supabase API.
+ * - **Session management**: `getSession()` falls back to localStorage when the
+ *   device is offline, ensuring the app can still render authenticated views
+ *   with stale-but-usable session data.
  *
- * - **Device verification (optional)**: When enabled in the engine config, an
- *   untrusted device will trigger an OTP flow and the user will not receive a
- *   session until the device is verified.
+ * - **Profile CRUD**: Read and update user profile metadata on Supabase and
+ *   in the offline credential cache.
  *
- * - **Graceful session recovery**: `getSession()` falls back to localStorage
- *   when the device is offline, ensuring the app can still render authenticated
- *   views with stale-but-usable session data.
+ * - **Email confirmation & OTP**: Resend confirmation emails and verify OTP
+ *   token hashes from confirmation links.
  *
  * Security considerations:
- *   - Passwords are hashed before being stored in the offline credential cache.
- *   - The `changePassword` flow verifies the current password locally (if a
- *     cached hash exists) or via a Supabase re-authentication call.
  *   - Corrupted sessions are detected and automatically cleared to prevent
  *     infinite error loops.
  *   - Sign-out follows a strict 10-step teardown sequence to ensure no stale
  *     data leaks across user boundaries.
  *
  * Integration patterns:
- *   - Consumed by UI auth screens (login, signup, profile, password change).
+ *   - Used internally by single-user auth (`../auth/singleUser.ts`) and the
+ *     scaffolded confirm page (`../kit/confirm.ts`).
  *   - Works in tandem with `./client.ts` (lazy Supabase singleton) and
  *     `../engine.ts` (sync engine lifecycle).
  *   - Offline credential helpers live in `../auth/offlineCredentials.ts`.
@@ -41,16 +36,11 @@
 import { supabase } from './client';
 import type { User, Session } from '@supabase/supabase-js';
 import {
-  cacheOfflineCredentials,
   clearOfflineCredentials,
-  getOfflineCredentials,
-  updateOfflineCredentialsPassword,
   updateOfflineCredentialsProfile
 } from '../auth/offlineCredentials';
 import { clearOfflineSession } from '../auth/offlineSession';
-import { preCheckLogin, onLoginSuccess, onLoginFailure, resetLoginGuard } from '../auth/loginGuard';
-import type { PreCheckStrategy } from '../auth/loginGuard';
-import { hashValue, isAlreadyHashed } from '../auth/crypto';
+import { resetLoginGuard } from '../auth/loginGuard';
 import { debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
 import { syncStatusStore } from '../stores/sync';
@@ -71,8 +61,7 @@ import { authState } from '../stores/authState';
  *          Falls back to a relative `/confirm` path in SSR environments where
  *          `window` is unavailable.
  *
- * @see {@link signUp} — uses this URL as `emailRedirectTo`
- * @see {@link resendConfirmationEmail} — also uses this URL
+ * @see {@link resendConfirmationEmail} — uses this URL
  */
 function getConfirmRedirectUrl(): string {
   if (typeof window !== 'undefined') {
@@ -81,199 +70,6 @@ function getConfirmRedirectUrl(): string {
   }
   // Fallback for SSR (shouldn't be called, but just in case)
   return '/confirm';
-}
-
-// =============================================================================
-// SECTION: Types
-// =============================================================================
-
-/**
- * Standardized response shape returned by all authentication operations.
- *
- * Every auth function in this module returns this interface so that callers
- * can rely on a single, predictable contract for success/failure handling.
- */
-export interface AuthResponse {
-  /** The authenticated Supabase user, or `null` if authentication failed. */
-  user: User | null;
-
-  /** The active session, or `null` if not yet established (e.g. device verification pending). */
-  session: Session | null;
-
-  /** A human-readable error message, or `null` on success. */
-  error: string | null;
-
-  /**
-   * When `true`, the device has not been verified and the caller must
-   * present a device-verification OTP input before granting access.
-   * Only set when `auth.deviceVerification.enabled` is `true` in the engine config.
-   */
-  deviceVerificationRequired?: boolean;
-
-  /**
-   * A partially-masked version of the user's email (e.g. `j***@example.com`)
-   * shown during device verification so the user knows where to look for the OTP.
-   */
-  maskedEmail?: string;
-
-  /**
-   * If the login guard rejected the attempt due to rate-limiting, this value
-   * indicates how many milliseconds the caller should wait before retrying.
-   */
-  retryAfterMs?: number;
-}
-
-// =============================================================================
-// SECTION: Sign In
-// =============================================================================
-
-/**
- * Authenticate a user with email and password.
- *
- * Flow:
- * 1. Run `preCheckLogin` to enforce local brute-force / rate-limit rules.
- * 2. Call `supabase.auth.signInWithPassword`.
- * 3. On success, cache credentials for offline re-authentication.
- * 4. If device verification is enabled, check trust status and optionally
- *    trigger an OTP challenge instead of returning the session.
- *
- * @param email    - The user's email address.
- * @param password - The user's plaintext password (hashed before caching).
- * @returns An {@link AuthResponse} indicating success, failure, or a device
- *          verification challenge.
- *
- * @example
- * ```ts
- * const result = await signIn('user@example.com', 's3cret');
- * if (result.deviceVerificationRequired) {
- *   // Show OTP input, display result.maskedEmail
- * } else if (result.error) {
- *   // Show error
- * } else {
- *   // Logged in — result.session is available
- * }
- * ```
- *
- * @see {@link preCheckLogin} — local credential & rate-limit guard
- * @see {@link cacheOfflineCredentials} — offline credential persistence
- */
-export async function signIn(email: string, password: string): Promise<AuthResponse> {
-  // Pre-check credentials locally before calling Supabase
-  const preCheck = await preCheckLogin(password, 'multi-user', email);
-  if (!preCheck.proceed) {
-    return {
-      user: null,
-      session: null,
-      error: preCheck.error,
-      retryAfterMs: preCheck.retryAfterMs
-    };
-  }
-
-  const strategy: PreCheckStrategy = preCheck.strategy;
-
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password
-  });
-
-  if (error) {
-    await onLoginFailure(strategy, 'multi-user');
-    return { user: data.user, session: data.session, error: error.message };
-  }
-
-  // Successful Supabase login
-  onLoginSuccess();
-
-  // Cache credentials for offline use on successful login
-  if (data.session && data.user) {
-    try {
-      await cacheOfflineCredentials(email, password, data.user, data.session);
-    } catch (e) {
-      debugError('[Auth] Failed to cache offline credentials:', e);
-    }
-
-    // Check device verification for multi-user mode
-    const config = getEngineConfig();
-    if (config.auth?.deviceVerification?.enabled) {
-      const { isDeviceTrusted, touchTrustedDevice, sendDeviceVerification, maskEmail } =
-        await import('../auth/deviceVerification');
-      const trusted = await isDeviceTrusted(data.user.id);
-
-      if (!trusted) {
-        /* Untrusted device — we intentionally do NOT return the session here.
-           The caller must complete the device-verification OTP flow first.
-           The session will be re-established after verification succeeds. */
-        const maskedEmail = maskEmail(email);
-        await sendDeviceVerification(email);
-        return {
-          user: data.user,
-          session: null,
-          error: null,
-          deviceVerificationRequired: true,
-          maskedEmail
-        };
-      }
-
-      await touchTrustedDevice(data.user.id);
-    }
-  }
-
-  return {
-    user: data.user,
-    session: data.session,
-    error: null
-  };
-}
-
-// =============================================================================
-// SECTION: Sign Up
-// =============================================================================
-
-/**
- * Register a new user account with Supabase.
- *
- * Profile data is transformed via the optional `auth.profileToMetadata`
- * config hook before being sent as `user_metadata` so that the host app
- * can normalize field names.
- *
- * @param email       - The new user's email address.
- * @param password    - The desired password (Supabase enforces its own strength rules).
- * @param profileData - Arbitrary profile fields (e.g. `{ display_name, avatar_url }`).
- * @returns An {@link AuthResponse}. Note: `session` may be `null` if email
- *          confirmation is required by the Supabase project settings.
- *
- * @example
- * ```ts
- * const result = await signUp('new@user.com', 'p@ssw0rd', { display_name: 'Ada' });
- * if (result.error) { ... }
- * ```
- *
- * @see {@link getConfirmRedirectUrl} — determines the email confirmation link target
- */
-export async function signUp(
-  email: string,
-  password: string,
-  profileData: Record<string, unknown>
-): Promise<AuthResponse> {
-  const config = getEngineConfig();
-  const metadata = config.auth?.profileToMetadata
-    ? config.auth.profileToMetadata(profileData)
-    : profileData;
-
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      emailRedirectTo: getConfirmRedirectUrl(),
-      data: metadata
-    }
-  });
-
-  return {
-    user: data.user,
-    session: data.session,
-    error: error?.message || null
-  };
 }
 
 // =============================================================================
@@ -304,7 +100,7 @@ export async function signUp(
  * @param options.preserveOfflineCredentials - When `true`, offline credentials
  *        are kept so the user can re-authenticate without network access.
  * @param options.preserveLocalData - When `true`, pending sync queue and local
- *        cache are retained (useful for "switch account" scenarios).
+ *        cache are retained.
  * @returns An object with an `error` field (`null` on success).
  *
  * @example
@@ -594,186 +390,6 @@ export async function updateProfile(
   }
 
   return { error: error?.message || null };
-}
-
-// =============================================================================
-// SECTION: Password Management
-// =============================================================================
-
-/**
- * Change the current user's password.
- *
- * Security flow:
- * 1. Retrieve the current session to obtain the user's email.
- * 2. **Verify the current password** — two strategies:
- *    a. If an offline credential cache exists and the email matches, compare
- *       hashes locally (avoids a network round-trip and an extra Supabase call).
- *    b. Otherwise, fall back to `supabase.auth.signInWithPassword` to verify
- *       against the server.
- * 3. Call `supabase.auth.updateUser({ password })` to set the new password.
- * 4. Update the offline credential cache with the new password hash.
- *
- * @param currentPassword - The user's current password (for verification).
- * @param newPassword     - The desired new password.
- * @returns An object with an `error` field (`null` on success).
- *
- * @throws Never throws — all errors are returned in the `error` field.
- *
- * @example
- * ```ts
- * const { error } = await changePassword('oldPass', 'newPass');
- * if (error) { alert(error); }
- * ```
- *
- * @see {@link hashValue} — used for local password comparison
- * @see {@link updateOfflineCredentialsPassword} — keeps the offline cache in sync
- */
-export async function changePassword(
-  currentPassword: string,
-  newPassword: string
-): Promise<{ error: string | null }> {
-  // Get current user email from session
-  const {
-    data: { session }
-  } = await supabase.auth.getSession();
-  const user = session?.user;
-  if (!user?.email) {
-    return { error: 'No authenticated user found' };
-  }
-
-  // Verify current password: prefer local hash check, fall back to Supabase
-  const creds = await getOfflineCredentials();
-  if (creds && creds.password && creds.email === user.email) {
-    /* Local verification path — compare against the cached credential hash.
-       This avoids an extra network call and works even in degraded-connectivity
-       scenarios. We must handle both hashed and (legacy) plaintext caches. */
-    let passwordMatch: boolean;
-    if (isAlreadyHashed(creds.password)) {
-      const hashedInput = await hashValue(currentPassword);
-      passwordMatch = creds.password === hashedInput;
-    } else {
-      passwordMatch = creds.password === currentPassword;
-    }
-    if (!passwordMatch) {
-      return { error: 'Current password is incorrect' };
-    }
-  } else {
-    /* No usable cached credentials — fall back to a full Supabase
-       re-authentication call to verify the current password. */
-    const { error: verifyError } = await supabase.auth.signInWithPassword({
-      email: user.email,
-      password: currentPassword
-    });
-
-    if (verifyError) {
-      return { error: 'Current password is incorrect' };
-    }
-  }
-
-  // Update password
-  const { error } = await supabase.auth.updateUser({
-    password: newPassword
-  });
-
-  if (!error) {
-    // Update offline cache with new password
-    try {
-      await updateOfflineCredentialsPassword(newPassword);
-    } catch (e) {
-      debugError('[Auth] Failed to update offline password:', e);
-    }
-  }
-
-  return { error: error?.message || null };
-}
-
-// =============================================================================
-// SECTION: Email Management
-// =============================================================================
-
-/**
- * Initiate an email change for the current user.
- *
- * Supabase sends a confirmation link to the **new** email address. The
- * change is not applied until the user clicks that link and the app calls
- * {@link completeEmailChange}.
- *
- * @param newEmail - The desired new email address.
- * @returns An object indicating whether a confirmation email was sent, plus
- *          any error that occurred.
- *
- * @example
- * ```ts
- * const { error, confirmationRequired } = await changeEmail('new@example.com');
- * if (confirmationRequired) {
- *   // Tell the user to check their inbox
- * }
- * ```
- *
- * @see {@link completeEmailChange} — finishes the flow after confirmation
- */
-export async function changeEmail(
-  newEmail: string
-): Promise<{ error: string | null; confirmationRequired: boolean }> {
-  const { error } = await supabase.auth.updateUser({ email: newEmail });
-
-  if (error) {
-    return { error: error.message, confirmationRequired: false };
-  }
-
-  return { error: null, confirmationRequired: true };
-}
-
-/**
- * Complete an email change after the user confirms via the email link.
- *
- * Refreshes the Supabase session to pick up the updated email address,
- * then updates the offline credential cache so that offline login uses
- * the new email.
- *
- * @returns An object containing the new email and/or an error message.
- *
- * @example
- * ```ts
- * const { error, newEmail } = await completeEmailChange();
- * if (!error) {
- *   console.log(`Email changed to ${newEmail}`);
- * }
- * ```
- *
- * @see {@link changeEmail} — initiates the flow
- */
-export async function completeEmailChange(): Promise<{
-  error: string | null;
-  newEmail: string | null;
-}> {
-  const { data, error: refreshError } = await supabase.auth.refreshSession();
-  if (refreshError || !data.session) {
-    return { error: refreshError?.message || 'Failed to refresh session', newEmail: null };
-  }
-
-  const newEmail = data.session.user.email;
-  if (!newEmail) {
-    return { error: 'No email found in updated session', newEmail: null };
-  }
-
-  // Update offline credentials cache
-  try {
-    const db = getEngineConfig().db;
-    if (db) {
-      const existing = await db.table('offlineCredentials').get('current_user');
-      if (existing) {
-        await db.table('offlineCredentials').update('current_user', {
-          email: newEmail,
-          cachedAt: new Date().toISOString()
-        });
-      }
-    }
-  } catch (e) {
-    debugError('[Auth] Failed to update offline credentials after email change:', e);
-  }
-
-  return { error: null, newEmail };
 }
 
 // =============================================================================

@@ -1,4 +1,4 @@
-# @prabhask5/stellar-engine [![npm version](https://img.shields.io/npm/v/react.svg?style=flat)](https://www.npmjs.com/package/@prabhask5/stellar-engine)
+# @prabhask5/stellar-engine [![npm version](https://img.shields.io/npm/v/@prabhask5/stellar-engine.svg?style=flat)](https://www.npmjs.com/package/@prabhask5/stellar-engine)
 
 A local-first, offline-capable sync engine for **SvelteKit + Supabase + Dexie** applications. All reads come from IndexedDB, all writes land locally first, and a background sync loop ships changes to Supabase -- so your app stays fast and functional regardless of network state.
 

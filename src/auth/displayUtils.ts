@@ -22,6 +22,7 @@
 import type { Session } from '@supabase/supabase-js';
 import type { OfflineCredentials } from '../types';
 import { getUserProfile } from '../supabase/auth';
+import { isDemoMode, getDemoConfig } from '../demo';
 
 // =============================================================================
 // PUBLIC API
@@ -65,6 +66,14 @@ export function resolveFirstName(
   offlineProfile: OfflineCredentials | null,
   fallback: string = 'Explorer'
 ): string {
+  /* ── Demo: use mock profile from config ── */
+  if (isDemoMode()) {
+    const config = getDemoConfig();
+    if (config?.mockProfile.firstName) {
+      return config.mockProfile.firstName;
+    }
+  }
+
   /* ── Online: check session profile fields ── */
   if (session?.user) {
     const profile = getUserProfile(session.user);
@@ -110,6 +119,11 @@ export function resolveUserId(
   session: Session | null,
   offlineProfile: OfflineCredentials | null
 ): string {
+  /* ── Demo: return synthetic user ID ── */
+  if (isDemoMode()) {
+    return 'demo-user';
+  }
+
   if (session?.user?.id) {
     return session.user.id;
   }

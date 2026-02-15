@@ -19,6 +19,7 @@
  * @module auth/displayUtils
  */
 import { getUserProfile } from '../supabase/auth';
+import { isDemoMode, getDemoConfig } from '../demo';
 // =============================================================================
 // PUBLIC API
 // =============================================================================
@@ -56,6 +57,13 @@ import { getUserProfile } from '../supabase/auth';
  * ```
  */
 export function resolveFirstName(session, offlineProfile, fallback = 'Explorer') {
+    /* ── Demo: use mock profile from config ── */
+    if (isDemoMode()) {
+        const config = getDemoConfig();
+        if (config?.mockProfile.firstName) {
+            return config.mockProfile.firstName;
+        }
+    }
     /* ── Online: check session profile fields ── */
     if (session?.user) {
         const profile = getUserProfile(session.user);
@@ -95,6 +103,10 @@ export function resolveFirstName(session, offlineProfile, fallback = 'Explorer')
  * ```
  */
 export function resolveUserId(session, offlineProfile) {
+    /* ── Demo: return synthetic user ID ── */
+    if (isDemoMode()) {
+        return 'demo-user';
+    }
     if (session?.user?.id) {
         return session.user.id;
     }

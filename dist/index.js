@@ -181,7 +181,14 @@ export { debug, isDebugMode, setDebugMode } from './debug';
 // - `now` — returns the current ISO 8601 timestamp.
 // - `calculateNewOrder` — computes fractional order for reorderable lists.
 // - `snakeToCamel` — converts `snake_case` to `camelCase`.
-export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
+export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes } from './utils';
+// =============================================================================
+//  Diagnostics
+// =============================================================================
+// Unified diagnostics API for inspecting sync engine internal state.
+// `getDiagnostics()` returns a comprehensive JSON snapshot; sub-category
+// functions provide lightweight access to specific sections.
+export { getDiagnostics, getSyncDiagnostics, getRealtimeDiagnostics, getQueueDiagnostics, getConflictDiagnostics, getEngineDiagnostics, getNetworkDiagnostics, getErrorDiagnostics } from './diagnostics';
 // =============================================================================
 //  Svelte Actions
 // =============================================================================

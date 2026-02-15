@@ -131,16 +131,6 @@ export declare function onConnectionStateChange(callback: (state: RealtimeConnec
  */
 export declare function onRealtimeDataUpdate(callback: (table: string, entityId: string) => void): () => void;
 /**
- * Get the current realtime connection state.
- *
- * Primarily used by debug utilities exposed on `window.__stellarDebug`.
- *
- * @returns The current {@link RealtimeConnectionState}.
- *
- * @see {@link ./debug.ts} for the debug surface that consumes this
- */
-export declare function getConnectionState(): RealtimeConnectionState;
-/**
  * Check whether an entity was recently processed via a realtime event.
  *
  * Called by `engine.ts` during polling to avoid applying the same remote
@@ -170,6 +160,25 @@ export declare function wasRecentlyProcessedByRealtime(entityId: string): boolea
  * @returns `true` when the WebSocket channel is in the `'connected'` state.
  */
 export declare function isRealtimeHealthy(): boolean;
+/**
+ * Return a snapshot of realtime-internal state for diagnostics.
+ *
+ * This function is prefixed with `_` to signal that it exposes module-private
+ * state and should only be consumed by the diagnostics module.
+ *
+ * @returns A plain object containing current realtime state values
+ */
+export declare function _getRealtimeDiagnostics(): {
+    connectionState: RealtimeConnectionState;
+    healthy: boolean;
+    reconnectAttempts: number;
+    lastError: string | null;
+    userId: string | null;
+    deviceId: string;
+    recentlyProcessedCount: number;
+    operationInProgress: boolean;
+    reconnectScheduled: boolean;
+};
 /**
  * Remove expired entries from the recently-processed tracking map.
  *

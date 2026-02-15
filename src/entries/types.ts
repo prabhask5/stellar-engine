@@ -84,6 +84,13 @@ export type { SyncError, RealtimeState } from '../stores/sync';
 export type { RemoteActionType } from '../stores/remoteChanges';
 
 // =============================================================================
+//  Diagnostics Types
+// =============================================================================
+// - `DiagnosticsSnapshot` — complete diagnostics snapshot returned by `getDiagnostics()`.
+
+export type { DiagnosticsSnapshot } from '../diagnostics';
+
+// =============================================================================
 //  Third-Party Re-exports
 // =============================================================================
 // Re-export the Supabase `Session` type so consumers do not need a direct

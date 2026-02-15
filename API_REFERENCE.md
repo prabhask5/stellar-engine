@@ -42,6 +42,7 @@ All exports are also available from the root `@prabhask5/stellar-engine` for bac
 - [Realtime](#realtime)
 - [Supabase Client](#supabase-client)
 - [Runtime Config](#runtime-config)
+- [Diagnostics](#diagnostics)
 - [Debug](#debug)
 - [Utilities](#utilities)
 - [Svelte Actions](#svelte-actions)
@@ -1583,6 +1584,128 @@ import { getDexieTableFor } from '@prabhask5/stellar-engine/config';
 getDexieTableFor('goal_lists'); // 'goalLists'
 getDexieTableFor('projects');   // 'projects'
 ```
+
+---
+
+## Diagnostics
+
+**Import:** `import { getDiagnostics, ... } from '@prabhask5/stellar-engine'`
+**Subpath:** `import { getDiagnostics, ... } from '@prabhask5/stellar-engine/utils'`
+
+The diagnostics module provides a unified API for inspecting the internal state of the sync engine. Each call returns a **point-in-time snapshot** — poll at your desired frequency for a live dashboard.
+
+### `getDiagnostics()`
+
+Capture a comprehensive diagnostics snapshot covering all engine subsystems.
+
+```ts
+async function getDiagnostics(): Promise<DiagnosticsSnapshot>
+```
+
+**Returns:** A `DiagnosticsSnapshot` containing: `timestamp`, `prefix`, `deviceId`, `sync`, `egress`, `queue`, `realtime`, `network`, `engine`, `conflicts`, `errors`, `config`.
+
+**Example:**
+
+```ts
+const snapshot = await getDiagnostics();
+console.log(JSON.stringify(snapshot, null, 2));
+```
+
+### `getSyncDiagnostics()`
+
+Get sync cycle and egress statistics (synchronous).
+
+```ts
+function getSyncDiagnostics(): { sync: {...}; egress: {...} }
+```
+
+### `getRealtimeDiagnostics()`
+
+Get WebSocket connection state (synchronous).
+
+```ts
+function getRealtimeDiagnostics(): { connectionState; healthy; reconnectAttempts; ... }
+```
+
+### `getQueueDiagnostics()`
+
+Get pending sync queue breakdown (async — reads IndexedDB).
+
+```ts
+async function getQueueDiagnostics(): Promise<{
+  pendingOperations: number;
+  pendingEntityIds: string[];
+  byTable: Record<string, number>;
+  byOperationType: Record<string, number>;
+  oldestPendingTimestamp: string | null;
+  itemsInBackoff: number;
+}>
+```
+
+### `getConflictDiagnostics()`
+
+Get recent conflict resolution history (async — reads IndexedDB).
+
+```ts
+async function getConflictDiagnostics(): Promise<{
+  recentHistory: ConflictHistoryEntry[];
+  totalCount: number;
+}>
+```
+
+### `getEngineDiagnostics()`
+
+Get engine-internal state: lock status, tab visibility, auth validation (synchronous).
+
+```ts
+function getEngineDiagnostics(): {
+  isTabVisible: boolean;
+  tabHiddenAt: string | null;
+  lockHeld: boolean;
+  lockHeldForMs: number | null;
+  recentlyModifiedCount: number;
+  wasOffline: boolean;
+  authValidatedAfterReconnect: boolean;
+}
+```
+
+### `getNetworkDiagnostics()`
+
+Get current online/offline status (synchronous).
+
+```ts
+function getNetworkDiagnostics(): { online: boolean }
+```
+
+### `getErrorDiagnostics()`
+
+Get recent error state from the sync status store (synchronous).
+
+```ts
+function getErrorDiagnostics(): {
+  lastError: string | null;
+  lastErrorDetails: string | null;
+  recentErrors: SyncError[];
+}
+```
+
+### `DiagnosticsSnapshot` (type)
+
+See the full type definition in `src/diagnostics.ts`. Key sections: `sync`, `egress`, `queue`, `realtime`, `network`, `engine`, `conflicts`, `errors`, `config`.
+
+### `formatBytes(bytes)`
+
+Format a byte count into a human-readable string.
+
+```ts
+function formatBytes(bytes: number): string
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `bytes` | `number` | The byte count to format |
+
+**Returns:** Formatted string (e.g., `"45.23 KB"`, `"1.20 MB"`, `"512 B"`).
 
 ---
 

@@ -273,7 +273,26 @@ export { debug, isDebugMode, setDebugMode } from './debug';
 // - `calculateNewOrder` — computes fractional order for reorderable lists.
 // - `snakeToCamel` — converts `snake_case` to `camelCase`.
 
-export { generateId, now, calculateNewOrder, snakeToCamel } from './utils';
+export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes } from './utils';
+
+// =============================================================================
+//  Diagnostics
+// =============================================================================
+// Unified diagnostics API for inspecting sync engine internal state.
+// `getDiagnostics()` returns a comprehensive JSON snapshot; sub-category
+// functions provide lightweight access to specific sections.
+
+export {
+  getDiagnostics,
+  getSyncDiagnostics,
+  getRealtimeDiagnostics,
+  getQueueDiagnostics,
+  getConflictDiagnostics,
+  getEngineDiagnostics,
+  getNetworkDiagnostics,
+  getErrorDiagnostics
+} from './diagnostics';
+export type { DiagnosticsSnapshot } from './diagnostics';
 
 // =============================================================================
 //  Svelte Actions

@@ -85,6 +85,30 @@ export function now() {
  * calculateNewOrder(items, 2, 0); // → 0 (before the first item)
  * calculateNewOrder(items, 0, 1); // → 2.5 (between items[1] and items[2])
  */
+// =============================================================================
+// Formatting Utilities
+// =============================================================================
+/**
+ * Format a byte count into a human-readable string (B, KB, or MB).
+ *
+ * @param bytes - Raw byte count
+ * @returns Formatted string like `"1.23 KB"` or `"456 B"`
+ *
+ * @example
+ * formatBytes(512);        // → '512 B'
+ * formatBytes(2048);       // → '2.00 KB'
+ * formatBytes(1572864);    // → '1.50 MB'
+ */
+export function formatBytes(bytes) {
+    if (bytes < 1024)
+        return `${bytes} B`;
+    if (bytes < 1024 * 1024)
+        return `${(bytes / 1024).toFixed(2)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+// =============================================================================
+// Ordering Utilities
+// =============================================================================
 export function calculateNewOrder(items, fromIndex, toIndex) {
     /* No movement — return the item's existing order. */
     if (fromIndex === toIndex) {

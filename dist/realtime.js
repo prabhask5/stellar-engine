@@ -75,7 +75,7 @@
  * @see {@link ./stores/remoteChanges.ts} for UI change-tracking and animations
  * @see {@link ./deviceId.ts} for per-device identity generation
  */
-import { debugLog, debugWarn, debugError } from './debug';
+import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import { getEngineConfig, getDexieTableFor } from './config';
 import { getDeviceId } from './deviceId';
 import { resolveConflicts, storeConflictHistory, getPendingOpsForEntity } from './conflicts';
@@ -245,18 +245,6 @@ export function onRealtimeDataUpdate(callback) {
 // PUBLIC API -- STATE QUERIES
 // =============================================================================
 /**
- * Get the current realtime connection state.
- *
- * Primarily used by debug utilities exposed on `window.__stellarDebug`.
- *
- * @returns The current {@link RealtimeConnectionState}.
- *
- * @see {@link ./debug.ts} for the debug surface that consumes this
- */
-export function getConnectionState() {
-    return state.connectionState;
-}
-/**
  * Check whether an entity was recently processed via a realtime event.
  *
  * Called by `engine.ts` during polling to avoid applying the same remote
@@ -297,6 +285,27 @@ export function wasRecentlyProcessedByRealtime(entityId) {
  */
 export function isRealtimeHealthy() {
     return state.connectionState === 'connected';
+}
+/**
+ * Return a snapshot of realtime-internal state for diagnostics.
+ *
+ * This function is prefixed with `_` to signal that it exposes module-private
+ * state and should only be consumed by the diagnostics module.
+ *
+ * @returns A plain object containing current realtime state values
+ */
+export function _getRealtimeDiagnostics() {
+    return {
+        connectionState: state.connectionState,
+        healthy: state.connectionState === 'connected',
+        reconnectAttempts: state.reconnectAttempts,
+        lastError: state.lastError,
+        userId: state.userId,
+        deviceId: state.deviceId,
+        recentlyProcessedCount: recentlyProcessedByRealtime.size,
+        operationInProgress,
+        reconnectScheduled
+    };
 }
 /**
  * Remove expired entries from the recently-processed tracking map.
@@ -696,6 +705,7 @@ function scheduleReconnect() {
        Supabase can emit CHANNEL_ERROR followed closely by CLOSED for the same
        disconnection event; both would call this function without this guard. */
     if (reconnectScheduled) {
+        debugLog('[Realtime] Reconnect skipped: timer already scheduled (duplicate guard)');
         return;
     }
     if (state.reconnectTimeout) {
@@ -836,7 +846,7 @@ export async function startRealtimeSubscriptions(userId) {
        this, rapid login/logout cycles could interleave async channel operations
        and leave the module in an inconsistent state. */
     if (operationInProgress) {
-        debugLog('[Realtime] Operation already in progress, skipping');
+        debugLog('[Realtime] Start blocked: operation already in progress (concurrent start/stop guard)');
         return;
     }
     operationInProgress = true;
@@ -894,9 +904,7 @@ export async function startRealtimeSubscriptions(userId) {
                     setConnectionState('connected');
                     break;
                 case 'CHANNEL_ERROR':
-                    if (err?.message) {
-                        debugError('[Realtime] Channel error:', err?.message);
-                    }
+                    debugError('[Realtime] Channel error:', err?.message || 'unknown', err);
                     setConnectionState('error', err?.message || 'Channel error');
                     scheduleReconnect();
                     break;
@@ -917,6 +925,9 @@ export async function startRealtimeSubscriptions(userId) {
                     if (state.connectionState !== 'disconnected' && state.userId && !reconnectScheduled) {
                         setConnectionState('disconnected');
                         scheduleReconnect();
+                    }
+                    else if (isDebugMode()) {
+                        debugLog(`[Realtime] CLOSED reconnect suppressed: state=${state.connectionState}, userId=${!!state.userId}, reconnectScheduled=${reconnectScheduled}`);
                     }
                     break;
             }
@@ -958,7 +969,7 @@ export async function startRealtimeSubscriptions(userId) {
 export async function stopRealtimeSubscriptions() {
     /* Concurrency guard: prevent overlapping start/stop sequences. */
     if (operationInProgress) {
-        debugLog('[Realtime] Operation already in progress, skipping stop');
+        debugLog('[Realtime] Stop blocked: operation already in progress (concurrent start/stop guard)');
         return;
     }
     operationInProgress = true;

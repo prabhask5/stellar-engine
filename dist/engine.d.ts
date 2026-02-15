@@ -73,6 +73,16 @@
  * ```
  */
 export declare function clearPendingSyncQueue(): Promise<number>;
+/** Stats captured for each sync cycle (push + pull) */
+interface SyncCycleStats {
+    timestamp: string;
+    trigger: string;
+    pushedItems: number;
+    pulledTables: number;
+    pulledRecords: number;
+    egressBytes: number;
+    durationMs: number;
+}
 /**
  * Mark an entity as recently modified to protect it from being overwritten by pull.
  *
@@ -82,6 +92,39 @@ export declare function clearPendingSyncQueue(): Promise<number>;
  * @param entityId - The UUID of the entity that was just modified locally
  */
 export declare function markEntityModified(entityId: string): void;
+/**
+ * Return a snapshot of engine-internal state for diagnostics.
+ *
+ * This function is prefixed with `_` to signal that it exposes module-private
+ * state and should only be consumed by the diagnostics module.
+ *
+ * @returns A plain object containing current engine state values
+ */
+export declare function _getEngineDiagnostics(): {
+    syncStats: SyncCycleStats[];
+    totalSyncCycles: number;
+    egressStats: {
+        byTable: {
+            [x: string]: {
+                bytes: number;
+                records: number;
+            };
+        };
+        totalBytes: number;
+        totalRecords: number;
+        sessionStart: string;
+    };
+    hasHydrated: boolean;
+    schemaValidated: boolean;
+    isTabVisible: boolean;
+    tabHiddenAt: number | null;
+    lockHeld: boolean;
+    lockHeldForMs: number | null;
+    recentlyModifiedCount: number;
+    wasOffline: boolean;
+    authValidatedAfterReconnect: boolean;
+    lastSuccessfulSyncTimestamp: number;
+};
 /**
  * Register a callback to be invoked when a sync cycle completes.
  *
@@ -145,16 +188,16 @@ export declare function runFullSync(quiet?: boolean, skipPull?: boolean): Promis
  * This is the main "boot" function for the sync engine. It:
  * 1. Ensures the Dexie DB is open and upgraded
  * 2. Cleans up any existing listeners (idempotent restart support)
- * 3. Sets up debug window utilities
- * 4. Subscribes to Supabase auth state changes (handles sign-out/token-refresh)
- * 5. Registers online/offline handlers with auth validation
- * 6. Registers visibility change handler for smart tab-return syncing
- * 7. Starts realtime WebSocket subscriptions
- * 8. Starts periodic background sync interval
- * 9. Validates Supabase schema (one-time)
- * 10. Runs initial hydration (if local DB is empty) or full sync
- * 11. Runs initial cleanup (tombstones, conflicts, failed items)
- * 12. Starts the watchdog timer
+ * 3. Subscribes to Supabase auth state changes (handles sign-out/token-refresh)
+ * 4. Registers online/offline handlers with auth validation
+ * 5. Registers visibility change handler for smart tab-return syncing
+ * 6. Starts realtime WebSocket subscriptions
+ * 7. Starts periodic background sync interval
+ * 8. Validates Supabase schema (one-time)
+ * 9. Runs initial hydration (if local DB is empty) or full sync
+ * 10. Runs initial cleanup (tombstones, conflicts, failed items)
+ * 11. Starts the watchdog timer
+ * 12. Registers debug window utilities (Tombstones, Sync, Diagnostics)
  *
  * **Must be called after `initEngine()`** — requires configuration to be set.
  * Safe to call multiple times (previous listeners are cleaned up first).
@@ -183,4 +226,5 @@ export declare function stopSyncEngine(): Promise<void>;
  * database is still open when clearing tables.
  */
 export declare function clearLocalCache(): Promise<void>;
+export {};
 //# sourceMappingURL=engine.d.ts.map

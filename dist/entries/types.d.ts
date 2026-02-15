@@ -16,5 +16,6 @@ export type { AppConfig } from '../runtime/runtimeConfig';
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType } from '../types';
 export type { SyncError, RealtimeState } from '../stores/sync';
 export type { RemoteActionType } from '../stores/remoteChanges';
+export type { DiagnosticsSnapshot } from '../diagnostics';
 export type { Session } from '@supabase/supabase-js';
 //# sourceMappingURL=types.d.ts.map

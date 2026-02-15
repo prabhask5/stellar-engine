@@ -26,7 +26,7 @@
  */
 import { writable } from 'svelte/store';
 const browser = typeof window !== 'undefined';
-import { debugError } from '../debug';
+import { debugError, debugLog } from '../debug';
 // =============================================================================
 // Store Factory
 // =============================================================================
@@ -149,6 +149,9 @@ function createNetworkStore() {
         window.addEventListener('online', () => {
             setIfChanged(true);
             /* Guard against duplicate firing (iOS PWA fires both online + visibilitychange) */
+            if (wasOffline && reconnectPending) {
+                debugLog('[Network] Reconnect suppressed: callback already pending (duplicate guard)');
+            }
             if (wasOffline && !reconnectPending) {
                 wasOffline = false;
                 reconnectPending = true;
@@ -171,6 +174,9 @@ function createNetworkStore() {
                 const nowOnline = navigator.onLine;
                 setIfChanged(nowOnline); /* Only triggers a store update if value actually changed */
                 /* If we're coming back online after being hidden (guard against duplicate firing) */
+                if (nowOnline && wasOffline && reconnectPending) {
+                    debugLog('[Network] Visibility reconnect suppressed: callback already pending (duplicate guard)');
+                }
                 if (nowOnline && wasOffline && !reconnectPending) {
                     wasOffline = false;
                     reconnectPending = true;

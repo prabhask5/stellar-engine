@@ -820,8 +820,7 @@ function generateAppHtml(opts: InstallOptions): string {
     <!-- ================================================================= -->
     <!--               LANDSCAPE ORIENTATION BLOCKER                       -->
     <!-- ================================================================= -->
-    <!-- TODO: Add landscape blocker UI. See stellar/src/app.html for a
-         full implementation with space-themed animations. The #landscape-blocker
+    <!-- TODO: Add landscape blocker UI. The #landscape-blocker
          div is shown via the @media query below when a phone is in landscape. -->
     <div id="landscape-blocker">
       <!-- TODO: Add your landscape blocker content here -->
@@ -2123,7 +2122,7 @@ function generateSetupPageSvelte(opts: InstallOptions): string {
    * @fileoverview Setup wizard page — first-time Supabase configuration.
    *
    * Guides the user through a five-step process to connect their own
-   * Supabase backend to Stellar:
+   * Supabase backend to ${opts.name}:
    *
    * 1. Create a Supabase project (instructions only).
    * 2. Configure authentication (enable anonymous sign-ins).
@@ -2583,7 +2582,7 @@ function generateLoginPage(opts: InstallOptions): string {
 
     /* ── Listen for auth confirmation from the \`/confirm\` page ──── */
     try {
-      authChannel = new BroadcastChannel('stellar-auth-channel');
+      authChannel = new BroadcastChannel('${opts.prefix}-auth-channel');
       authChannel.onmessage = async (event) => {
         if (event.data?.type === 'AUTH_CONFIRMED') {
           /* Bring this tab to the foreground before the confirm tab closes */
@@ -3539,7 +3538,7 @@ function generateProfilePage(opts: InstallOptions): string {
   let forceSyncing = $state(false);
   let triggeringSyncManual = $state(false);
   let resettingCursor = $state(false);
-  let checkingConnection = $state(false);
+
   let viewingTombstones = $state(false);
   let cleaningTombstones = $state(false);
 
@@ -3790,7 +3789,7 @@ function generateProfilePage(opts: InstallOptions): string {
    */
   function listenForEmailConfirmation() {
     if (!('BroadcastChannel' in window)) return;
-    const channel = new BroadcastChannel('stellar-auth-channel');
+    const channel = new BroadcastChannel('${opts.prefix}-auth-channel');
     channel.onmessage = async (event) => {
       if (
         event.data?.type === 'AUTH_CONFIRMED' &&
@@ -3878,7 +3877,7 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /**
    * Cast \`window\` to an untyped record for accessing runtime-injected
-   * debug helpers (e.g., \`__${opts.prefix}Sync\`, \`__${opts.prefix}SyncStats\`).
+   * debug helpers (e.g., \`__${opts.prefix}Sync\`, \`__${opts.prefix}Diagnostics\`).
    * @returns The global \`window\` as a loose \`Record\`
    */
   function getDebugWindow(): Record<string, unknown> {
@@ -3940,99 +3939,6 @@ function generateProfilePage(opts: InstallOptions): string {
       alert('Reset cursor failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
     resettingCursor = false;
-  }
-
-  /** Test connectivity to Supabase and show the result in an alert. */
-  async function handleCheckConnection() {
-    checkingConnection = true;
-    try {
-      const fn = getDebugWindow().__${opts.prefix}Sync as
-        | {
-            checkConnection: () => Promise<{
-              connected: boolean;
-              error?: string;
-              records?: number;
-            }>;
-          }
-        | undefined;
-      if (fn?.checkConnection) {
-        const result = await fn.checkConnection();
-        if (result.connected) {
-          alert('Connection OK. Supabase is reachable.');
-        } else {
-          alert('Connection failed: ' + (result.error || 'Unknown error'));
-        }
-      } else {
-        alert('Debug mode must be enabled and the page refreshed to use this tool.');
-      }
-    } catch (err) {
-      alert('Connection check failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
-    }
-    checkingConnection = false;
-  }
-
-  /** Display current sync cursor and pending operations count in an alert. */
-  function handleGetSyncStatus() {
-    const fn = getDebugWindow().__${opts.prefix}Sync as
-      | { getStatus: () => { cursor: unknown; pendingOps: Promise<number> } }
-      | undefined;
-    if (fn?.getStatus) {
-      const status = fn.getStatus();
-      const cursorDisplay =
-        typeof status.cursor === 'object'
-          ? JSON.stringify(status.cursor)
-          : String(status.cursor || 'None');
-      status.pendingOps.then((count: number) => {
-        alert(\`Sync Status:\n\nCursor: \${cursorDisplay}\nPending operations: \${count}\`);
-      });
-    } else {
-      alert('Debug mode must be enabled and the page refreshed to use this tool.');
-    }
-  }
-
-  /** Show the realtime WebSocket connection state and health. */
-  function handleRealtimeStatus() {
-    const fn = getDebugWindow().__${opts.prefix}Sync as
-      | { realtimeStatus: () => { state: string; healthy: boolean } }
-      | undefined;
-    if (fn?.realtimeStatus) {
-      const status = fn.realtimeStatus();
-      alert(
-        \`Realtime Status:\n\nState: \${status.state}\nHealthy: \${status.healthy ? 'Yes' : 'No'}\`
-      );
-    } else {
-      alert('Debug mode must be enabled and the page refreshed to use this tool.');
-    }
-  }
-
-  /** Display sync cycle stats in an alert; full details logged to console. */
-  function handleViewSyncStats() {
-    const fn = getDebugWindow().__${opts.prefix}SyncStats as
-      | (() => { totalSyncCycles: number; recentMinute: number; recent: unknown[] })
-      | undefined;
-    if (fn) {
-      const stats = fn();
-      alert(
-        \`Sync Stats:\n\nTotal cycles: \${stats.totalSyncCycles}\nCycles in last minute: \${stats.recentMinute}\nRecent cycles logged to console.\`
-      );
-    } else {
-      alert('Debug mode must be enabled and the page refreshed to use this tool.');
-    }
-  }
-
-  /** Display data-transfer / egress stats; per-table breakdown in console. */
-  function handleViewEgress() {
-    const fn = getDebugWindow().__${opts.prefix}Egress as
-      | (() => { totalFormatted: string; totalRecords: number; sessionStart: string })
-      | undefined;
-    if (fn) {
-      const stats = fn();
-      alert(
-        \`Egress Stats:\n\nTotal data transferred: \${stats.totalFormatted}\nTotal records: \${stats.totalRecords}\nSession started: \${new Date(stats.sessionStart).toLocaleString()}\n\nFull breakdown logged to console.\`
-      );
-    } else {
-      alert('Debug mode must be enabled and the page refreshed to use this tool.');
-    }
   }
 
   /** Log soft-deleted record counts per table to the browser console. */

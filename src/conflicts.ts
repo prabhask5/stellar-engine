@@ -67,7 +67,7 @@
  * @see {@link ./queue.ts} for the sync queue that provides pending operations
  */
 
-import { debugLog, debugError } from './debug';
+import { debugLog, debugError, isDebugMode } from './debug';
 import { getEngineConfig } from './config';
 import { getDeviceId } from './deviceId';
 import type { SyncOperationItem } from './types';
@@ -398,7 +398,11 @@ export async function resolveConflicts(
      are moot when the entity is deleted. The remote (deleted) state is
      returned as-is. */
   if (remote.deleted && !hasPendingDelete) {
-    // Remote delete wins - entity should stay deleted
+    if (isDebugMode()) {
+      debugLog(
+        `[Conflict] Remote delete wins for ${entityType}/${entityId} — local edits discarded`
+      );
+    }
     return {
       entityId,
       entityType,
@@ -518,6 +522,12 @@ export async function resolveConflicts(
         deviceId
       );
       mergedEntity[field] = resolution.resolvedValue;
+    }
+
+    if (isDebugMode()) {
+      debugLog(
+        `[Conflict] Field '${field}' on ${entityType}/${entityId}: strategy=${resolution.strategy}, winner=${resolution.winner}`
+      );
     }
 
     fieldResolutions.push(resolution);
@@ -648,10 +658,16 @@ function resolveByTimestamp(
 
     if (remoteDeviceId && localDeviceId < remoteDeviceId) {
       /* Local device has the lower ID -> local wins. */
+      debugLog(
+        `[Conflict] Tiebreaker: same timestamp for '${field}', local device wins (lower ID)`
+      );
       winner = 'local';
       resolvedValue = localValue;
     } else if (remoteDeviceId && localDeviceId > remoteDeviceId) {
       /* Remote device has the lower ID -> remote wins. */
+      debugLog(
+        `[Conflict] Tiebreaker: same timestamp for '${field}', remote device wins (lower ID)`
+      );
       winner = 'remote';
       resolvedValue = remoteValue;
     } else {
@@ -912,6 +928,31 @@ export async function getPendingOpsForEntity(entityId: string): Promise<SyncOper
  * console.log(`Purged ${deleted} stale conflict records`);
  * ```
  */
+/**
+ * Query the most recent conflict history entries for diagnostics.
+ *
+ * Reads from the `conflictHistory` IndexedDB table, returning entries in
+ * reverse chronological order (newest first), limited to the specified count.
+ *
+ * @param limit - Maximum number of entries to return (default: 20)
+ * @returns An object containing the recent entries and the total count
+ */
+export async function _getRecentConflictHistory(
+  limit = 20
+): Promise<{ entries: ConflictHistoryEntry[]; totalCount: number }> {
+  try {
+    const table = getEngineConfig().db!.table('conflictHistory');
+    const allEntries = (await table.toArray()) as unknown as ConflictHistoryEntry[];
+    const totalCount = allEntries.length;
+    // Sort by timestamp descending (newest first) and take the limit
+    const entries = allEntries.sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1)).slice(0, limit);
+    return { entries, totalCount };
+  } catch (error) {
+    debugError('[Conflict] Failed to read conflict history:', error);
+    return { entries: [], totalCount: 0 };
+  }
+}
+
 export async function cleanupConflictHistory(): Promise<number> {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - 30);

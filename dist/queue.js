@@ -62,7 +62,8 @@
  * @see {@link SyncOperationItem} for the queue row schema.
  * @see {@link processFieldOperations} for field-level increment/set interaction logic.
  */
-import { debugWarn } from './debug';
+import { debugLog, debugWarn } from './debug';
+import { isDebugMode } from './debug';
 import { getEngineConfig } from './config';
 // =============================================================================
 // Constants
@@ -237,6 +238,9 @@ export async function coalescePendingOps() {
            The server never knew about it, so we can discard every operation.
            This is the most aggressive optimization: N operations become 0. */
         if (hasCreate && hasDelete) {
+            if (isDebugMode()) {
+                debugLog(`[QUEUE] Create+delete cancellation: ${items.length} ops cancelled for ${items[0].table}/${items[0].entityId}`);
+            }
             for (const item of items) {
                 markDeleted(item);
             }
@@ -247,6 +251,12 @@ export async function coalescePendingOps() {
            sets/increments are pointless because the delete will wipe the row.
            We keep only the delete operation itself. */
         if (!hasCreate && hasDelete) {
+            if (isDebugMode()) {
+                const droppedCount = items.filter((i) => i.operationType !== 'delete').length;
+                if (droppedCount > 0) {
+                    debugLog(`[QUEUE] Delete-only reduction: dropping ${droppedCount} intermediate ops for ${items[0].table}/${items[0].entityId}`);
+                }
+            }
             for (const item of items) {
                 if (item.operationType !== 'delete') {
                     markDeleted(item);
@@ -410,6 +420,9 @@ export async function coalescePendingOps() {
         if (item.operationType === 'increment') {
             const delta = typeof effectiveValue === 'number' ? effectiveValue : 0;
             if (delta === 0) {
+                if (isDebugMode()) {
+                    debugLog(`[QUEUE] Zero-delta pruning: increment on ${item.table}/${item.entityId}.${item.field} sums to 0`);
+                }
                 shouldDelete = true;
             }
         }
@@ -684,10 +697,12 @@ export async function cleanupFailedItems() {
     for (const item of failedItems) {
         affectedTables.add(item.table);
         if (item.id) {
-            debugWarn(`Sync item permanently failed after ${MAX_SYNC_RETRIES} retries:`, {
+            debugWarn(`[QUEUE] Permanent failure after ${MAX_SYNC_RETRIES} retries — discarding:`, {
                 table: item.table,
                 operationType: item.operationType,
-                entityId: item.entityId
+                entityId: item.entityId,
+                field: item.field || null,
+                lastRetryAt: item.lastRetryAt || item.timestamp
             });
             await db.table('syncQueue').delete(item.id);
         }

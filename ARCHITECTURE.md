@@ -1047,7 +1047,7 @@ interface EgressStats {
 }
 ```
 
-Accessible via `window.__{prefix}Egress()` in debug mode (prefix is configurable).
+Accessible via `getDiagnostics()` or `getSyncDiagnostics()` (see [Section 11.2.1](#1121-diagnostics-api)).
 
 ---
 
@@ -1260,10 +1260,31 @@ Available in debug mode via the browser console. Function names are prefixed wit
 
 | Function | Purpose |
 |----------|---------|
-| `window.__{prefix}SyncStats()` | Total sync cycles, last-minute cycle count, last 10 cycle details |
-| `window.__{prefix}Egress()` | Total bandwidth consumed, per-table breakdown with percentages, recent cycle sizes |
+| `window.__{prefix}Diagnostics()` | Full diagnostics snapshot (async) — returns a comprehensive JSON object covering sync cycles, egress, queue, realtime, network, conflicts, errors, and config |
 | `window.__{prefix}Tombstones()` | Count of tombstones per table (local + server) |
 | `window.__{prefix}Tombstones({ cleanup: true, force: true })` | Manually trigger tombstone cleanup |
+| `window.__{prefix}Sync.sync()` | Trigger an immediate sync cycle |
+| `window.__{prefix}Sync.forceFullSync()` | Reset cursor and perform a full re-sync |
+| `window.__{prefix}Sync.resetSyncCursor()` | Clear the sync cursor (next sync will be full) |
+
+### 11.2.1 Diagnostics API
+
+**File**: `src/diagnostics.ts`
+
+The `getDiagnostics()` function (also available as `window.__{prefix}Diagnostics()`) returns a comprehensive `DiagnosticsSnapshot` — a single JSON-serializable object with all observable engine state. Each call returns a **point-in-time snapshot**; for a live dashboard, poll at the desired frequency.
+
+Sub-category functions are also exported for lightweight access to specific sections:
+
+| Function | Async | Returns |
+|----------|-------|---------|
+| `getDiagnostics()` | Yes | Full `DiagnosticsSnapshot` |
+| `getSyncDiagnostics()` | No | Sync cycles + egress stats |
+| `getRealtimeDiagnostics()` | No | WebSocket connection state |
+| `getQueueDiagnostics()` | Yes | Pending operations breakdown |
+| `getConflictDiagnostics()` | Yes | Recent conflict history |
+| `getEngineDiagnostics()` | No | Internal engine state (locks, visibility) |
+| `getNetworkDiagnostics()` | No | Online/offline status |
+| `getErrorDiagnostics()` | No | Recent errors |
 
 ### 11.3 Logging Prefixes
 
@@ -1271,12 +1292,13 @@ All log messages use structured prefixes for filtering:
 
 | Prefix | Source | Examples |
 |--------|--------|---------|
-| `[SYNC]` | Sync engine | Push/pull operations, cursor updates, lock management |
-| `[Realtime]` | WebSocket manager | Connection state, incoming changes, echo suppression |
-| `[Conflict]` | Conflict resolver | Field resolutions, history storage |
+| `[SYNC]` | Sync engine | Push/pull operations, cursor updates, lock management, hydration |
+| `[Realtime]` | WebSocket manager | Connection state, incoming changes, echo suppression, reconnect guards |
+| `[Conflict]` | Conflict resolver | Field resolutions, strategy selection, history storage |
+| `[QUEUE]` | Sync queue | Coalescing cancellations, zero-delta pruning, permanent failures |
 | `[Tombstone]` | Cleanup system | Local/server cleanup counts |
 | `[Auth]` | Auth layer | Login, credential caching, session validation |
-| `[Network]` | Network store | Callback execution errors |
+| `[Network]` | Network store | Reconnect/disconnect callbacks, duplicate guard suppression |
 
 ### 11.4 Sync Status Store
 
@@ -1295,24 +1317,43 @@ interface SyncStatus {
 }
 ```
 
-### 11.5 Egress Monitoring Output Example
+### 11.5 Diagnostics Snapshot Example
 
-```
-=== EGRESS STATS ===
-Session started: 2024-01-15T08:00:00.000Z
-Total egress: 45.23 KB (312 records)
-
---- BY TABLE ---
-  table_a: 18.50 KB (180 records, 40.9%)
-  table_b: 8.20 KB (45 records, 18.1%)
-  table_c: 6.30 KB (30 records, 13.9%)
-  table_d: 4.10 KB (12 records, 9.1%)
-  ...
-
---- RECENT SYNC CYCLES ---
-  2024-01-15T10:30:00Z: 2.45 KB (18 records)
-  2024-01-15T10:35:00Z: 0 B (0 records)  [push-only, realtime healthy]
-  2024-01-15T10:40:00Z: 1.20 KB (8 records)
+```json
+{
+  "timestamp": "2025-01-15T10:30:00.000Z",
+  "prefix": "stellar",
+  "deviceId": "abc123",
+  "sync": {
+    "status": "idle",
+    "totalCycles": 42,
+    "lastSyncTime": "2025-01-15T10:29:55.000Z",
+    "cyclesLastMinute": 2,
+    "hasHydrated": true,
+    "schemaValidated": true,
+    "pendingCount": 0
+  },
+  "egress": {
+    "totalBytes": 46315,
+    "totalFormatted": "45.23 KB",
+    "totalRecords": 312,
+    "byTable": {
+      "habits": { "bytes": 18944, "formatted": "18.50 KB", "records": 180, "percentage": "40.9%" }
+    }
+  },
+  "queue": {
+    "pendingOperations": 0,
+    "byTable": {},
+    "byOperationType": {},
+    "itemsInBackoff": 0
+  },
+  "realtime": { "connectionState": "connected", "healthy": true, "reconnectAttempts": 0 },
+  "network": { "online": true },
+  "engine": { "isTabVisible": true, "lockHeld": false },
+  "conflicts": { "recentHistory": [], "totalCount": 0 },
+  "errors": { "lastError": null, "recentErrors": [] },
+  "config": { "tableCount": 5, "tableNames": ["habits", "goals", "..."], "syncDebounceMs": 2000 }
+}
 ```
 
 ---
@@ -1343,9 +1384,10 @@ Total egress: 45.23 KB (312 records)
 | Remote Change Actions | `src/actions/remoteChange.ts` | Remote change handling logic |
 | Reconnect Handler | `src/reconnectHandler.ts` | Reconnection orchestration |
 | Runtime Config | `src/runtime/runtimeConfig.ts` | Runtime Supabase config with localStorage cache |
+| Diagnostics | `src/diagnostics.ts` | Unified diagnostics snapshot API |
 | Debug | `src/debug.ts` | Conditional debug logging system |
 | Config | `src/config.ts` | Engine configuration and constants |
-| Utils | `src/utils.ts` | Shared utility functions |
+| Utils | `src/utils.ts` | Shared utility functions (`formatBytes`, `generateId`, etc.) |
 | Store Factories | `src/stores/factories.ts` | Generic collection/detail store factories |
 | Entry Point | `src/index.ts` | Public API and exports |
 

@@ -289,5 +289,18 @@ export declare function getPendingOpsForEntity(entityId: string): Promise<SyncOp
  * console.log(`Purged ${deleted} stale conflict records`);
  * ```
  */
+/**
+ * Query the most recent conflict history entries for diagnostics.
+ *
+ * Reads from the `conflictHistory` IndexedDB table, returning entries in
+ * reverse chronological order (newest first), limited to the specified count.
+ *
+ * @param limit - Maximum number of entries to return (default: 20)
+ * @returns An object containing the recent entries and the total count
+ */
+export declare function _getRecentConflictHistory(limit?: number): Promise<{
+    entries: ConflictHistoryEntry[];
+    totalCount: number;
+}>;
 export declare function cleanupConflictHistory(): Promise<number>;
 //# sourceMappingURL=conflicts.d.ts.map

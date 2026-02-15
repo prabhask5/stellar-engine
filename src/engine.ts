@@ -83,7 +83,6 @@ import {
   onConnectionStateChange,
   cleanupRealtimeTracking,
   isRealtimeHealthy,
-  getConnectionState,
   pauseRealtime,
   wasRecentlyProcessedByRealtime,
   type RealtimeConnectionState
@@ -94,6 +93,8 @@ import { supabase as supabaseProxy } from './supabase/client';
 import { getOfflineCredentials } from './auth/offlineCredentials';
 import { getValidOfflineSession, createOfflineSession } from './auth/offlineSession';
 import { validateSchema } from './supabase/validate';
+import { formatBytes } from './utils';
+import { getDiagnostics } from './diagnostics';
 
 // =============================================================================
 // CONFIG ACCESSORS
@@ -288,9 +289,8 @@ function needsAuthValidation(): boolean {
 // =============================================================================
 //
 // Tracks every byte transferred during sync cycles, broken down by table.
-// This data powers the `window.__<prefix>Egress()` and `window.__<prefix>SyncStats()`
-// debug utilities, helping developers identify bandwidth-heavy tables and
-// optimize their column selections.
+// This data powers the diagnostics API (`getDiagnostics()`), helping developers
+// identify bandwidth-heavy tables and optimize their column selections.
 //
 // All stats are session-scoped (reset on page reload). The sync cycle log
 // retains the last 100 entries as a rolling window.
@@ -382,18 +382,6 @@ function trackEgress(
 }
 
 /**
- * Format a byte count into a human-readable string (B, KB, or MB).
- *
- * @param bytes - Raw byte count
- * @returns Formatted string like `"1.23 KB"` or `"456 B"`
- */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-/**
  * Record a completed sync cycle in the rolling stats log.
  *
  * Automatically timestamps the entry and trims the log to 100 entries.
@@ -419,85 +407,6 @@ function logSyncCycle(stats: Omit<SyncCycleStats, 'timestamp'>) {
       `trigger=${stats.trigger}, pushed=${stats.pushedItems}, ` +
       `pulled=${stats.pulledRecords} records (${formatBytes(stats.egressBytes)}), ${stats.durationMs}ms`
   );
-}
-
-/**
- * Expose debug utilities on the `window` object for browser console access.
- *
- * Only initializes when running in a browser AND debug mode is enabled.
- * All utilities are namespaced under a configurable prefix to avoid collisions
- * when multiple engines run on the same page.
- *
- * Available utilities (where `<prefix>` defaults to `"engine"`):
- * - `window.__<prefix>SyncStats()` — View recent sync cycle statistics
- * - `window.__<prefix>Egress()` — View cumulative bandwidth usage by table
- * - `window.__<prefix>Tombstones()` — Inspect soft-deleted record counts
- * - `window.__<prefix>Sync.forceFullSync()` — Reset cursor and re-download everything
- * - `window.__<prefix>Sync.resetSyncCursor()` — Reset cursor (next sync pulls all)
- * - `window.__<prefix>Sync.sync()` — Trigger an immediate full sync
- * - `window.__<prefix>Sync.getStatus()` — Get current sync cursor and pending op count
- * - `window.__<prefix>Sync.checkConnection()` — Test Supabase connectivity
- * - `window.__<prefix>Sync.realtimeStatus()` — Check WebSocket connection health
- */
-function initDebugWindowUtilities(): void {
-  if (typeof window === 'undefined' || !isDebugMode()) return;
-
-  const prefix = getPrefix();
-
-  (window as unknown as Record<string, unknown>)[`__${prefix}SyncStats`] = () => {
-    const recentMinute = syncStats.filter(
-      (s) => new Date(s.timestamp).getTime() > Date.now() - 60000
-    );
-    debugLog(`=== ${prefix.toUpperCase()} SYNC STATS ===`);
-    debugLog(`Total cycles: ${totalSyncCycles}`);
-    debugLog(`Last minute: ${recentMinute.length} cycles`);
-    debugLog(`Recent cycles:`, syncStats.slice(-10));
-    return { totalSyncCycles, recentMinute: recentMinute.length, recent: syncStats.slice(-10) };
-  };
-
-  (window as unknown as Record<string, unknown>)[`__${prefix}Egress`] = () => {
-    debugLog(`=== ${prefix.toUpperCase()} EGRESS STATS ===`);
-    debugLog(`Session started: ${egressStats.sessionStart}`);
-    debugLog(
-      `Total egress: ${formatBytes(egressStats.totalBytes)} (${egressStats.totalRecords} records)`
-    );
-    debugLog('');
-    debugLog('--- BY TABLE ---');
-
-    // Sort tables by bytes descending
-    const sortedTables = Object.entries(egressStats.byTable).sort(
-      ([, a], [, b]) => b.bytes - a.bytes
-    );
-
-    for (const [table, stats] of sortedTables) {
-      const pct =
-        egressStats.totalBytes > 0
-          ? ((stats.bytes / egressStats.totalBytes) * 100).toFixed(1)
-          : '0';
-      debugLog(`  ${table}: ${formatBytes(stats.bytes)} (${stats.records} records, ${pct}%)`);
-    }
-
-    debugLog('');
-    debugLog('--- RECENT SYNC CYCLES ---');
-    const recent = syncStats.slice(-5);
-    for (const cycle of recent) {
-      debugLog(
-        `  ${cycle.timestamp}: ${formatBytes(cycle.egressBytes)} (${cycle.pulledRecords} records)`
-      );
-    }
-
-    return {
-      sessionStart: egressStats.sessionStart,
-      totalBytes: egressStats.totalBytes,
-      totalFormatted: formatBytes(egressStats.totalBytes),
-      totalRecords: egressStats.totalRecords,
-      byTable: egressStats.byTable,
-      recentCycles: syncStats.slice(-10)
-    };
-  };
-
-  // Tombstone debug - will be initialized after debugTombstones function is defined
-  // See below where it's assigned after the function definition
 }
 
 // =============================================================================
@@ -582,6 +491,32 @@ const recentlyModifiedEntities: Map<string, number> = new Map();
  */
 export function markEntityModified(entityId: string): void {
   recentlyModifiedEntities.set(entityId, Date.now());
+}
+
+/**
+ * Return a snapshot of engine-internal state for diagnostics.
+ *
+ * This function is prefixed with `_` to signal that it exposes module-private
+ * state and should only be consumed by the diagnostics module.
+ *
+ * @returns A plain object containing current engine state values
+ */
+export function _getEngineDiagnostics() {
+  return {
+    syncStats: syncStats.slice(-10),
+    totalSyncCycles,
+    egressStats: { ...egressStats, byTable: { ...egressStats.byTable } },
+    hasHydrated: _hasHydrated,
+    schemaValidated: _schemaValidated,
+    isTabVisible,
+    tabHiddenAt,
+    lockHeld: lockPromise !== null,
+    lockHeldForMs: lockAcquiredAt ? Date.now() - lockAcquiredAt : null,
+    recentlyModifiedCount: recentlyModifiedEntities.size,
+    wasOffline,
+    authValidatedAfterReconnect,
+    lastSuccessfulSyncTimestamp
+  };
 }
 
 /**
@@ -683,6 +618,9 @@ async function acquireSyncLock(): Promise<boolean> {
       );
       releaseSyncLock();
     } else {
+      debugLog(
+        `[SYNC] Lock contention: sync skipped (lock held for ${lockAcquiredAt ? Math.round((Date.now() - lockAcquiredAt) / 1000) : '?'}s)`
+      );
       return false;
     }
   }
@@ -692,6 +630,7 @@ async function acquireSyncLock(): Promise<boolean> {
     lockResolve = resolve;
   });
   lockAcquiredAt = Date.now();
+  debugLog('[SYNC] Lock acquired');
 
   return true;
 }
@@ -911,8 +850,13 @@ async function getCurrentUserId(): Promise<string | null> {
       session.user?.id === lastValidatedUserId &&
       now - lastUserValidation < USER_VALIDATION_INTERVAL_MS
     ) {
+      debugLog(
+        `[SYNC] Using cached user validation (${Math.round((now - lastUserValidation) / 1000)}s old)`
+      );
       return session.user.id;
     }
+
+    debugLog('[SYNC] Cached user validation expired, refreshing with getUser() network call');
 
     // Session is valid, but also validate with getUser() which makes a network call
     // This catches cases where the token is revoked server-side
@@ -985,7 +929,6 @@ function setLastSyncCursor(cursor: string, userId: string | null): void {
 
 /**
  * Reset the sync cursor so the next sync pulls ALL data.
- * Available in browser console via window.__<prefix>Sync.resetSyncCursor()
  */
 async function resetSyncCursor(): Promise<void> {
   const userId = await getCurrentUserId();
@@ -998,7 +941,6 @@ async function resetSyncCursor(): Promise<void> {
 
 /**
  * Force a full sync by resetting the cursor and re-downloading all data.
- * Available in browser console via window.__<prefix>Sync.forceFullSync()
  */
 async function forceFullSync(): Promise<void> {
   debugLog('[SYNC] Starting force full sync...');
@@ -1148,7 +1090,10 @@ async function pullRemoteChanges(minCursor?: string): Promise<{ bytes: number; r
     for (const remote of remoteRecords || []) {
       // Skip recently modified entities (protects against race conditions)
       // Note: We no longer skip entities with pending ops - conflict resolution handles them
-      if (isRecentlyModified(remote.id)) continue;
+      if (isRecentlyModified(remote.id)) {
+        debugLog(`[SYNC] Pull: skipping recently modified entity ${entityType}/${remote.id}`);
+        continue;
+      }
 
       // Skip entities that were just processed by realtime (prevents duplicate processing)
       if (wasRecentlyProcessedByRealtime(remote.id)) continue;
@@ -2208,9 +2153,12 @@ async function hydrateFromRemote(): Promise<void> {
 
   // Abort if no authenticated user (can't hydrate without auth)
   if (!userId) {
+    debugLog('[SYNC] Hydration skipped: no authenticated user');
     releaseSyncLock();
     return;
   }
+
+  debugLog('[SYNC] Hydration starting...');
 
   // Mark that we've attempted hydration (even if local has data)
   _hasHydrated = true;
@@ -2227,6 +2175,7 @@ async function hydrateFromRemote(): Promise<void> {
 
   if (hasLocalData) {
     // Local has data, release lock and do a normal sync
+    debugLog('[SYNC] Hydration: local data exists, falling through to incremental sync');
     releaseSyncLock();
     // If client has been offline longer than tombstone TTL, run full reconciliation
     // to remove local records whose server tombstones were already hard-deleted
@@ -2463,7 +2412,6 @@ async function cleanupOldTombstones(): Promise<{ local: number; server: number }
 /**
  * Debug utility: inspect tombstone counts and optionally trigger cleanup.
  *
- * Available in browser console via `window.__<prefix>Tombstones()`.
  * Displays per-table tombstone counts, ages, and eligibility for cleanup.
  *
  * @param options - Control cleanup behavior
@@ -2622,16 +2570,16 @@ let authStateUnsubscribe: { data: { subscription: { unsubscribe: () => void } } 
  * This is the main "boot" function for the sync engine. It:
  * 1. Ensures the Dexie DB is open and upgraded
  * 2. Cleans up any existing listeners (idempotent restart support)
- * 3. Sets up debug window utilities
- * 4. Subscribes to Supabase auth state changes (handles sign-out/token-refresh)
- * 5. Registers online/offline handlers with auth validation
- * 6. Registers visibility change handler for smart tab-return syncing
- * 7. Starts realtime WebSocket subscriptions
- * 8. Starts periodic background sync interval
- * 9. Validates Supabase schema (one-time)
- * 10. Runs initial hydration (if local DB is empty) or full sync
- * 11. Runs initial cleanup (tombstones, conflicts, failed items)
- * 12. Starts the watchdog timer
+ * 3. Subscribes to Supabase auth state changes (handles sign-out/token-refresh)
+ * 4. Registers online/offline handlers with auth validation
+ * 5. Registers visibility change handler for smart tab-return syncing
+ * 6. Starts realtime WebSocket subscriptions
+ * 7. Starts periodic background sync interval
+ * 8. Validates Supabase schema (one-time)
+ * 9. Runs initial hydration (if local DB is empty) or full sync
+ * 10. Runs initial cleanup (tombstones, conflicts, failed items)
+ * 11. Starts the watchdog timer
+ * 12. Registers debug window utilities (Tombstones, Sync, Diagnostics)
  *
  * **Must be called after `initEngine()`** — requires configuration to be set.
  * Safe to call multiple times (previous listeners are cleaned up first).
@@ -2682,9 +2630,6 @@ export async function startSyncEngine(): Promise<void> {
     authStateUnsubscribe.data.subscription.unsubscribe();
     authStateUnsubscribe = null;
   }
-
-  // Initialize debug window utilities now that config is available
-  initDebugWindowUtilities();
 
   // Initialize network status monitoring (idempotent)
   isOnline.init();
@@ -2866,12 +2811,15 @@ export async function startSyncEngine(): Promise<void> {
       tabHiddenAt = null;
 
       if (awayDuration < getVisibilitySyncMinAwayMs()) {
-        // User was only away briefly, skip sync
+        debugLog(
+          `[SYNC] Visibility sync skipped: away only ${Math.round(awayDuration / 1000)}s (min: ${Math.round(getVisibilitySyncMinAwayMs() / 1000)}s)`
+        );
         return;
       }
 
       // Skip sync if realtime is healthy (we're already up-to-date)
       if (isRealtimeHealthy()) {
+        debugLog('[SYNC] Visibility sync skipped: realtime is healthy');
         return;
       }
 
@@ -3010,44 +2958,22 @@ export async function startSyncEngine(): Promise<void> {
   // Expose debug utilities to window for console access
   if (typeof window !== 'undefined' && isDebugMode()) {
     const prefix = getPrefix();
-    const supabase = getSupabase();
 
     (window as unknown as Record<string, unknown>)[`__${prefix}Tombstones`] = debugTombstones;
 
-    // Sync debug tools: window.__<prefix>Sync.forceFullSync(), .resetSyncCursor(), etc.
+    // Sync action tools: forceFullSync, resetSyncCursor, sync
     (window as unknown as Record<string, unknown>)[`__${prefix}Sync`] = {
       forceFullSync,
       resetSyncCursor,
-      sync: () => runFullSync(false),
-      getStatus: () => ({
-        cursor:
-          typeof localStorage !== 'undefined'
-            ? localStorage.getItem('lastSyncCursor') ||
-              Object.entries(localStorage)
-                .filter(([k]) => k.startsWith('lastSyncCursor_'))
-                .map(([k, v]) => ({ [k]: v }))[0]
-            : 'N/A',
-        pendingOps: getPendingSync().then((ops) => ops.length)
-      }),
-      checkConnection: async () => {
-        try {
-          const config = getEngineConfig();
-          const firstTable = config.tables[0]?.supabaseName;
-          if (!firstTable) return { connected: false, error: 'No tables configured' };
-          const { data, error } = await supabase.from(firstTable).select('id').limit(1);
-          if (error) return { connected: false, error: error.message };
-          return { connected: true, records: data?.length || 0 };
-        } catch (e) {
-          return { connected: false, error: String(e) };
-        }
-      },
-      realtimeStatus: () => ({
-        state: getConnectionState(),
-        healthy: isRealtimeHealthy()
-      })
+      sync: () => runFullSync(false)
     };
 
-    debugLog(`[SYNC] Debug utilities available at window.__${prefix}Sync`);
+    // Unified diagnostics: returns a full JSON snapshot of engine state
+    (window as unknown as Record<string, unknown>)[`__${prefix}Diagnostics`] = getDiagnostics;
+
+    debugLog(
+      `[SYNC] Debug utilities registered: __${prefix}Sync, __${prefix}Tombstones, __${prefix}Diagnostics`
+    );
   }
 }
 
@@ -3117,6 +3043,14 @@ export async function stopSyncEngine(): Promise<void> {
   releaseSyncLock();
   _hasHydrated = false;
   _schemaValidated = false;
+
+  // Clean up debug window utilities
+  if (typeof window !== 'undefined') {
+    const prefix = getPrefix();
+    delete (window as unknown as Record<string, unknown>)[`__${prefix}Tombstones`];
+    delete (window as unknown as Record<string, unknown>)[`__${prefix}Sync`];
+    delete (window as unknown as Record<string, unknown>)[`__${prefix}Diagnostics`];
+  }
 }
 
 /**

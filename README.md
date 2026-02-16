@@ -1,4 +1,4 @@
-# @prabhask5/stellar-engine [![npm version](https://img.shields.io/npm/v/@prabhask5/stellar-engine.svg?style=flat)](https://www.npmjs.com/package/@prabhask5/stellar-engine) [![Made with Supabase](https://supabase.com/badge-made-with-supabase-dark.svg)](https://supabase.com)
+# stellar-drive [![npm version](https://img.shields.io/npm/v/stellar-drive.svg?style=flat)](https://www.npmjs.com/package/stellar-drive) [![Made with Supabase](https://supabase.com/badge-made-with-supabase-dark.svg)](https://supabase.com)
 
 A plug-and-play, offline-first sync engine for **Supabase + Dexie.js** applications. All reads come from IndexedDB, all writes land locally first, and a background sync loop ships changes to Supabase -- so your app stays fast and functional regardless of network state. Optional **SvelteKit** integrations are included for teams building with Svelte 5, but the core engine works with any framework or vanilla JS.
 
@@ -6,7 +6,7 @@ A plug-and-play, offline-first sync engine for **Supabase + Dexie.js** applicati
 
 - [Architecture](./ARCHITECTURE.md) -- internal design, data flow, and module responsibilities
 - [API Reference](./API_REFERENCE.md) -- full signatures, parameters, and usage examples for every public export
-- [Frameworks](./FRAMEWORKS.md) -- more reading on frameworks used in stellar-engine
+- [Frameworks](./FRAMEWORKS.md) -- more reading on frameworks used in stellar-drive
 
 ## Features
 
@@ -31,7 +31,7 @@ A plug-and-play, offline-first sync engine for **Supabase + Dexie.js** applicati
 - **Diagnostics** -- comprehensive runtime diagnostics covering sync, queue, realtime, conflicts, egress, and network
 - **Debug utilities** -- opt-in debug logging and `window` debug utilities for browser console inspection
 - **SvelteKit integration** (optional) -- layout helpers, server handlers, email confirmation, service worker lifecycle, and auth hydration
-- **PWA scaffolding CLI** -- `stellar-engine install pwa` generates a complete SvelteKit PWA project (34+ files)
+- **PWA scaffolding CLI** -- `stellar-drive install pwa` generates a complete SvelteKit PWA project (34+ files)
 
 ### Use cases
 
@@ -47,15 +47,15 @@ A plug-and-play, offline-first sync engine for **Supabase + Dexie.js** applicati
 
 ```ts
 // ─── Install ───────────────────────────────────────────────────────
-// npm install @prabhask5/stellar-engine
+// npm install stellar-drive
 
 // ─── 1. Initialize the engine ──────────────────────────────────────
 // Call once at app startup (e.g., root layout, main entry point).
 // Schema-driven: declare tables once, engine handles everything else.
 
-import { initEngine, startSyncEngine, getDb, resetDatabase } from '@prabhask5/stellar-engine';
-import { initConfig } from '@prabhask5/stellar-engine/config';
-import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
+import { initEngine, startSyncEngine, getDb, resetDatabase } from 'stellar-drive';
+import { initConfig } from 'stellar-drive/config';
+import { resolveAuthState } from 'stellar-drive/auth';
 
 initEngine({
   prefix: 'myapp',
@@ -133,8 +133,8 @@ import {
   queryAll,
   queryOne,
   engineGetOrCreate,
-} from '@prabhask5/stellar-engine/data';
-import { generateId, now } from '@prabhask5/stellar-engine/utils';
+} from 'stellar-drive/data';
+import { generateId, now } from 'stellar-drive/utils';
 
 // Create
 const projectId = generateId();
@@ -185,7 +185,7 @@ await engineBatchWrite([
 
 // ─── 4. Reactive store factories ───────────────────────────────────
 
-import { createCollectionStore, createDetailStore } from '@prabhask5/stellar-engine/stores';
+import { createCollectionStore, createDetailStore } from 'stellar-drive/stores';
 
 // Collection store -- live-updating list from IndexedDB
 const projectsStore = createCollectionStore('projects', {
@@ -206,7 +206,7 @@ import {
   isOnline,
   remoteChangesStore,
   onSyncComplete,
-} from '@prabhask5/stellar-engine/stores';
+} from 'stellar-drive/stores';
 
 // $syncStatusStore -- current SyncStatus, last sync time, errors
 // $authState       -- { mode, session, offlineProfile, isLoading, authKickedMessage }
@@ -220,7 +220,7 @@ onSyncComplete(() => {
 
 // ─── 6. Svelte actions ─────────────────────────────────────────────
 
-import { remoteChangeAnimation, trackEditing } from '@prabhask5/stellar-engine/actions';
+import { remoteChangeAnimation, trackEditing } from 'stellar-drive/actions';
 
 // use:remoteChangeAnimation={{ table: 'tasks', id: task.id }}
 // Animates elements when remote changes arrive for that entity.
@@ -238,7 +238,7 @@ import {
   updateCursor,
   getCollaborators,
   onCollaboratorsChange,
-} from '@prabhask5/stellar-engine/crdt';
+} from 'stellar-drive/crdt';
 
 // Open a collaborative document (uses Supabase Broadcast -- zero DB writes per keystroke)
 const provider = await openDocument('doc-1', 'page-1', {
@@ -262,7 +262,7 @@ await closeDocument('doc-1');
 
 // ─── 8. Demo mode ──────────────────────────────────────────────────
 
-import { setDemoMode, isDemoMode } from '@prabhask5/stellar-engine';
+import { setDemoMode, isDemoMode } from 'stellar-drive';
 
 // Check if demo mode is active
 if (isDemoMode()) {
@@ -279,8 +279,8 @@ window.location.href = '/';
 
 // ─── 9. SQL and TypeScript generation ──────────────────────────────
 
-import { generateSupabaseSQL, generateTypeScript } from '@prabhask5/stellar-engine/utils';
-import { getEngineConfig } from '@prabhask5/stellar-engine';
+import { generateSupabaseSQL, generateTypeScript } from 'stellar-drive/utils';
+import { getEngineConfig } from 'stellar-drive';
 
 const config = getEngineConfig();
 
@@ -292,8 +292,8 @@ const ts = generateTypeScript(config.schema!);
 
 // ─── 10. Diagnostics and debug ─────────────────────────────────────
 
-import { setDebugMode, isDebugMode } from '@prabhask5/stellar-engine/utils';
-import { getDiagnostics } from '@prabhask5/stellar-engine';
+import { setDebugMode, isDebugMode } from 'stellar-drive/utils';
+import { getDiagnostics } from 'stellar-drive';
 
 setDebugMode(true);
 
@@ -318,7 +318,7 @@ const diagnostics = await getDiagnostics();
 Scaffold a complete offline-first SvelteKit PWA project with an interactive walkthrough:
 
 ```bash
-npx @prabhask5/stellar-engine install pwa
+npx stellar-drive install pwa
 ```
 
 The wizard prompts for:
@@ -515,9 +515,9 @@ When debug mode is enabled, the engine exposes utilities on `window` using your 
 
 | Export | Description |
 |---|---|
-| `@prabhask5/stellar-engine/components/SyncStatus` | Animated sync-state indicator with tooltip and PWA refresh |
-| `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Cross-device data conflict notification with diff preview |
-| `@prabhask5/stellar-engine/components/DemoBanner` | Demo mode indicator banner |
+| `stellar-drive/components/SyncStatus` | Animated sync-state indicator with tooltip and PWA refresh |
+| `stellar-drive/components/DeferredChangesBanner` | Cross-device data conflict notification with diff preview |
+| `stellar-drive/components/DemoBanner` | Demo mode indicator banner |
 
 ### SvelteKit Helpers (Optional - SvelteKit)
 
@@ -546,7 +546,7 @@ These require `svelte ^5.0.0` and `@sveltejs/kit` as peer dependencies.
 
 ### Types
 
-All TypeScript types are available from `@prabhask5/stellar-engine/types`:
+All TypeScript types are available from `stellar-drive/types`:
 
 `Session`, `SyncEngineConfig`, `TableConfig`, `AuthConfig`, `SchemaDefinition`, `SchemaTableConfig`, `FieldType`, `BatchOperation`, `SingleUserConfig`, `DemoConfig`, `SyncStatus`, `AuthMode`, `CRDTConfig`, and more.
 
@@ -556,24 +556,24 @@ Import only what you need:
 
 | Subpath | Contents |
 |---|---|
-| `@prabhask5/stellar-engine` | Core: `initEngine`, `startSyncEngine`, `runFullSync`, `getDb`, `resetDatabase`, `getDiagnostics`, CRUD, auth, stores, and all re-exports |
-| `@prabhask5/stellar-engine/data` | CRUD + query operations + helpers |
-| `@prabhask5/stellar-engine/auth` | All auth functions |
-| `@prabhask5/stellar-engine/stores` | Reactive stores + store factories + event subscriptions |
-| `@prabhask5/stellar-engine/types` | All type exports |
-| `@prabhask5/stellar-engine/utils` | Utilities + debug + diagnostics + SQL/TS generation |
-| `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
-| `@prabhask5/stellar-engine/config` | Runtime config + `getDexieTableFor` |
-| `@prabhask5/stellar-engine/vite` | Vite plugin |
-| `@prabhask5/stellar-engine/kit` | SvelteKit helpers (optional) |
-| `@prabhask5/stellar-engine/crdt` | CRDT collaborative editing |
-| `@prabhask5/stellar-engine/components/SyncStatus` | Sync indicator component |
-| `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Conflict banner component |
-| `@prabhask5/stellar-engine/components/DemoBanner` | Demo mode banner component |
+| `stellar-drive` | Core: `initEngine`, `startSyncEngine`, `runFullSync`, `getDb`, `resetDatabase`, `getDiagnostics`, CRUD, auth, stores, and all re-exports |
+| `stellar-drive/data` | CRUD + query operations + helpers |
+| `stellar-drive/auth` | All auth functions |
+| `stellar-drive/stores` | Reactive stores + store factories + event subscriptions |
+| `stellar-drive/types` | All type exports |
+| `stellar-drive/utils` | Utilities + debug + diagnostics + SQL/TS generation |
+| `stellar-drive/actions` | Svelte `use:` actions |
+| `stellar-drive/config` | Runtime config + `getDexieTableFor` |
+| `stellar-drive/vite` | Vite plugin |
+| `stellar-drive/kit` | SvelteKit helpers (optional) |
+| `stellar-drive/crdt` | CRDT collaborative editing |
+| `stellar-drive/components/SyncStatus` | Sync indicator component |
+| `stellar-drive/components/DeferredChangesBanner` | Conflict banner component |
+| `stellar-drive/components/DemoBanner` | Demo mode banner component |
 
 ## Demo mode
 
-stellar-engine includes a built-in demo mode that provides a completely isolated sandbox. When active:
+stellar-drive includes a built-in demo mode that provides a completely isolated sandbox. When active:
 
 - **Separate database** -- uses `${prefix}DB_demo` IndexedDB; the real database is never opened
 - **No Supabase** -- zero network requests to the backend
@@ -582,8 +582,8 @@ stellar-engine includes a built-in demo mode that provides a completely isolated
 - **Full isolation** -- page reload required to enter/exit (complete engine teardown)
 
 ```ts
-import type { DemoConfig } from '@prabhask5/stellar-engine';
-import { setDemoMode, isDemoMode } from '@prabhask5/stellar-engine';
+import type { DemoConfig } from 'stellar-drive';
+import { setDemoMode, isDemoMode } from 'stellar-drive';
 
 // Define demo config in initEngine
 const demoConfig: DemoConfig = {

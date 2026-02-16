@@ -1,23 +1,23 @@
 # Stellar Engine API Reference
 
-Complete reference for all public exports from `@prabhask5/stellar-engine`.
+Complete reference for all public exports from `stellar-drive`.
 
 ### Subpath Exports
 
 | Subpath | Contents |
 |---|---|
-| `@prabhask5/stellar-engine` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `resetDatabase`, `validateSupabaseCredentials` |
-| `@prabhask5/stellar-engine/data` | CRUD + query operations + query/repo helpers |
-| `@prabhask5/stellar-engine/auth` | Authentication functions, display utilities (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`) |
-| `@prabhask5/stellar-engine/stores` | Reactive stores + event subscriptions + store factories |
-| `@prabhask5/stellar-engine/types` | All type exports (including `Session` from Supabase) |
-| `@prabhask5/stellar-engine/utils` | Utility functions + debug + diagnostics + SQL generation |
-| `@prabhask5/stellar-engine/actions` | Svelte `use:` actions |
-| `@prabhask5/stellar-engine/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
-| `@prabhask5/stellar-engine/kit` | SvelteKit route helpers, server APIs, load functions, email confirmation, auth hydration |
-| `@prabhask5/stellar-engine/crdt` | CRDT collaborative editing (document lifecycle, shared types, presence, offline) |
+| `stellar-drive` | `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `resetDatabase`, `validateSupabaseCredentials` |
+| `stellar-drive/data` | CRUD + query operations + query/repo helpers |
+| `stellar-drive/auth` | Authentication functions, display utilities (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`) |
+| `stellar-drive/stores` | Reactive stores + event subscriptions + store factories |
+| `stellar-drive/types` | All type exports (including `Session` from Supabase) |
+| `stellar-drive/utils` | Utility functions + debug + diagnostics + SQL generation |
+| `stellar-drive/actions` | Svelte `use:` actions |
+| `stellar-drive/config` | Runtime config (`initConfig`, `getConfig`, `setConfig`) |
+| `stellar-drive/kit` | SvelteKit route helpers, server APIs, load functions, email confirmation, auth hydration |
+| `stellar-drive/crdt` | CRDT collaborative editing (document lifecycle, shared types, presence, offline) |
 
-All exports are also available from the root `@prabhask5/stellar-engine` barrel export.
+All exports are also available from the root `stellar-drive` barrel export.
 
 ---
 
@@ -72,7 +72,7 @@ function initEngine(config: InitEngineInput): void
 **Example (schema-driven with flat auth):**
 
 ```ts
-import { initEngine } from '@prabhask5/stellar-engine';
+import { initEngine } from 'stellar-drive';
 
 initEngine({
   prefix: 'myapp',
@@ -545,7 +545,7 @@ const settings = await engineGetOrCreate(
 
 ## Query Helpers
 
-Convenience wrappers that eliminate repetitive query patterns. Import from `@prabhask5/stellar-engine/data`.
+Convenience wrappers that eliminate repetitive query patterns. Import from `stellar-drive/data`.
 
 ### `queryAll<T>(table, opts?)`
 
@@ -602,7 +602,7 @@ function prependOrder(
 
 ## Store Factories
 
-Generic factory functions for creating Svelte-compatible reactive stores. Import from `@prabhask5/stellar-engine/stores`.
+Generic factory functions for creating Svelte-compatible reactive stores. Import from `stellar-drive/stores`.
 
 ### `createCollectionStore<T>(config)`
 
@@ -628,8 +628,8 @@ interface CollectionStore<T> {
 **Example:**
 
 ```ts
-import { createCollectionStore } from '@prabhask5/stellar-engine/stores';
-import { queryAll } from '@prabhask5/stellar-engine/data';
+import { createCollectionStore } from 'stellar-drive/stores';
+import { queryAll } from 'stellar-drive/data';
 
 const store = createCollectionStore<Task>({
   load: () => queryAll<Task>('tasks'),
@@ -665,7 +665,7 @@ interface DetailStore<T> {
 
 ## Authentication Core
 
-Core auth utilities. Import from `@prabhask5/stellar-engine/auth`.
+Core auth utilities. Import from `stellar-drive/auth`.
 
 ### `signOut()`
 
@@ -749,7 +749,7 @@ interface AuthStateResult {
 
 ## Auth Display Utilities
 
-Pure helper functions that resolve user-facing display values from the auth state, handling the full fallback chain across online and offline modes. Import from `@prabhask5/stellar-engine/auth`.
+Pure helper functions that resolve user-facing display values from the auth state, handling the full fallback chain across online and offline modes. Import from `stellar-drive/auth`.
 
 ### `resolveFirstName(session, offlineProfile, fallback?)`
 
@@ -789,7 +789,7 @@ function resolveAvatarInitial(
 
 ## Single-User Auth
 
-Full lifecycle for single-user (kiosk/personal device) PIN/password gate authentication. Import from `@prabhask5/stellar-engine/auth`.
+Full lifecycle for single-user (kiosk/personal device) PIN/password gate authentication. Import from `stellar-drive/auth`.
 
 ### Setup and Teardown
 
@@ -827,7 +827,7 @@ Full lifecycle for single-user (kiosk/personal device) PIN/password gate authent
 
 ## Device Verification
 
-Trust management for multi-device single-user setups. Import from the root or `@prabhask5/stellar-engine`.
+Trust management for multi-device single-user setups. Import from the root or `stellar-drive`.
 
 - **`isDeviceTrusted()`** -- Check if the current device is trusted.
 - **`trustCurrentDevice()`** -- Mark the current device as trusted.
@@ -843,7 +843,7 @@ Trust management for multi-device single-user setups. Import from the root or `@
 
 ## Reactive Stores
 
-Svelte-compatible stores providing real-time observability. Import from `@prabhask5/stellar-engine/stores`.
+Svelte-compatible stores providing real-time observability. Import from `stellar-drive/stores`.
 
 ### `syncStatusStore`
 
@@ -947,7 +947,7 @@ Lazily initialized on first access using credentials from `initConfig`/`getConfi
 
 ## Runtime Configuration
 
-Application-level configuration store. Import from `@prabhask5/stellar-engine/config`.
+Application-level configuration store. Import from `stellar-drive/config`.
 
 ### `initConfig()`
 
@@ -987,7 +987,7 @@ interface AppConfig {
 
 ## Diagnostics
 
-Unified diagnostics API for inspecting sync engine state. Import from `@prabhask5/stellar-engine/utils`.
+Unified diagnostics API for inspecting sync engine state. Import from `stellar-drive/utils`.
 
 ### `getDiagnostics()`
 
@@ -1013,7 +1013,7 @@ Lightweight synchronous access to specific diagnostics sections:
 
 ## Debug
 
-Development-time logging gated by a localStorage flag. Import from `@prabhask5/stellar-engine/utils`.
+Development-time logging gated by a localStorage flag. Import from `stellar-drive/utils`.
 
 ### `debug(level, ...args)`
 
@@ -1043,7 +1043,7 @@ function setDebugMode(enabled: boolean): void
 
 ## Utilities
 
-Pure helper functions. Import from `@prabhask5/stellar-engine/utils`.
+Pure helper functions. Import from `stellar-drive/utils`.
 
 ### `generateId()`
 
@@ -1095,7 +1095,7 @@ function formatBytes(bytes: number): string
 
 ## SQL and TypeScript Generation
 
-Generate complete Supabase SQL or TypeScript interfaces from a `SchemaDefinition`. Import from `@prabhask5/stellar-engine/utils`.
+Generate complete Supabase SQL or TypeScript interfaces from a `SchemaDefinition`. Import from `stellar-drive/utils`.
 
 ### `generateSupabaseSQL(schema, options?)`
 
@@ -1162,7 +1162,7 @@ function inferColumnType(columnName: string): string
 
 ## Svelte Actions
 
-DOM-level `use:action` directives for remote-change visual feedback. Import from `@prabhask5/stellar-engine/actions`.
+DOM-level `use:action` directives for remote-change visual feedback. Import from `stellar-drive/actions`.
 
 ### `remoteChangeAnimation`
 
@@ -1202,7 +1202,7 @@ function triggerLocalAnimation(
 
 ## SvelteKit Helpers
 
-SvelteKit-specific utilities for server routes, layout load functions, and PWA lifecycle. Import from `@prabhask5/stellar-engine/kit`.
+SvelteKit-specific utilities for server routes, layout load functions, and PWA lifecycle. Import from `stellar-drive/kit`.
 
 ### Server Helpers
 
@@ -1291,7 +1291,7 @@ interface DemoConfig {
 
 ## CRDT Collaborative Editing
 
-Optional real-time collaborative document editing subsystem built on Yjs. Only functional when `crdt` config is provided to `initEngine()`. Import from `@prabhask5/stellar-engine/crdt`.
+Optional real-time collaborative document editing subsystem built on Yjs. Only functional when `crdt` config is provided to `initEngine()`. Import from `stellar-drive/crdt`.
 
 ### Document Lifecycle
 
@@ -1369,7 +1369,7 @@ Consumers never need to install `yjs` directly:
 
 ## Types
 
-All public TypeScript types. Import from `@prabhask5/stellar-engine/types`.
+All public TypeScript types. Import from `stellar-drive/types`.
 
 ### `SyncStatus`
 
@@ -1515,14 +1515,14 @@ interface UserPresenceState {
 
 ## CLI Commands
 
-The package provides a CLI via `npx stellar-engine <command>`.
+The package provides a CLI via `npx stellar-drive <command>`.
 
 ### `install pwa`
 
 Scaffold a complete offline-first SvelteKit PWA project. Adds service worker config, manifest, install prompts, and all required boilerplate.
 
 ```bash
-npx stellar-engine install pwa
+npx stellar-drive install pwa
 ```
 
 This is the only CLI command. There is no `setup` command.
@@ -1533,5 +1533,5 @@ This is the only CLI command. There is no `setup` command.
 
 The following types are re-exported so consumers do not need direct dependencies:
 
-- **`Session`** from `@supabase/supabase-js` -- Available from `@prabhask5/stellar-engine/types` or the root.
-- **Yjs types** (`YDoc`, `YText`, `YXmlFragment`, `YArray`, `YMap`, `YXmlElement`) -- Available from `@prabhask5/stellar-engine/crdt`.
+- **`Session`** from `@supabase/supabase-js` -- Available from `stellar-drive/types` or the root.
+- **Yjs types** (`YDoc`, `YText`, `YXmlFragment`, `YArray`, `YMap`, `YXmlElement`) -- Available from `stellar-drive/crdt`.

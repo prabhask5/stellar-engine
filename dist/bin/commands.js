@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Central CLI entry point for stellar-engine.
+ * @fileoverview Central CLI entry point for stellar-drive.
  *
  * Routes CLI arguments to the appropriate command handler. Each command
  * lives in its own file and is lazily imported only when matched.
  *
  * Available commands:
- *   - `stellar-engine install pwa` — Scaffold a complete offline-first SvelteKit PWA project
+ *   - `stellar-drive install pwa` — Scaffold a complete offline-first SvelteKit PWA project
  *
  * @see {@link install-pwa.ts} for the `install pwa` command
  */
@@ -21,7 +21,7 @@ import color from 'picocolors';
 const COMMANDS = [
     {
         name: 'install pwa',
-        usage: 'stellar-engine install pwa',
+        usage: 'stellar-drive install pwa',
         description: 'Scaffold a complete offline-first SvelteKit PWA project'
     }
 ];
@@ -32,7 +32,7 @@ const COMMANDS = [
  * Print the help screen listing all available commands.
  */
 function printHelp() {
-    p.intro(color.bold('\u2726 stellar-engine CLI'));
+    p.intro(color.bold('\u2726 stellar-drive CLI'));
     const commandList = COMMANDS.map((cmd) => `${color.cyan(cmd.usage)}\n${color.dim(cmd.description)}`).join('\n\n');
     p.note(commandList, 'Available commands');
     p.outro('Run a command to get started.');

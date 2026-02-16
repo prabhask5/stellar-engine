@@ -495,7 +495,7 @@ export function trackEditing(node: HTMLElement, options: TrackEditingOptions) {
  * @example
  * ```svelte
  * <script>
- *   import { triggerLocalAnimation } from '@prabhask5/stellar-engine';
+ *   import { triggerLocalAnimation } from 'stellar-drive';
  *   let element: HTMLElement;
  *
  *   function handleToggle() {

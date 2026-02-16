@@ -33,7 +33,7 @@
  * Passed as the `crdt` field of {@link SyncEngineConfig} in `initEngine()`.
  * All fields are optional with sensible defaults. When this config is provided,
  * the engine creates additional IndexedDB tables for CRDT document storage and
- * enables the `@prabhask5/stellar-engine/crdt` API surface.
+ * enables the `stellar-drive/crdt` API surface.
  *
  * @example
  * initEngine({

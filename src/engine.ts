@@ -1,7 +1,7 @@
 /**
  * @fileoverview Local-First Sync Engine - Core orchestrator for offline-first data synchronization.
  *
- * This is the heart of stellar-engine: a bidirectional sync engine that keeps local
+ * This is the heart of stellar-drive: a bidirectional sync engine that keeps local
  * IndexedDB (via Dexie) in sync with a remote Supabase database. It implements the
  * "local-first" pattern where all reads/writes happen against the local DB for instant
  * responsiveness, and a background sync loop reconciles with the server.
@@ -2918,7 +2918,7 @@ export async function startSyncEngine(): Promise<void> {
           syncStatusStore.setStatus('error');
           syncStatusStore.setError(
             msg,
-            'Create the required tables in your Supabase project. See stellar-engine README for the required SQL schema.'
+            'Create the required tables in your Supabase project. See stellar-drive README for the required SQL schema.'
           );
         }
       })

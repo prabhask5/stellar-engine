@@ -15,7 +15,7 @@
  * localStorage.setItem('myapp_debug_mode', 'true');
  *
  * // Or programmatically:
- * import { setDebugMode } from '@prabhask5/stellar-engine';
+ * import { setDebugMode } from 'stellar-drive';
  * setDebugMode(true);
  */
 

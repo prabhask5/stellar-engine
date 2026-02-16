@@ -1,8 +1,8 @@
-# @prabhask5/stellar-engine -- Frameworks & Libraries
+# stellar-drive -- Frameworks & Libraries
 
-The `@prabhask5/stellar-engine` package is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database and a remote Supabase PostgreSQL backend, using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
+The `stellar-drive` package is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database and a remote Supabase PostgreSQL backend, using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
 
-This document explains each underlying technology from scratch, assuming no prior knowledge, and then describes how stellar-engine uses it.
+This document explains each underlying technology from scratch, assuming no prior knowledge, and then describes how stellar-drive uses it.
 
 ---
 
@@ -128,7 +128,7 @@ openRequest.onerror = () => {
 
 That is over 30 lines of nested callbacks just to add one record. Querying, updating, and managing schema versions are even more verbose. This is why virtually every application that uses IndexedDB does so through a wrapper library like Dexie.js.
 
-### How stellar-engine Uses IndexedDB
+### How stellar-drive Uses IndexedDB
 
 - **All reads come from IndexedDB.** The UI never queries the remote server directly. Every piece of data displayed in the app is read from the local IndexedDB database, which makes reads instant regardless of network conditions.
 - **All writes go to IndexedDB first.** When the user creates or edits a record, it is written to IndexedDB immediately (no network wait). A corresponding sync queue entry is enqueued in the same transaction, guaranteeing that a background push will eventually ship the change to the server.
@@ -295,7 +295,7 @@ db.version(3).stores({
 
 Dexie handles the migration automatically when the database is opened. Each version only needs to declare the tables/indexes that **changed** -- unchanged tables are carried forward.
 
-### How stellar-engine Uses Dexie
+### How stellar-drive Uses Dexie
 
 - **Auto-creates and manages the Dexie instance** via `initEngine()`. Consumer apps do not need to create their own Dexie database; the engine creates it based on the provided schema configuration:
 
@@ -481,7 +481,7 @@ supabase
   .subscribe();
 ```
 
-### How stellar-engine Uses Supabase
+### How stellar-drive Uses Supabase
 
 - **REST API for push/pull sync operations.** The engine pushes local changes to the server via Supabase's REST API (insert, update, upsert) and pulls remote changes by querying for records updated since the last sync cursor (an `updated_at` timestamp stored in localStorage).
 - **Realtime Postgres Changes for instant cross-device updates.** The engine subscribes to PostgreSQL changes on every configured table via Supabase Realtime. When Device A pushes a change, Device B receives it within milliseconds via WebSocket instead of waiting for the next background poll.
@@ -509,7 +509,7 @@ Think of it this way:
 - **React/Vue**: ships a general-purpose engine to the browser, which interprets your components at runtime
 - **Svelte**: compiles your components into specialized code at build time, so only the exact DOM operations needed are shipped to the browser
 
-### Svelte 5 (Current Version, Used by stellar-engine)
+### Svelte 5 (Current Version, Used by stellar-drive)
 
 Svelte 5 introduced a new reactivity system called **Runes**. Runes are special functions (prefixed with `$`) that tell the Svelte compiler how to handle reactivity.
 
@@ -653,7 +653,7 @@ Any JavaScript object with a `subscribe` method is a valid Svelte store. The `su
 
 ```svelte
 <script>
-  import { syncStatusStore } from '@prabhask5/stellar-engine';
+  import { syncStatusStore } from 'stellar-drive';
 
   // $syncStatusStore automatically subscribes and unsubscribes
   // It always contains the current value of the store
@@ -666,7 +666,7 @@ Any JavaScript object with a `subscribe` method is a valid Svelte store. The `su
 
 When the component is created, Svelte calls `syncStatusStore.subscribe(callback)` and updates `$syncStatusStore` whenever the store emits a new value. When the component is destroyed, Svelte calls the unsubscribe function to clean up. This is all automatic -- you never manually manage subscriptions.
 
-### How stellar-engine Integrates with Svelte
+### How stellar-drive Integrates with Svelte
 
 - **All stores implement the Svelte store contract** (subscribe method). The engine exports reactive stores: `syncStatusStore` (sync cycle state), `authState` (authentication mode and session), `isOnline` (network connectivity), `isAuthenticated` (derived boolean), and `remoteChangesStore` (tracks which entities were changed by remote sync).
 - **Store factory functions** for app-specific data. `createCollectionStore()` and `createDetailStore()` generate Svelte-compatible stores backed by IndexedDB queries. Collection stores load all records for a table; detail stores load a single record by ID. Both refresh automatically after sync cycles.
@@ -832,16 +832,16 @@ SvelteKit adapters configure how your app is deployed. Different adapters target
 
 You configure the adapter in `svelte.config.js` and SvelteKit handles the rest.
 
-### How stellar-engine Integrates with SvelteKit
+### How stellar-drive Integrates with SvelteKit
 
-SvelteKit integration is provided through the `@prabhask5/stellar-engine/kit` subpath export. It is entirely optional -- the core engine works without SvelteKit.
+SvelteKit integration is provided through the `stellar-drive/kit` subpath export. It is entirely optional -- the core engine works without SvelteKit.
 
 - **Layout load function factories.** `resolveRootLayout()` is a factory that generates the root `+layout.ts` load function. It initializes the engine, loads runtime configuration (Supabase URL and keys) from the server, determines the current auth state (Supabase session, offline session, demo mode, or unauthenticated), and starts the background sync engine. `resolveProtectedLayout()` guards route groups that require authentication, redirecting unauthenticated users to the login page.
 - **Server API handlers.** `getServerConfig()` creates a `GET` handler for `/api/config` that serves the Supabase URL and anon key from server-side environment variables. `createValidateHandler()` creates a `POST` handler for validating Supabase connection credentials during initial setup.
 - **Auth hydration.** `hydrateAuthState()` bridges SvelteKit load data (available on first render) to reactive stores (used throughout the app lifecycle), ensuring the `authState` store is populated before any component reads it.
 - **Email confirmation.** `handleEmailConfirmation()` processes the token exchange when a user clicks an email confirmation link, converting the URL token into a Supabase session.
 - **Service worker lifecycle.** `pollForNewServiceWorker()` and `monitorSwLifecycle()` manage PWA service worker updates, prompting users when a new version is available.
-- **Project scaffolding.** The CLI command `stellar-engine install pwa` generates a complete SvelteKit project structure with routes, layouts, service worker, manifest, and configuration files.
+- **Project scaffolding.** The CLI command `stellar-drive install pwa` generates a complete SvelteKit project structure with routes, layouts, service worker, manifest, and configuration files.
 
 ---
 
@@ -933,7 +933,7 @@ This means every character typed, every deletion, every formatting change has a 
 
 **Merging** is automatic and deterministic. Given the same set of operations (in any order), every peer produces the exact same final document. There are no conflicts, no merge dialogs, no "your version vs. their version."
 
-### How stellar-engine Uses Yjs
+### How stellar-drive Uses Yjs
 
 The engine's CRDT subsystem is optional (enabled by passing `crdt: true` or `crdt: {}` to `initEngine()`) and used for rich collaborative content like text documents or structured editors:
 
@@ -953,4 +953,4 @@ initEngine({
 - **Updates broadcast via Supabase Realtime Broadcast** (not database writes per keystroke). When a user types a character, the Yjs update (typically a few bytes) is broadcast to other connected clients via Supabase's pub/sub channel. This is far more efficient than writing every keystroke to the database.
 - **Two IndexedDB tables for local persistence.** `crdtDocuments` stores the full Yjs document state (for offline access and cross-session recovery). `crdtPendingUpdates` stores incremental update deltas for crash safety -- if the browser crashes between full saves, these deltas are replayed on next load.
 - **Periodic full-state persistence to Supabase.** The complete document state is saved to the `crdt_documents` Supabase table at regular intervals. This serves as a durable backup and allows new devices to load the latest state without replaying all historical operations.
-- **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the `@prabhask5/stellar-engine/crdt` subpath export, keeping the dependency tree clean.
+- **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the `stellar-drive/crdt` subpath export, keeping the dependency tree clean.

@@ -1,5 +1,5 @@
 /**
- * @fileoverview Stores subpath barrel — `@prabhask5/stellar-engine/stores`
+ * @fileoverview Stores subpath barrel — `stellar-drive/stores`
  *
  * Re-exports all Svelte-compatible reactive stores and lifecycle event
  * subscription hooks. These stores provide real-time observability into the

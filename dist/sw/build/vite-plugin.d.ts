@@ -19,7 +19,7 @@
  * ```ts
  * // vite.config.ts
  * import { sveltekit } from '@sveltejs/kit/vite';
- * import { stellarPWA } from '@prabhask5/stellar-engine/vite';
+ * import { stellarPWA } from 'stellar-drive/vite';
  * import { defineConfig } from 'vite';
  *
  * export default defineConfig({

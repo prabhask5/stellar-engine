@@ -19,7 +19,7 @@
  * @see {@link ./awareness.ts} for cursor/presence management
  *
  * @example
- * import { openDocument, closeDocument } from '@prabhask5/stellar-engine/crdt';
+ * import { openDocument, closeDocument } from 'stellar-drive/crdt';
  *
  * const provider = await openDocument('doc-1', 'page-1', { offlineEnabled: true });
  * // provider.doc is a Y.Doc — use with your editor

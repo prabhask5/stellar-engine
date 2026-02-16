@@ -1,6 +1,6 @@
 {
-  "name": "@prabhask5/stellar-engine",
-  "version": "1.2.2",
+  "name": "stellar-drive",
+  "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -63,7 +63,7 @@
     }
   },
   "bin": {
-    "stellar-engine": "./dist/bin/commands.js"
+    "stellar-drive": "./dist/bin/commands.js"
   },
   "files": [
     "dist",

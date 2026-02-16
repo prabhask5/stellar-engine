@@ -2,7 +2,7 @@
  * @fileoverview Common Utility Functions
  *
  * Small, pure helper functions used across the sync engine and exposed
- * to consumers via the `@prabhask5/stellar-engine/utils` subpath export.
+ * to consumers via the `stellar-drive/utils` subpath export.
  *
  * All functions in this module are side-effect-free and safe to call in
  * both browser and SSR contexts.

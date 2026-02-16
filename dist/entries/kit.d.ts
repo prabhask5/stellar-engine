@@ -1,9 +1,9 @@
 /**
- * @fileoverview Kit subpath barrel — `@prabhask5/stellar-engine/kit`
+ * @fileoverview Kit subpath barrel — `stellar-drive/kit`
  *
  * SvelteKit-specific helpers for server routes, layout load functions, email
  * confirmation flows, service worker lifecycle management, and auth hydration.
- * These utilities bridge the stellar-engine core with SvelteKit's routing and
+ * These utilities bridge the stellar-drive core with SvelteKit's routing and
  * server conventions.
  *
  * This entry point is intended for use **only** within SvelteKit projects and

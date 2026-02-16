@@ -1,5 +1,5 @@
 /**
- * @fileoverview Actions subpath barrel — `@prabhask5/stellar-engine/actions`
+ * @fileoverview Actions subpath barrel — `stellar-drive/actions`
  *
  * Re-exports Svelte use:action directives that provide DOM-level behavior for
  * remote-change animations and tooltip truncation. These actions are designed

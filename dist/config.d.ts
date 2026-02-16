@@ -132,7 +132,7 @@ export interface SyncEngineConfig {
      * CRDT collaborative editing configuration.
      *
      * When provided, enables the CRDT subsystem — creates IndexedDB tables for
-     * CRDT document storage and allows use of the `@prabhask5/stellar-engine/crdt` API.
+     * CRDT document storage and allows use of the `stellar-drive/crdt` API.
      * When omitted, no CRDT tables are created and CRDT imports will throw.
      *
      * Pass `true` as shorthand for `{}` (all defaults).

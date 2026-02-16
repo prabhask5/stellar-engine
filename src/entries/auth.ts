@@ -1,5 +1,5 @@
 /**
- * @fileoverview Auth subpath barrel — `@prabhask5/stellar-engine/auth`
+ * @fileoverview Auth subpath barrel — `stellar-drive/auth`
  *
  * Consolidates all authentication-related exports into a single entry point
  * for the single-user PIN/password gate system:

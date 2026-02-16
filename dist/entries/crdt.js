@@ -1,5 +1,5 @@
 /**
- * @fileoverview CRDT subpath barrel — `@prabhask5/stellar-engine/crdt`
+ * @fileoverview CRDT subpath barrel — `stellar-drive/crdt`
  *
  * Consumer-facing entry point for the CRDT collaborative editing subsystem.
  * Provides everything needed to add real-time collaborative document editing
@@ -16,7 +16,7 @@
  *   updateCursor, getCollaborators, onCollaboratorsChange,
  *   enableOffline, disableOffline,
  *   type YDoc, type YText,
- * } from '@prabhask5/stellar-engine/crdt';
+ * } from 'stellar-drive/crdt';
  */
 // =============================================================================
 //  Document Lifecycle

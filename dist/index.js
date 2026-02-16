@@ -1,7 +1,7 @@
 /**
- * @fileoverview Main entry point — `@prabhask5/stellar-engine`
+ * @fileoverview Main entry point — `stellar-drive`
  *
- * This is the primary barrel export for the stellar-engine package. It
+ * This is the primary barrel export for the stellar-drive package. It
  * re-exports the **full** public API surface, covering:
  *
  * - **Engine Configuration & Lifecycle** — initialize, start, and run the
@@ -25,7 +25,7 @@
  * - **Supabase Validation** — server-side credential and schema validation.
  *
  * For tree-shaking or smaller bundle sizes, prefer the subpath entry points
- * (e.g. `@prabhask5/stellar-engine/auth`, `@prabhask5/stellar-engine/stores`)
+ * (e.g. `stellar-drive/auth`, `stellar-drive/stores`)
  * which expose focused subsets of this API.
  */
 // =============================================================================
@@ -212,7 +212,7 @@ export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConf
 //  SQL Generation
 // =============================================================================
 // Generate complete Supabase SQL from a declarative schema definition.
-// These are also available via `@prabhask5/stellar-engine/utils`.
+// These are also available via `stellar-drive/utils`.
 export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTypeScript } from './schema';
 // =============================================================================
 //  Supabase Credential Validation (Server-Side)
@@ -229,6 +229,6 @@ export { validateSupabaseCredentials, validateSchema } from './supabase/validate
 // =============================================================================
 // Optional CRDT subsystem for real-time collaborative document editing.
 // Only functional when `crdt` config is provided to `initEngine()`.
-// For tree-shaking, prefer the subpath: `@prabhask5/stellar-engine/crdt`.
+// For tree-shaking, prefer the subpath: `stellar-drive/crdt`.
 export { isCRDTEnabled } from './crdt/config';
 //# sourceMappingURL=index.js.map

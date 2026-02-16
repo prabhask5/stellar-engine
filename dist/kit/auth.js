@@ -14,7 +14,7 @@
  * ```svelte
  * <!-- +layout.svelte -->
  * <script lang="ts">
- *   import { hydrateAuthState } from 'stellar-engine/kit/auth';
+ *   import { hydrateAuthState } from 'stellar-drive/kit/auth';
  *   let { data } = $props();
  *   $effect(() => { hydrateAuthState(data); });
  * </script>

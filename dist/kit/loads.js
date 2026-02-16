@@ -18,7 +18,7 @@
  * @example
  * ```ts
  * // In +layout.ts (root)
- * import { resolveRootLayout } from 'stellar-engine/kit/loads';
+ * import { resolveRootLayout } from 'stellar-drive/kit/loads';
  * export async function load({ url }) {
  *   return resolveRootLayout(url);
  * }
@@ -128,7 +128,7 @@ export async function resolveRootLayout(url, _initEngineFn) {
  * ```ts
  * // /(protected)/+layout.ts
  * import { redirect } from '@sveltejs/kit';
- * import { resolveProtectedLayout } from 'stellar-engine/kit/loads';
+ * import { resolveProtectedLayout } from 'stellar-drive/kit/loads';
  *
  * export async function load({ url }) {
  *   const { data, redirectUrl } = await resolveProtectedLayout(url);
@@ -175,7 +175,7 @@ export async function resolveProtectedLayout(url) {
  * ```ts
  * // /setup/+page.ts
  * import { redirect } from '@sveltejs/kit';
- * import { resolveSetupAccess } from 'stellar-engine/kit/loads';
+ * import { resolveSetupAccess } from 'stellar-drive/kit/loads';
  *
  * export async function load() {
  *   const { data, redirectUrl } = await resolveSetupAccess();

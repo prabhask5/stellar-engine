@@ -18,7 +18,7 @@
  * @see {@link ./types.ts} for the TypeScript types
  *
  * @example
- * import { openDocument, createSharedText } from '@prabhask5/stellar-engine/crdt';
+ * import { openDocument, createSharedText } from 'stellar-drive/crdt';
  *
  * const provider = await openDocument('doc-1', 'page-1');
  * const title = createSharedText(provider.doc, 'title');

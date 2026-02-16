@@ -1,7 +1,7 @@
 /**
- * @fileoverview Main entry point — `@prabhask5/stellar-engine`
+ * @fileoverview Main entry point — `stellar-drive`
  *
- * This is the primary barrel export for the stellar-engine package. It
+ * This is the primary barrel export for the stellar-drive package. It
  * re-exports the **full** public API surface, covering:
  *
  * - **Engine Configuration & Lifecycle** — initialize, start, and run the
@@ -25,7 +25,7 @@
  * - **Supabase Validation** — server-side credential and schema validation.
  *
  * For tree-shaking or smaller bundle sizes, prefer the subpath entry points
- * (e.g. `@prabhask5/stellar-engine/auth`, `@prabhask5/stellar-engine/stores`)
+ * (e.g. `stellar-drive/auth`, `stellar-drive/stores`)
  * which expose focused subsets of this API.
  */
 export { initEngine } from './config';

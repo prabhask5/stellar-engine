@@ -2,7 +2,7 @@
  * @fileoverview Unified Diagnostics Module
  *
  * Provides a single entry point for inspecting the internal state of the
- * stellar-engine sync system. The main `getDiagnostics()` function returns a
+ * stellar-drive sync system. The main `getDiagnostics()` function returns a
  * comprehensive JSON snapshot covering sync cycles, egress, queue, realtime,
  * network, conflict history, errors, and configuration.
  *

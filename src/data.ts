@@ -892,7 +892,7 @@ export async function engineGetOrCreate(
  *
  * @example
  * ```ts
- * import { queryAll } from '@prabhask5/stellar-engine/data';
+ * import { queryAll } from 'stellar-drive/data';
  *
  * const categories = await queryAll<TaskCategory>('task_categories');
  * // Returns only non-deleted records, sorted by order ascending
@@ -927,7 +927,7 @@ export async function queryAll<T extends Record<string, unknown>>(
  *
  * @example
  * ```ts
- * import { queryOne } from '@prabhask5/stellar-engine/data';
+ * import { queryOne } from 'stellar-drive/data';
  *
  * const task = await queryOne<Task>('tasks', taskId);
  * if (!task) console.log('Not found or deleted');
@@ -964,7 +964,7 @@ export async function queryOne<T extends Record<string, unknown>>(
  *
  * @example
  * ```ts
- * import { reorderEntity } from '@prabhask5/stellar-engine/data';
+ * import { reorderEntity } from 'stellar-drive/data';
  *
  * const updated = await reorderEntity<Task>('tasks', taskId, 2.5);
  * ```
@@ -994,7 +994,7 @@ export async function reorderEntity<T extends Record<string, unknown>>(
  *
  * @example
  * ```ts
- * import { prependOrder } from '@prabhask5/stellar-engine/data';
+ * import { prependOrder } from 'stellar-drive/data';
  *
  * const order = await prependOrder('tasks', 'user_id', currentUserId);
  * await engineCreate('tasks', { ..., order });

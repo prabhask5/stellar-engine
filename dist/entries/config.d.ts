@@ -1,5 +1,5 @@
 /**
- * @fileoverview Config subpath barrel — `@prabhask5/stellar-engine/config`
+ * @fileoverview Config subpath barrel — `stellar-drive/config`
  *
  * Provides runtime configuration management for the application. The config
  * system allows apps to store, retrieve, and update key-value settings that

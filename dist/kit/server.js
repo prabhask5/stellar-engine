@@ -20,7 +20,7 @@
  * @example
  * ```ts
  * // In /api/config/+server.ts
- * import { getServerConfig } from 'stellar-engine/kit/server';
+ * import { getServerConfig } from 'stellar-drive/kit/server';
  * export function GET() {
  *   return new Response(JSON.stringify(getServerConfig()));
  * }
@@ -135,7 +135,7 @@ async function setEnvVar(projectId, token, key, value) {
  * @example
  * ```ts
  * // In /api/config/+server.ts
- * import { getServerConfig } from 'stellar-engine/kit/server';
+ * import { getServerConfig } from 'stellar-drive/kit/server';
  * export function GET() {
  *   return new Response(JSON.stringify(getServerConfig()), {
  *     headers: { 'Content-Type': 'application/json' }
@@ -266,7 +266,7 @@ export async function deployToVercel(config) {
  * @example
  * ```ts
  * // In /api/validate-supabase/+server.ts
- * import { createValidateHandler } from 'stellar-engine/kit/server';
+ * import { createValidateHandler } from 'stellar-drive/kit/server';
  * export const POST = createValidateHandler();
  * ```
  *

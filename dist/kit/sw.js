@@ -22,7 +22,7 @@
  * @example
  * ```ts
  * // In a Svelte component
- * import { monitorSwLifecycle, handleSwUpdate } from 'stellar-engine/kit/sw';
+ * import { monitorSwLifecycle, handleSwUpdate } from 'stellar-drive/kit/sw';
  *
  * let showBanner = $state(false);
  * const cleanup = monitorSwLifecycle({

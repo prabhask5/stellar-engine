@@ -20,10 +20,10 @@
    * - `prefers-reduced-motion` disables all animations gracefully.
    */
 
-  import { syncStatusStore, isOnline } from '@prabhask5/stellar-engine/stores';
-  import type { SyncError, RealtimeState } from '@prabhask5/stellar-engine/types';
-  import { runFullSync } from '@prabhask5/stellar-engine';
-  import type { SyncStatus } from '@prabhask5/stellar-engine/types';
+  import { syncStatusStore, isOnline } from 'stellar-drive/stores';
+  import type { SyncError, RealtimeState } from 'stellar-drive/types';
+  import { runFullSync } from 'stellar-drive';
+  import type { SyncStatus } from 'stellar-drive/types';
 
   // =============================================================================
   //                          Local Reactive State

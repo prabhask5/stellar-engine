@@ -1,5 +1,5 @@
 /**
- * @fileoverview CLI command that scaffolds a PWA SvelteKit project using stellar-engine.
+ * @fileoverview CLI command that scaffolds a PWA SvelteKit project using stellar-drive.
  *
  * Generates a complete project structure including:
  *   - Build configuration (Vite, TypeScript, SvelteKit, ESLint, Prettier, Knip)
@@ -11,11 +11,11 @@
  *
  * Files are written non-destructively: existing files are skipped, not overwritten.
  *
- * Invoked via `stellar-engine install pwa` (routed by {@link commands.ts}).
+ * Invoked via `stellar-drive install pwa` (routed by {@link commands.ts}).
  *
  * @example
  * ```bash
- * stellar-engine install pwa
+ * stellar-drive install pwa
  * ```
  *
  * @see {@link run} for the entry point

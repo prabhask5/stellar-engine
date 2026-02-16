@@ -19,7 +19,7 @@
  * ```ts
  * // vite.config.ts
  * import { sveltekit } from '@sveltejs/kit/vite';
- * import { stellarPWA } from '@prabhask5/stellar-engine/vite';
+ * import { stellarPWA } from 'stellar-drive/vite';
  * import { defineConfig } from 'vite';
  *
  * export default defineConfig({
@@ -115,7 +115,7 @@ function findSwSource() {
         return swPath;
     /* Fallback: use createRequire to resolve from the package */
     const require = createRequire(import.meta.url);
-    const pkgDir = dirname(require.resolve('@prabhask5/stellar-engine/package.json'));
+    const pkgDir = dirname(require.resolve('stellar-drive/package.json'));
     return join(pkgDir, 'dist', 'sw', 'sw.js');
 }
 // =============================================================================
@@ -284,7 +284,7 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
     else if (!snapshot && schemaOpts.autoMigrate) {
         /*
          * First run with no snapshot — generate the FULL initial SQL
-         * and push it to Supabase. This replaces the old `stellar-engine setup`
+         * and push it to Supabase. This replaces the old `stellar-drive setup`
          * command entirely.
          */
         const { generateSupabaseSQL } = await import('../../schema.js');

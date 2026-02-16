@@ -1,4 +1,4 @@
-# @prabhask5/stellar-engine: Architecture & System Design
+# stellar-drive: Architecture & System Design
 
 ## Table of Contents
 1. [High-Level Architecture](#1-high-level-architecture)
@@ -25,7 +25,7 @@
 
 ## 1. High-Level Architecture
 
-stellar-engine is an offline-first, local-first sync engine for **Supabase + Dexie.js** applications. It keeps a local IndexedDB database (via Dexie) synchronized with a remote Supabase database, providing instant reads, background sync, and real-time multi-device collaboration. Optional SvelteKit integrations are included but the core engine works with any framework.
+stellar-drive is an offline-first, local-first sync engine for **Supabase + Dexie.js** applications. It keeps a local IndexedDB database (via Dexie) synchronized with a remote Supabase database, providing instant reads, background sync, and real-time multi-device collaboration. Optional SvelteKit integrations are included but the core engine works with any framework.
 
 ### 1.1 Data Flow Diagram
 
@@ -1281,7 +1281,7 @@ src/crdt/
   offline.ts       -- Offline-enabled toggle, max document limits
   helpers.ts       -- Document type factories + Yjs re-exports
 
-src/entries/crdt.ts -- Subpath barrel export for @prabhask5/stellar-engine/crdt
+src/entries/crdt.ts -- Subpath barrel export for stellar-drive/crdt
 ```
 
 ### 10.3 Document Lifecycle (CRDTProvider)
@@ -1916,7 +1916,7 @@ All functions include SSR guards (`typeof navigator === 'undefined'`) for univer
 
 **File**: `src/bin/commands.ts`
 
-### 18.1 `stellar-engine install pwa`
+### 18.1 `stellar-drive install pwa`
 
 Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkthrough.
 
@@ -1925,7 +1925,7 @@ Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkt
 |                    INSTALL PWA SCAFFOLDER                           |
 |                                                                    |
 |  1. Interactive prompts: name, shortName, prefix, description       |
-|  2. Write package.json with @prabhask5/stellar-engine dep          |
+|  2. Write package.json with stellar-drive dep          |
 |  3. npm install                                                    |
 |  4. Generate 34+ template files (grouped with animated progress)   |
 |  5. npx husky init + pre-commit hook                               |
@@ -1949,7 +1949,7 @@ Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkt
 ### 18.3 Route File Ownership Model
 
 Each generated route file follows a strict separation:
-- **Engine-managed code**: All imports, load functions, API handlers, auth logic, and state management are fully implemented using stellar-engine exports
+- **Engine-managed code**: All imports, load functions, API handlers, auth logic, and state management are fully implemented using stellar-drive exports
 - **TODO placeholders**: All UI/template/style code is left as TODO comments for the app developer
 
 Three API routes are fully managed with zero app-specific code:
@@ -2032,11 +2032,11 @@ The scaffolder uses `writeIfMissing()` -- files are only created if they don't a
 | SW Build | `src/sw/build/vite-plugin.ts` | Vite plugin for service worker build |
 | SW Runtime | `src/sw/sw.ts` | Service worker runtime |
 | **CLI** | | |
-| Commands | `src/bin/commands.ts` | `stellar-engine install pwa` scaffolder |
+| Commands | `src/bin/commands.ts` | `stellar-drive install pwa` scaffolder |
 | Install PWA | `src/bin/install-pwa.ts` | PWA scaffolding implementation |
 | **Entry Points** | | |
 | Main | `src/index.ts` | Public API barrel export |
-| CRDT Entry | `src/entries/crdt.ts` | Subpath export for `@prabhask5/stellar-engine/crdt` |
+| CRDT Entry | `src/entries/crdt.ts` | Subpath export for `stellar-drive/crdt` |
 | Auth Entry | `src/entries/auth.ts` | Subpath export for auth utilities |
 | Stores Entry | `src/entries/stores.ts` | Subpath export for stores |
 | Actions Entry | `src/entries/actions.ts` | Subpath export for actions |

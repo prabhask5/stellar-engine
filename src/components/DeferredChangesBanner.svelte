@@ -18,7 +18,7 @@
   //  Imports
   // =============================================================================
 
-  import { remoteChangesStore } from '@prabhask5/stellar-engine/stores';
+  import { remoteChangesStore } from 'stellar-drive/stores';
   import { onMount, onDestroy } from 'svelte';
 
   // =============================================================================

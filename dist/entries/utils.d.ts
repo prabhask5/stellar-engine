@@ -1,5 +1,5 @@
 /**
- * @fileoverview Utils subpath barrel — `@prabhask5/stellar-engine/utils`
+ * @fileoverview Utils subpath barrel — `stellar-drive/utils`
  *
  * Re-exports general-purpose utility functions, debug tooling, and the
  * unified diagnostics API. These helpers are framework-agnostic and can

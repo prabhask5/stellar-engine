@@ -1,7 +1,7 @@
 /**
  * @fileoverview Sync Queue & Operation Coalescing Engine
  *
- * This module manages the offline-first sync queue for stellar-engine. All local
+ * This module manages the offline-first sync queue for stellar-drive. All local
  * mutations (creates, sets, increments, deletes) are enqueued as individual
  * intent-based operations in an IndexedDB-backed queue (`syncQueue` table via Dexie).
  * Before pushing to the remote server, the coalescing algorithm reduces redundant

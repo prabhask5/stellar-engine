@@ -1,7 +1,7 @@
 /**
- * @fileoverview Types subpath barrel — `@prabhask5/stellar-engine/types`
+ * @fileoverview Types subpath barrel — `stellar-drive/types`
  *
- * Aggregates all public TypeScript type exports from the stellar-engine package
+ * Aggregates all public TypeScript type exports from the stellar-drive package
  * into a single, convenient entry point. Consumers can import any type from
  * this path without needing to know the internal module structure.
  *

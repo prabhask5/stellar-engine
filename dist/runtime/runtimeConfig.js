@@ -22,7 +22,7 @@
 // =============================================================================
 /**
  * Prefix used for the localStorage cache key. Defaults to `'stellar'` but can
- * be overridden per-app via {@link _setConfigPrefix} so multiple stellar-engine
+ * be overridden per-app via {@link _setConfigPrefix} so multiple stellar-drive
  * apps on the same origin don't collide.
  */
 let _prefix = 'stellar';

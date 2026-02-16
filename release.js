@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Release script for @prabhask5/stellar-engine.
+ * Release script for stellar-drive.
  *
  * Bumps the version in package.json, validates, builds, publishes to npm,
  * commits the version bump, and pushes with tags.
@@ -64,7 +64,7 @@ if (newVersion === currentVersion) {
   process.exit(1);
 }
 
-console.log(`\n@prabhask5/stellar-engine Release`);
+console.log(`\nstellar-drive Release`);
 console.log(`  ${currentVersion} -> ${newVersion}\n`);
 
 // 1. Update package.json
@@ -121,4 +121,4 @@ try {
   process.exit(1);
 }
 
-console.log(`\n  Released @prabhask5/stellar-engine@${newVersion}\n`);
+console.log(`\n  Released stellar-drive@${newVersion}\n`);

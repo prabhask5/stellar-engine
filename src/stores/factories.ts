@@ -114,7 +114,7 @@ export interface DetailStore<T> {
  * refreshes whenever the sync engine completes a cycle.
  *
  * Uses `typeof window !== 'undefined'` for environment detection since
- * stellar-engine is a library (not tied to SvelteKit's `browser` export).
+ * stellar-drive is a library (not tied to SvelteKit's `browser` export).
  *
  * @typeParam T - The entity type stored in the collection.
  * @param config - Configuration with a `load` function.
@@ -122,7 +122,7 @@ export interface DetailStore<T> {
  *
  * @example
  * ```ts
- * import { createCollectionStore } from '@prabhask5/stellar-engine/stores';
+ * import { createCollectionStore } from 'stellar-drive/stores';
  *
  * const store = createCollectionStore<Task>({
  *   load: () => queryAll<Task>('tasks'),
@@ -194,7 +194,7 @@ export function createCollectionStore<T>(config: CollectionStoreConfig<T>): Coll
  *
  * @example
  * ```ts
- * import { createDetailStore } from '@prabhask5/stellar-engine/stores';
+ * import { createDetailStore } from 'stellar-drive/stores';
  *
  * const store = createDetailStore<Task>({
  *   load: (id) => queryOne<Task>('tasks', id),

@@ -4019,14 +4019,15 @@ function generateDemoPage(opts) {
   Provides a sandboxed demo environment with mock data. All changes
   reset on page refresh. No account, email, or setup required.
 
-  Customize this page with your app's design system — add animations,
-  background effects, and toggle styling to match your brand.
+  Customize this page with your app's design system — add background
+  effects, toggle visual styling, and theming to match your brand.
 -->
 <script lang="ts">
   import { isDemoMode, setDemoMode, cleanupDemoDatabase } from '@prabhask5/stellar-engine';
 
   let demoActive = $state(isDemoMode());
   let toggling = $state(false);
+  let fading = $state(false);
 
   function handleToggle() {
     if (toggling) return;
@@ -4035,16 +4036,18 @@ function generateDemoPage(opts) {
     demoActive = turningOn;
 
     if (turningOn) {
+      setTimeout(() => { fading = true; }, 1200);
       setTimeout(() => {
         setDemoMode(true);
         window.location.href = '/';
-      }, 600);
+      }, 1800);
     } else {
+      setTimeout(() => { fading = true; }, 800);
       setTimeout(() => {
         setDemoMode(false);
         cleanupDemoDatabase('${opts.prefix}_demo');
         window.location.href = '/';
-      }, 600);
+      }, 1400);
     }
   }
 </script>
@@ -4053,7 +4056,7 @@ function generateDemoPage(opts) {
   <title>Demo Mode — ${opts.name}</title>
 </svelte:head>
 
-<div class="page" class:active={demoActive}>
+<div class="page" class:active={demoActive} class:fading>
   <h1 class="title">Demo Mode</h1>
   <p class="sub">Explore ${opts.name} with sample data — no account required</p>
 
@@ -4118,6 +4121,15 @@ function generateDemoPage(opts) {
     background: var(--demo-bg, #0a0a1a);
     color: var(--demo-text, #e8e6f0);
     font-family: inherit;
+    transition: opacity 0.7s ease, filter 0.7s ease, transform 0.7s ease;
+  }
+
+  /* ═══ EXIT ANIMATION ═══ */
+
+  .page.fading {
+    opacity: 0;
+    filter: blur(16px);
+    transform: scale(1.06);
   }
 
   /* ═══ TITLE ═══ */
@@ -4131,6 +4143,21 @@ function generateDemoPage(opts) {
     margin: 0;
     text-align: center;
     color: var(--demo-title, inherit);
+    opacity: 0;
+    animation: titleIn 1s 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes titleIn {
+    from {
+      opacity: 0;
+      transform: translateY(-40px);
+      filter: blur(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
   }
 
   .sub {
@@ -4140,6 +4167,19 @@ function generateDemoPage(opts) {
     margin: -0.25rem auto 0;
     text-align: center;
     line-height: 1.5;
+    opacity: 0;
+    animation: subIn 0.8s 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes subIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 0.85;
+      transform: translateY(0);
+    }
   }
 
   /* ═══ TOGGLE ZONE ═══ */
@@ -4150,6 +4190,30 @@ function generateDemoPage(opts) {
     flex-direction: column;
     align-items: center;
     gap: 0.75rem;
+    opacity: 0;
+    animation: toggleBirth 1.4s 1.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes toggleBirth {
+    0% {
+      opacity: 0;
+      transform: scale(0.5);
+      filter: blur(20px);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.08);
+      filter: blur(2px);
+    }
+    75% {
+      transform: scale(0.97);
+      filter: blur(0);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+      filter: blur(0);
+    }
   }
 
   .tog {
@@ -4242,7 +4306,19 @@ function generateDemoPage(opts) {
     border: 1px solid var(--demo-card-border, rgba(255, 255, 255, 0.06));
     border-radius: 12px;
     padding: clamp(0.75rem, 2vh, 1.25rem) clamp(1rem, 3vw, 1.5rem);
-    opacity: 0.85;
+    opacity: 0;
+    animation: infoIn 0.8s 2.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes infoIn {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 0.8;
+      transform: translateY(0);
+    }
   }
 
   .col {
@@ -4311,6 +4387,38 @@ function generateDemoPage(opts) {
     color: var(--demo-muted, rgba(160, 155, 181, 0.2));
     margin: 0;
     letter-spacing: 0.04em;
+    opacity: 0;
+    animation: fadeIn 0.6s 3.2s ease forwards;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* ═══ REDUCED MOTION ═══ */
+
+  @media (prefers-reduced-motion: reduce) {
+    .title,
+    .sub,
+    .tz,
+    .info,
+    .foot {
+      animation: none;
+      opacity: 1;
+      filter: none;
+      transform: none;
+    }
+
+    .page {
+      transition-duration: 0.15s;
+    }
+
+    .knob,
+    .track,
+    .state-label {
+      transition-duration: 0.15s;
+    }
   }
 
   /* ═══ RESPONSIVE ═══ */

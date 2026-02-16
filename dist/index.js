@@ -217,4 +217,11 @@ export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConf
 // - `validateSchema` — verifies that the required database tables and columns
 //   exist in the connected Supabase project.
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
+// =============================================================================
+//  CRDT Collaborative Editing
+// =============================================================================
+// Optional CRDT subsystem for real-time collaborative document editing.
+// Only functional when `crdt` config is provided to `initEngine()`.
+// For tree-shaking, prefer the subpath: `@prabhask5/stellar-engine/crdt`.
+export { isCRDTEnabled } from './crdt/config';
 //# sourceMappingURL=index.js.map

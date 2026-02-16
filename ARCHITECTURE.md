@@ -14,6 +14,7 @@
 11. [Debug & Observability](#11-debug--observability)
 12. [Store & Data Factories](#12-store--data-factories)
 13. [Install PWA Command & Scaffolding](#13-install-pwa-command--scaffolding)
+14. [CRDT Collaborative Editing Subsystem](#14-crdt-collaborative-editing-subsystem)
 
 ---
 
@@ -1594,3 +1595,72 @@ User → setDemoMode(true) + page reload
 - Demo mode does NOT bypass auth — it replaces the entire data layer
 - If someone manually sets the localStorage flag, they see an empty/seeded demo DB
 - No path to real user data exists (different database, no Supabase client)
+
+---
+
+## 14. CRDT Collaborative Editing Subsystem
+
+An optional Yjs-based CRDT subsystem for real-time collaborative document editing. Enabled by adding `crdt: {}` to `initEngine()`.
+
+### 14.1 Architecture Overview
+
+```
+User types → Y.Doc mutation → doc.on('update') fires
+  ├─→ crdtPendingUpdates (IndexedDB, immediate, crash-safe)
+  ├─→ BroadcastChannel (same-device tabs, immediate)
+  ├─→ Supabase Broadcast (remote devices, debounced 100ms)
+  ├─→ crdtDocuments full state (IndexedDB, debounced 5s)
+  └─→ Supabase crdt_documents (REST upsert, periodic 30s)
+```
+
+### 14.2 Transport Architecture
+
+| Data Type | Transport | Latency | DB Writes |
+|-----------|-----------|---------|-----------|
+| Document updates | Supabase Broadcast | ~100ms | 0 per keystroke |
+| Cursor/presence | Supabase Presence | ~50ms | 0 |
+| Durable persistence | Supabase REST upsert | ~30s | 1 per interval |
+| Cross-tab sync | Browser BroadcastChannel | Immediate | 0 |
+| Crash recovery | IndexedDB pending updates | Immediate | 1 per update |
+
+### 14.3 Module Structure
+
+```
+src/crdt/
+  types.ts         — All CRDT TypeScript interfaces
+  config.ts        — Config singleton, defaults, accessors
+  store.ts         — Dexie persistence (crdtDocuments + crdtPendingUpdates)
+  provider.ts      — CRDTProvider: per-document lifecycle orchestrator
+  channel.ts       — Supabase Broadcast channel (update distribution, sync protocol)
+  awareness.ts     — Presence/cursor management (Supabase Presence bridge)
+  persistence.ts   — Periodic Supabase DB writes, delta checks
+  offline.ts       — Offline-enabled toggle, max document limits
+  helpers.ts       — Document type factories + Yjs re-exports
+
+src/entries/crdt.ts — Subpath barrel export for @prabhask5/stellar-engine/crdt
+```
+
+### 14.4 CRDTProvider Lifecycle
+
+1. **Open**: Create `Y.Doc` → load state (IndexedDB or Supabase) → wire update handler → join Broadcast channel → run sync protocol → start persist timer
+2. **Edit**: Local mutations → `doc.on('update')` → crash-safe append → debounced Broadcast → debounced local save
+3. **Sync**: Exchange state vectors with peers via sync-step-1/sync-step-2 messages
+4. **Persist**: Every 30s, if dirty and online, upsert full state to Supabase
+5. **Reconnect**: Merge pending updates → rejoin channel → sync with peers → immediate persist
+6. **Close**: Save final state → persist if dirty → leave channel → destroy Y.Doc
+
+### 14.5 Conditional IndexedDB Tables
+
+CRDT tables are only created when `crdt` config is provided to `initEngine()`:
+- `crdtDocuments` — Full Yjs state snapshots (indexed: documentId, pageId, offlineEnabled)
+- `crdtPendingUpdates` — Incremental deltas for crash recovery (indexed: ++id, documentId, timestamp)
+
+### 14.6 Egress Optimization
+
+1. **Broadcast batching** — 100ms debounce + `Y.mergeUpdates()` before sending
+2. **Delta sync on reconnect** — exchange state vectors, send only missing updates
+3. **Periodic DB writes** — every 30s, not per keystroke
+4. **Skip unchanged** — compare state vectors before persisting
+5. **Binary encoding** — Yjs native binary format (very compact)
+6. **Cross-tab via BroadcastChannel** — same-device tabs use zero network bandwidth
+7. **Awareness throttling** — cursor updates debounced to 50ms

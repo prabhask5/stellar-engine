@@ -1206,6 +1206,56 @@ create index idx_trusted_devices_user_id on trusted_devices(user_id);
 -- alter publication supabase_realtime add table items;
 
 alter publication supabase_realtime add table trusted_devices;
+
+-- ============================================================
+-- CRDT DOCUMENT STORAGE (optional — only needed for collaborative editing)
+-- ============================================================
+-- Stores Yjs CRDT document state for collaborative real-time editing.
+-- Each row represents the latest merged state of a single collaborative document.
+-- The engine persists full Yjs binary state periodically (every ~30s), not per keystroke.
+-- Real-time updates between clients are distributed via Supabase Broadcast (WebSocket),
+-- so this table is only for durable persistence and offline-to-online reconciliation.
+--
+-- Key columns:
+--   state        — Full Yjs document state (Y.encodeStateAsUpdate), base64 encoded
+--   state_vector — Yjs state vector (Y.encodeStateVector) for efficient delta computation
+--   state_size   — Byte size of state column, used for monitoring and compaction decisions
+--   device_id    — Identifies which device last persisted, used for echo suppression
+--
+-- To enable: add \`crdt: {}\` to your initEngine() config.
+-- To skip: delete or comment out this section if you don't need collaborative editing.
+
+create table crdt_documents (
+  id uuid primary key default gen_random_uuid(),
+  page_id uuid not null,
+  state text not null,
+  state_vector text not null,
+  state_size integer not null default 0,
+  user_id uuid not null references auth.users(id),
+  device_id text not null,
+  updated_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+alter table crdt_documents enable row level security;
+
+create policy "Users can manage own CRDT documents"
+  on crdt_documents for all
+  using (auth.uid() = user_id);
+
+create trigger set_crdt_documents_user_id
+  before insert on crdt_documents
+  for each row execute function set_user_id();
+
+create trigger update_crdt_documents_updated_at
+  before update on crdt_documents
+  for each row execute function update_updated_at_column();
+
+create index idx_crdt_documents_page_id on crdt_documents(page_id);
+create index idx_crdt_documents_user_id on crdt_documents(user_id);
+
+-- Unique constraint per page per user (upsert target for persistence)
+create unique index idx_crdt_documents_page_user on crdt_documents(page_id, user_id);
 `;
 }
 

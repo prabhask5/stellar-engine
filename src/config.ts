@@ -25,6 +25,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import type { SingleUserGateType } from './types';
+import type { CRDTConfig } from './crdt/types';
 import type { DemoConfig } from './demo';
 import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
@@ -32,6 +33,7 @@ import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
 import { createDatabase, _setManagedDb, type DatabaseConfig } from './database';
+import { _initCRDT } from './crdt/config';
 import { snakeToCamel } from './utils';
 
 // =============================================================================
@@ -121,6 +123,17 @@ export interface SyncEngineConfig {
    * @see {@link DemoConfig} for the configuration shape
    */
   demo?: DemoConfig;
+
+  /**
+   * CRDT collaborative editing configuration.
+   *
+   * When provided, enables the CRDT subsystem — creates IndexedDB tables for
+   * CRDT document storage and allows use of the `@prabhask5/stellar-engine/crdt` API.
+   * When omitted, no CRDT tables are created and CRDT imports will throw.
+   *
+   * @see {@link CRDTConfig} for available configuration options
+   */
+  crdt?: CRDTConfig;
 }
 
 /**
@@ -204,14 +217,20 @@ export function initEngine(config: SyncEngineConfig): void {
     registerDemoConfig(config.demo);
   }
 
+  /* Initialize CRDT subsystem if configured. */
+  if (config.crdt) {
+    _initCRDT(config.crdt, config.prefix);
+  }
+
   /* If demo mode is active, switch to a separate sandboxed database. */
   if (isDemoMode() && config.database) {
     config.database = { ...config.database, name: config.database.name + '_demo' };
   }
 
-  /* Handle database creation — either managed or provided. */
+  /* Handle database creation — either managed or provided.
+   * Pass crdtEnabled flag so CRDT IndexedDB tables are conditionally included. */
   if (config.database) {
-    _dbReady = createDatabase(config.database).then((db) => {
+    _dbReady = createDatabase(config.database, !!config.crdt).then((db) => {
       /* Store on config for backward compat (engine.ts reads config.db). */
       (config as { db: Dexie }).db = db;
     });

@@ -26,6 +26,7 @@ import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
 import { createDatabase, _setManagedDb } from './database';
+import { _initCRDT } from './crdt/config';
 import { snakeToCamel } from './utils';
 // =============================================================================
 // Module State
@@ -69,13 +70,18 @@ export function initEngine(config) {
     if (config.demo) {
         registerDemoConfig(config.demo);
     }
+    /* Initialize CRDT subsystem if configured. */
+    if (config.crdt) {
+        _initCRDT(config.crdt, config.prefix);
+    }
     /* If demo mode is active, switch to a separate sandboxed database. */
     if (isDemoMode() && config.database) {
         config.database = { ...config.database, name: config.database.name + '_demo' };
     }
-    /* Handle database creation — either managed or provided. */
+    /* Handle database creation — either managed or provided.
+     * Pass crdtEnabled flag so CRDT IndexedDB tables are conditionally included. */
     if (config.database) {
-        _dbReady = createDatabase(config.database).then((db) => {
+        _dbReady = createDatabase(config.database, !!config.crdt).then((db) => {
             /* Store on config for backward compat (engine.ts reads config.db). */
             config.db = db;
         });

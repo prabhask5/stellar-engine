@@ -74,6 +74,23 @@ const SYSTEM_TABLES: Record<string, string> = {
   singleUserConfig: 'id'
 };
 
+/**
+ * CRDT tables — only included when the CRDT subsystem is enabled via
+ * `initEngine({ crdt: {...} })`.
+ *
+ * - `crdtDocuments`      — Full Yjs document state snapshots for offline access
+ *                          and cross-session recovery
+ * - `crdtPendingUpdates` — Incremental Yjs update deltas for crash safety
+ *                          (replayed if browser crashes between full saves)
+ *
+ * @see {@link ./crdt/types.ts} for record shapes
+ * @see {@link ./crdt/store.ts} for CRUD operations on these tables
+ */
+const CRDT_SYSTEM_TABLES: Record<string, string> = {
+  crdtDocuments: 'documentId, pageId, offlineEnabled',
+  crdtPendingUpdates: '++id, documentId, timestamp'
+};
+
 // =============================================================================
 // Module State
 // =============================================================================
@@ -103,8 +120,8 @@ let managedDb: Dexie | null = null;
  * @param config - Database name and version declarations.
  * @returns The opened Dexie instance, ready for use.
  */
-export async function createDatabase(config: DatabaseConfig): Promise<Dexie> {
-  let db = buildDexie(config);
+export async function createDatabase(config: DatabaseConfig, crdtEnabled = false): Promise<Dexie> {
+  let db = buildDexie(config, crdtEnabled);
 
   try {
     /*
@@ -134,7 +151,7 @@ export async function createDatabase(config: DatabaseConfig): Promise<Dexie> {
         );
         db.close();
         await Dexie.delete(config.name);
-        db = buildDexie(config);
+        db = buildDexie(config, crdtEnabled);
         await db.open();
       }
     }
@@ -151,7 +168,7 @@ export async function createDatabase(config: DatabaseConfig): Promise<Dexie> {
       /* Ignore close errors — the connection may already be broken. */
     }
     await Dexie.delete(config.name);
-    db = buildDexie(config);
+    db = buildDexie(config, crdtEnabled);
     await db.open();
   }
 
@@ -168,12 +185,17 @@ export async function createDatabase(config: DatabaseConfig): Promise<Dexie> {
  * @param config - Database name and version declarations.
  * @returns An unopened Dexie instance with all versions declared.
  */
-function buildDexie(config: DatabaseConfig): Dexie {
+function buildDexie(config: DatabaseConfig, crdtEnabled = false): Dexie {
   const db = new Dexie(config.name);
 
   for (const ver of config.versions) {
-    /* Merge app tables with system tables — system tables always included. */
-    const mergedStores = { ...ver.stores, ...SYSTEM_TABLES };
+    /* Merge app tables with system tables — system tables always included.
+     * CRDT tables are only included when the CRDT subsystem is enabled. */
+    const mergedStores = {
+      ...ver.stores,
+      ...SYSTEM_TABLES,
+      ...(crdtEnabled ? CRDT_SYSTEM_TABLES : {})
+    };
     if (ver.upgrade) {
       db.version(ver.version).stores(mergedStores).upgrade(ver.upgrade);
     } else {

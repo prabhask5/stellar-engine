@@ -3080,14 +3080,37 @@ export async function clearLocalCache(): Promise<void> {
   // Get user ID before clearing to remove their sync cursor
   const userId = await getCurrentUserId();
 
+  /*
+   * Close all active CRDT documents before clearing the cache.
+   * This ensures documents are properly saved and channels are cleaned up.
+   * Uses a dynamic import to avoid circular dependency (engine ↔ crdt).
+   */
+  if (config.crdt) {
+    try {
+      const { closeAllDocuments } = await import('./crdt/provider');
+      await closeAllDocuments();
+    } catch {
+      /* CRDT module may not be available — non-critical. */
+    }
+  }
+
   const entityTables = config.tables.map((t) => db.table(getDexieTableFor(t)));
   const metaTables = [db.table('syncQueue'), db.table('conflictHistory')];
-  await db.transaction('rw', [...entityTables, ...metaTables], async () => {
+
+  /* Include CRDT tables if the subsystem is enabled. */
+  const crdtTables = config.crdt ? [db.table('crdtDocuments'), db.table('crdtPendingUpdates')] : [];
+
+  await db.transaction('rw', [...entityTables, ...metaTables, ...crdtTables], async () => {
     for (const t of entityTables) {
       await t.clear();
     }
     await db.table('syncQueue').clear();
     await db.table('conflictHistory').clear();
+
+    /* Clear CRDT tables if enabled. */
+    for (const t of crdtTables) {
+      await t.clear();
+    }
   });
 
   // Reset sync cursor (user-specific) and hydration flag

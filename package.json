@@ -45,6 +45,10 @@
       "types": "./dist/entries/kit.d.ts",
       "import": "./dist/entries/kit.js"
     },
+    "./crdt": {
+      "types": "./dist/entries/crdt.d.ts",
+      "import": "./dist/entries/crdt.js"
+    },
     "./components/SyncStatus": {
       "svelte": "./src/components/SyncStatus.svelte",
       "default": "./src/components/SyncStatus.svelte"
@@ -88,7 +92,8 @@
     "@clack/prompts": "^1.0.1",
     "@supabase/supabase-js": "^2.49.0",
     "dexie": "^4.2.1",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "yjs": "^13.6.0"
   },
   "peerDependencies": {
     "svelte": "^5.0.0"

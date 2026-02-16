@@ -24,6 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import type { SingleUserGateType } from './types';
+import type { CRDTConfig } from './crdt/types';
 import type { DemoConfig } from './demo';
 import { type DatabaseConfig } from './database';
 /**
@@ -104,6 +105,16 @@ export interface SyncEngineConfig {
      * @see {@link DemoConfig} for the configuration shape
      */
     demo?: DemoConfig;
+    /**
+     * CRDT collaborative editing configuration.
+     *
+     * When provided, enables the CRDT subsystem — creates IndexedDB tables for
+     * CRDT document storage and allows use of the `@prabhask5/stellar-engine/crdt` API.
+     * When omitted, no CRDT tables are created and CRDT imports will throw.
+     *
+     * @see {@link CRDTConfig} for available configuration options
+     */
+    crdt?: CRDTConfig;
 }
 /**
  * Per-table sync configuration.

@@ -62,7 +62,7 @@ export interface DatabaseConfig {
  * @param config - Database name and version declarations.
  * @returns The opened Dexie instance, ready for use.
  */
-export declare function createDatabase(config: DatabaseConfig): Promise<Dexie>;
+export declare function createDatabase(config: DatabaseConfig, crdtEnabled?: boolean): Promise<Dexie>;
 /**
  * Get the engine-managed Dexie instance.
  *

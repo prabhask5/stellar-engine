@@ -16,6 +16,7 @@ Complete reference for all public exports from `@prabhask5/stellar-engine`.
 | `@prabhask5/stellar-engine/config` | Runtime config, `getDexieTableFor` |
 | `@prabhask5/stellar-engine/kit` | SvelteKit route helpers, server APIs, load functions, email confirmation, auth hydration |
 | `@prabhask5/stellar-engine/components/SyncStatus` | Sync status indicator Svelte component |
+| `@prabhask5/stellar-engine/crdt` | CRDT collaborative editing (document lifecycle, shared types, presence, offline) |
 | `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Cross-device conflict banner Svelte component |
 
 All exports are also available from the root `@prabhask5/stellar-engine` for backward compatibility.
@@ -2393,3 +2394,131 @@ Fixed-position banner at bottom center. Shows "Demo Mode — Changes reset on re
 
 ### `AuthMode` Type
 Updated to include `'demo'`: `'supabase' | 'offline' | 'demo' | 'none'`
+
+---
+
+## CRDT Collaborative Editing
+
+Import: `@prabhask5/stellar-engine/crdt`
+
+Optional Yjs-based CRDT subsystem for real-time collaborative document editing. Enable by adding `crdt: {}` to `initEngine()`.
+
+### Configuration
+
+#### `CRDTConfig`
+All fields optional with defaults:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `supabaseTable` | `string` | `'crdt_documents'` | Supabase table name |
+| `columns` | `string` | `'id,page_id,...'` | SELECT columns for egress optimization |
+| `persistIntervalMs` | `number` | `30000` | Supabase persist interval |
+| `broadcastDebounceMs` | `number` | `100` | Broadcast debounce window |
+| `localSaveDebounceMs` | `number` | `5000` | IndexedDB full-state save debounce |
+| `cursorDebounceMs` | `number` | `50` | Cursor/presence update debounce |
+| `maxOfflineDocuments` | `number` | `50` | Max docs stored offline |
+| `maxBroadcastPayloadBytes` | `number` | `250000` | Chunk threshold |
+| `syncPeerTimeoutMs` | `number` | `3000` | Sync protocol timeout |
+| `maxReconnectAttempts` | `number` | `5` | Max channel reconnect attempts |
+| `reconnectBaseDelayMs` | `number` | `1000` | Exponential backoff base |
+
+### Document Lifecycle
+
+#### `openDocument(documentId, pageId, options?): Promise<CRDTProvider>`
+Open a collaborative CRDT document. Idempotent — returns existing provider if already open.
+
+**Options:**
+- `offlineEnabled?: boolean` — Persist to IndexedDB for offline access (default: `false`)
+- `initialPresence?: { name: string; avatarUrl?: string }` — Announce presence on join
+
+**Returns:** `CRDTProvider` with:
+- `doc: Y.Doc` — The Yjs document instance
+- `documentId: string` — Unique identifier
+- `pageId: string` — Associated page/entity
+- `connectionState: 'disconnected' | 'connecting' | 'connected'`
+- `isDirty: boolean` — Unsaved changes
+- `destroy(): Promise<void>` — Close and clean up
+
+#### `closeDocument(documentId): Promise<void>`
+Close a specific document. Saves final state and leaves channel.
+
+#### `closeAllDocuments(): Promise<void>`
+Close all active documents. Called automatically on sign-out.
+
+### Document Type Helpers
+
+#### `createSharedText(doc, name?): Y.Text`
+Get or create a shared text type. Default name: `'text'`.
+
+#### `createSharedXmlFragment(doc, name?): Y.XmlFragment`
+Get or create a shared XML fragment. Default name: `'content'`.
+
+#### `createSharedArray<T>(doc, name?): Y.Array<T>`
+Get or create a shared array. Default name: `'array'`.
+
+#### `createSharedMap<T>(doc, name?): Y.Map<T>`
+Get or create a shared map. Default name: `'map'`.
+
+#### `createBlockDocument(doc): { content: Y.XmlFragment; meta: Y.Map<unknown> }`
+Set up a standard block document structure with `content` (block tree) and `meta` (document metadata).
+
+### Yjs Re-exports
+
+- `YDoc` — `Y.Doc` constructor
+- `YText`, `YXmlFragment`, `YArray`, `YMap`, `YXmlElement` — Yjs type aliases (type-only)
+
+### Awareness / Presence
+
+#### `updateCursor(documentId, cursor, selection?): void`
+Update local user's cursor position. Debounced to `cursorDebounceMs`.
+
+#### `getCollaborators(documentId): UserPresenceState[]`
+Get current remote collaborators (excludes local user).
+
+#### `onCollaboratorsChange(documentId, callback): () => void`
+Subscribe to collaborator join/leave/cursor changes. Returns unsubscribe function.
+
+#### `assignColor(userId): string`
+Deterministic color assignment from userId hash (12-color palette).
+
+#### `UserPresenceState`
+```ts
+interface UserPresenceState {
+  userId: string;
+  name: string;
+  avatarUrl?: string;
+  color: string;
+  cursor?: unknown;
+  selection?: unknown;
+  deviceId: string;
+  lastActiveAt: string;
+}
+```
+
+### Offline Management
+
+#### `enableOffline(pageId, documentId): Promise<void>`
+Enable offline access for a document. Saves current state to IndexedDB. Throws if limit reached or offline without open provider.
+
+#### `disableOffline(pageId, documentId): Promise<void>`
+Remove a document from offline storage.
+
+#### `isOfflineEnabled(documentId): Promise<boolean>`
+Check if a document is stored for offline access.
+
+#### `getOfflineDocuments(): Promise<CRDTDocumentRecord[]>`
+List all offline-enabled documents.
+
+#### `loadDocumentByPageId(pageId): Promise<CRDTDocumentRecord | undefined>`
+Look up a CRDT document record by page ID.
+
+### Persistence (Advanced)
+
+#### `persistDocument(documentId, doc): Promise<void>`
+Manually persist a document's state to Supabase.
+
+#### `persistAllDirty(): Promise<void>`
+Persist all active dirty documents to Supabase.
+
+### `isCRDTEnabled(): boolean`
+Check whether the CRDT subsystem was configured (available from root import).

@@ -97,3 +97,11 @@ export type { DiagnosticsSnapshot } from '../diagnostics';
 // `@supabase/supabase-js` dependency to type-check session objects.
 
 export type { Session } from '@supabase/supabase-js';
+
+// =============================================================================
+//  CRDT Types
+// =============================================================================
+// - `CRDTConfig` — configuration for the CRDT collaborative editing subsystem.
+// - `UserPresenceState` — per-user cursor/presence state for awareness.
+
+export type { CRDTConfig, UserPresenceState } from '../crdt/types';

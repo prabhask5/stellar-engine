@@ -480,6 +480,60 @@ window.location.href = '/'; // Full reload required
 
 The `stellar-engine install pwa` scaffolding generates demo files automatically.
 
+## CRDT Collaborative Editing (optional)
+
+The engine includes an optional Yjs-based CRDT subsystem for real-time collaborative document editing. Enable it by adding `crdt` to your `initEngine()` config:
+
+```ts
+initEngine({
+  prefix: 'myapp',
+  tables: [...],
+  database: { name: 'myapp-db', versions: [...] },
+  crdt: {
+    persistIntervalMs: 30000,     // Persist to Supabase every 30s
+    maxOfflineDocuments: 50,       // Max docs stored offline
+  },
+});
+```
+
+Then use the `@prabhask5/stellar-engine/crdt` subpath:
+
+```ts
+import {
+  openDocument, closeDocument,
+  createSharedText, createBlockDocument,
+  updateCursor, getCollaborators, onCollaboratorsChange,
+  enableOffline, disableOffline,
+  type YDoc, type YText,
+} from '@prabhask5/stellar-engine/crdt';
+
+// Open a collaborative document
+const provider = await openDocument('doc-1', 'page-1', {
+  offlineEnabled: true,
+  initialPresence: { name: 'Alice' },
+});
+
+// Use with any Yjs-compatible editor (Tiptap, BlockNote, etc.)
+const { content, meta } = createBlockDocument(provider.doc);
+meta.set('title', 'My Page');
+
+// Track collaborator cursors
+const unsub = onCollaboratorsChange('doc-1', (collaborators) => {
+  // Update avatar list, cursor positions, etc.
+});
+
+// Close when done
+await closeDocument('doc-1');
+```
+
+Key features:
+- **Real-time multi-user editing** via Supabase Broadcast (zero DB writes per keystroke)
+- **Cursor/presence awareness** via Supabase Presence
+- **Offline-first** with IndexedDB persistence and crash recovery
+- **Periodic Supabase persistence** (every 30s) for durable cross-device storage
+- **Cross-tab sync** via browser BroadcastChannel API (avoids network for same-device)
+- **Consumers never import yjs** -- all Yjs types are re-exported from the engine
+
 ## License
 
 Private -- not yet published under an open-source license.

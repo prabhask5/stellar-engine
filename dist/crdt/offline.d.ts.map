@@ -1,0 +1,1 @@
+{"version":3,"file":"offline.d.ts","sourceRoot":"","sources":["../../src/crdt/offline.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;;;;;;;;;;GAsBG;AAmBH;;;;;;;;;;;;;;;;;GAiBG;AACH,wBAAsB,aAAa,CAAC,MAAM,EAAE,MAAM,EAAE,UAAU,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC,CA2ErF;AAED;;;;;;;;;;;;;GAaG;AACH,wBAAsB,cAAc,CAAC,OAAO,EAAE,MAAM,EAAE,UAAU,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC,CAGvF"}

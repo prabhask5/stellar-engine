@@ -67,4 +67,7 @@ export type { DemoConfig } from './demo';
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice } from './types';
 export type { Session } from '@supabase/supabase-js';
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
+export { isCRDTEnabled } from './crdt/config';
+export type { CRDTConfig } from './crdt/types';
+export type { UserPresenceState } from './crdt/types';
 //# sourceMappingURL=index.d.ts.map

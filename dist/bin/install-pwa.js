@@ -26,7 +26,8 @@
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
-import { createInterface } from 'readline';
+import * as p from '@clack/prompts';
+import color from 'picocolors';
 // =============================================================================
 //                                 HELPERS
 // =============================================================================
@@ -61,127 +62,8 @@ function writeIfMissing(filePath, content, createdFiles, skippedFiles, quiet = f
     }
 }
 // =============================================================================
-//                           ANSI STYLE HELPERS
-// =============================================================================
-/** Wrap text in ANSI bold. */
-const bold = (s) => `\x1b[1m${s}\x1b[22m`;
-/** Wrap text in ANSI dim. */
-const dim = (s) => `\x1b[2m${s}\x1b[22m`;
-/** Wrap text in ANSI cyan. */
-const cyan = (s) => `\x1b[36m${s}\x1b[39m`;
-/** Wrap text in ANSI green. */
-const green = (s) => `\x1b[32m${s}\x1b[39m`;
-/** Wrap text in ANSI yellow. */
-const yellow = (s) => `\x1b[33m${s}\x1b[39m`;
-/** Wrap text in ANSI red. */
-const red = (s) => `\x1b[31m${s}\x1b[39m`;
-/**
- * Draw a box around lines of text using Unicode box-drawing characters.
- *
- * @param lines - The lines of text to display inside the box.
- * @param style - `"double"` for `╔═╗║╚═╝`, `"single"` for `┌─┐│└─┘`.
- * @param title - Optional title to display in the top border.
- * @returns The formatted box string with leading two-space indent.
- */
-function box(lines, style, title) {
-    const [tl, h, tr, v, bl, br] = style === 'double'
-        ? ['\u2554', '\u2550', '\u2557', '\u2551', '\u255a', '\u255d']
-        : ['\u250c', '\u2500', '\u2510', '\u2502', '\u2514', '\u2518'];
-    const width = Math.max(...lines.map((l) => l.length), (title ?? '').length + 4, 50);
-    let top;
-    if (title) {
-        const titleStr = `${h} ${title} `;
-        top = `  ${tl}${titleStr}${h.repeat(width - titleStr.length)}${tr}`;
-    }
-    else {
-        top = `  ${tl}${h.repeat(width)}${tr}`;
-    }
-    const mid = lines.map((l) => `  ${v} ${l.padEnd(width - 2)}${v}`).join('\n');
-    const bot = `  ${bl}${h.repeat(width)}${br}`;
-    return `${top}\n${mid}\n${bot}`;
-}
-/**
- * Draw a double-bordered box with a header and body separated by a mid-rule.
- *
- * @param header - The header line(s) to display above the divider.
- * @param body - The body lines to display below the divider.
- * @returns The formatted box string with leading two-space indent.
- */
-function doubleBoxWithHeader(header, body) {
-    const width = Math.max(...header.map((l) => l.length), ...body.map((l) => l.length), 50);
-    const top = `  \u2554${'═'.repeat(width)}\u2557`;
-    const headLines = header.map((l) => `  \u2551 ${l.padEnd(width - 2)}\u2551`).join('\n');
-    const mid = `  \u2560${'═'.repeat(width)}\u2563`;
-    const bodyLines = body.map((l) => `  \u2551 ${l.padEnd(width - 2)}\u2551`).join('\n');
-    const bot = `  \u255a${'═'.repeat(width)}\u255d`;
-    return `${top}\n${headLines}\n${mid}\n${bodyLines}\n${bot}`;
-}
-// =============================================================================
-//                              SPINNER
-// =============================================================================
-/** Braille spinner frames for animated progress. */
-const SPINNER_FRAMES = [
-    '\u280b',
-    '\u2819',
-    '\u2839',
-    '\u2838',
-    '\u283c',
-    '\u2834',
-    '\u2826',
-    '\u2827',
-    '\u2807',
-    '\u280f'
-];
-/**
- * Create a terminal spinner that updates a single line in-place.
- *
- * @param text - Initial text to display beside the spinner.
- * @returns An object with `update`, `succeed`, and `stop` methods.
- */
-function createSpinner(text) {
-    let frame = 0;
-    let current = text;
-    let timer = null;
-    const render = () => {
-        const spinner = cyan(SPINNER_FRAMES[frame % SPINNER_FRAMES.length]);
-        process.stdout.write(`\r  ${spinner} ${current}`);
-        frame++;
-    };
-    timer = setInterval(render, 80);
-    render();
-    return {
-        update(newText) {
-            current = newText;
-        },
-        succeed(finalText) {
-            if (timer)
-                clearInterval(timer);
-            timer = null;
-            process.stdout.write(`\r  ${green('\u2713')} ${finalText}\x1b[K\n`);
-        },
-        stop() {
-            if (timer)
-                clearInterval(timer);
-            timer = null;
-            process.stdout.write('\x1b[K');
-        }
-    };
-}
-// =============================================================================
 //                         INTERACTIVE SETUP
 // =============================================================================
-/**
- * Promisified readline question helper.
- *
- * @param rl - The readline interface.
- * @param prompt - The prompt string to display.
- * @returns The user's input string.
- */
-function ask(rl, prompt) {
-    return new Promise((resolve) => {
-        rl.question(prompt, (answer) => resolve(answer));
-    });
-}
 /**
  * Run the interactive setup walkthrough, collecting all required options
  * from the user via sequential prompts.
@@ -192,102 +74,80 @@ function ask(rl, prompt) {
  *
  * @returns A promise that resolves with the validated {@link InstallOptions}.
  *
- * @throws {SystemExit} Exits with code 0 if the user declines to proceed.
+ * @throws {SystemExit} Exits with code 0 if the user cancels or declines to proceed.
  */
 async function runInteractiveSetup() {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    /* ── Welcome banner ── */
-    console.log();
-    console.log(doubleBoxWithHeader([`       ${bold('\u2726 stellar-engine \u00b7 PWA scaffolder \u2726')}`], [
-        'Creates a complete offline-first SvelteKit PWA ',
-        'with auth, sync, and service worker support.   '
-    ]));
-    console.log();
-    /* ── App Name ── */
-    let name = '';
-    while (!name) {
-        console.log(box([
-            'The full name of your application.             ',
-            'Used in the page title, README, and manifest.  ',
-            `Example: ${dim('"Stellar Planner"')}                       `
-        ], 'single', 'App Name'));
-        const input = (await ask(rl, `  ${yellow('\u2192')} App name: `)).trim();
-        if (!input) {
-            console.log(red('  App name is required.\n'));
+    p.intro(color.bold('\u2726 stellar-engine \u00b7 PWA scaffolder'));
+    const name = await p.text({
+        message: 'App name',
+        placeholder: 'e.g. Stellar Planner',
+        validate(value) {
+            if (!value || !value.trim())
+                return 'App name is required.';
         }
-        else {
-            name = input;
-        }
-    }
-    console.log();
-    /* ── Short Name ── */
-    let shortName = '';
-    while (!shortName) {
-        console.log(box([
-            'A short label for the home screen and app bar. ',
-            'Must be under 12 characters.                   ',
-            `Example: ${dim('"Stellar"')}                               `
-        ], 'single', 'Short Name'));
-        const input = (await ask(rl, `  ${yellow('\u2192')} Short name: `)).trim();
-        if (!input) {
-            console.log(red('  Short name is required.\n'));
-        }
-        else if (input.length >= 12) {
-            console.log(red('  Short name must be under 12 characters.\n'));
-        }
-        else {
-            shortName = input;
-        }
-    }
-    console.log();
-    /* ── Prefix ── */
-    const suggestedPrefix = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    let prefix = '';
-    while (!prefix) {
-        console.log(box([
-            'Lowercase key used for localStorage, caches,   ',
-            'and the service worker scope.                   ',
-            'No spaces. Letters and numbers only.            ',
-            `Suggested: ${dim(`"${suggestedPrefix}"`)}${' '.repeat(Math.max(0, 36 - suggestedPrefix.length - 3))}`
-        ], 'single', 'Prefix'));
-        const input = (await ask(rl, `  ${yellow('\u2192')} Prefix ${dim(`(${suggestedPrefix})`)}: `)).trim();
-        const value = input || suggestedPrefix;
-        if (!/^[a-z][a-z0-9]*$/.test(value)) {
-            console.log(red('  Prefix must be lowercase, start with a letter, no spaces.\n'));
-        }
-        else {
-            prefix = value;
-        }
-    }
-    console.log();
-    /* ── Description ── */
-    const defaultDesc = 'A self-hosted offline-first PWA';
-    console.log(box([
-        'A brief description for meta tags and manifest. ',
-        `Press Enter to use the default.                 `,
-        `Default: ${dim(`"${defaultDesc}"`)}`
-    ], 'single', 'Description'));
-    const descInput = (await ask(rl, `  ${yellow('\u2192')} Description ${dim('(optional)')}: `)).trim();
-    const description = descInput || defaultDesc;
-    console.log();
-    /* Derive kebab-case name for package.json from the full name */
-    const kebabName = name.toLowerCase().replace(/\s+/g, '-');
-    const opts = { name, shortName, prefix, description, kebabName };
-    /* ── Confirmation summary ── */
-    console.log(box([
-        `${bold('Name:')}         ${opts.name}${' '.repeat(Math.max(0, 38 - opts.name.length))}`,
-        `${bold('Short name:')}   ${opts.shortName}${' '.repeat(Math.max(0, 38 - opts.shortName.length))}`,
-        `${bold('Prefix:')}       ${opts.prefix}${' '.repeat(Math.max(0, 38 - opts.prefix.length))}`,
-        `${bold('Description:')}  ${opts.description}${' '.repeat(Math.max(0, 38 - opts.description.length))}`
-    ], 'single', 'Configuration'));
-    const proceed = (await ask(rl, `  Proceed? ${dim('(Y/n)')}: `)).trim().toLowerCase();
-    if (proceed === 'n' || proceed === 'no') {
-        console.log(dim('\n  Setup cancelled.\n'));
-        rl.close();
+    });
+    if (p.isCancel(name)) {
+        p.cancel('Setup cancelled.');
         process.exit(0);
     }
-    rl.close();
-    console.log();
+    const shortName = await p.text({
+        message: 'Short name',
+        placeholder: 'e.g. Stellar (under 12 chars)',
+        validate(value) {
+            if (!value || !value.trim())
+                return 'Short name is required.';
+            if (value.trim().length >= 12)
+                return 'Short name must be under 12 characters.';
+        }
+    });
+    if (p.isCancel(shortName)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
+    const suggestedPrefix = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const prefix = await p.text({
+        message: 'Prefix',
+        placeholder: suggestedPrefix,
+        defaultValue: suggestedPrefix,
+        validate(value) {
+            const v = (value ?? '').trim() || suggestedPrefix;
+            if (!/^[a-z][a-z0-9]*$/.test(v))
+                return 'Prefix must be lowercase, start with a letter, no spaces.';
+        }
+    });
+    if (p.isCancel(prefix)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
+    const defaultDesc = 'A self-hosted offline-first PWA';
+    const description = await p.text({
+        message: 'Description',
+        placeholder: defaultDesc,
+        defaultValue: defaultDesc
+    });
+    if (p.isCancel(description)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
+    const kebabName = name.toLowerCase().replace(/\s+/g, '-');
+    const opts = {
+        name: name.trim(),
+        shortName: shortName.trim(),
+        prefix: prefix.trim() || suggestedPrefix,
+        description: description.trim() || defaultDesc,
+        kebabName
+    };
+    p.note([
+        `${color.bold('Name:')}         ${opts.name}`,
+        `${color.bold('Short name:')}   ${opts.shortName}`,
+        `${color.bold('Prefix:')}       ${opts.prefix}`,
+        `${color.bold('Description:')}  ${opts.description}`
+    ].join('\n'), 'Configuration');
+    const confirmed = await p.confirm({ message: 'Proceed with this configuration?' });
+    if (p.isCancel(confirmed) || !confirmed) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
     return opts;
 }
 // =============================================================================
@@ -4611,15 +4471,10 @@ const COMMANDS = [
  * Print the help screen listing all available commands.
  */
 function printHelp() {
-    console.log();
-    console.log(doubleBoxWithHeader([`          ${bold('\u2726 stellar-engine CLI \u2726')}            `], ['Available commands:                              ']));
-    console.log();
-    for (const cmd of COMMANDS) {
-        console.log(`  ${cyan(cmd.usage)}`);
-        console.log(`  ${dim(cmd.description)}`);
-        console.log();
-    }
-    console.log(`  Run a command to get started.\n`);
+    p.intro(color.bold('\u2726 stellar-engine CLI'));
+    const commandList = COMMANDS.map((cmd) => `${color.cyan(cmd.usage)}\n${color.dim(cmd.description)}`).join('\n\n');
+    p.note(commandList, 'Available commands');
+    p.outro('Run a command to get started.');
 }
 /**
  * Route CLI arguments to the appropriate command handler.
@@ -4643,17 +4498,25 @@ function routeCommand() {
 //                              MAIN FUNCTION
 // =============================================================================
 /**
- * Write a group of files quietly and return the count written.
+ * Write a group of files quietly, updating the spinner with per-file progress.
  *
  * @param entries - Array of `[relativePath, content]` pairs.
  * @param cwd - The current working directory.
  * @param createdFiles - Accumulator for newly-created file paths.
  * @param skippedFiles - Accumulator for skipped file paths.
+ * @param label - The category label shown in the spinner (e.g. "Config files").
+ * @param spinner - The clack spinner instance to update per-file.
+ * @param runningTotal - The total files written so far across all groups.
  * @returns The number of files in the group.
  */
-function writeGroup(entries, cwd, createdFiles, skippedFiles) {
-    for (const [rel, content] of entries) {
+function writeGroup(entries, cwd, createdFiles, skippedFiles, label, spinner, runningTotal) {
+    for (let i = 0; i < entries.length; i++) {
+        const [rel, content] = entries[i];
+        const existed = existsSync(join(cwd, rel));
         writeIfMissing(join(cwd, rel), content, createdFiles, skippedFiles, true);
+        const status = existed ? color.dim('skip') : color.green('write');
+        const current = runningTotal + i + 1;
+        spinner.message(`${label} [${i + 1}/${entries.length}] ${status} ${color.dim(rel)}  ${color.dim(`(${current} total)`)}`);
     }
     return entries.length;
 }
@@ -4677,121 +4540,125 @@ async function main() {
     const cwd = process.cwd();
     const createdFiles = [];
     const skippedFiles = [];
+    const s = p.spinner();
     // 1. Write package.json
-    let sp = createSpinner('Writing package.json');
+    s.start('Writing package.json...');
     writeIfMissing(join(cwd, 'package.json'), generatePackageJson(opts), createdFiles, skippedFiles, true);
-    sp.succeed('Writing package.json');
+    s.stop('package.json ready');
     // 2. Run npm install
-    sp = createSpinner('Installing dependencies...');
-    sp.stop();
-    console.log(`  ${cyan(SPINNER_FRAMES[0])} Installing dependencies...\n`);
+    s.start('Installing dependencies...');
+    s.stop('Installing dependencies (npm output below)');
     execSync('npm install', { stdio: 'inherit', cwd });
-    console.log(`\n  ${green('\u2713')} Installing dependencies`);
+    p.log.success('Dependencies installed');
     // 3. Write all template files by category
     const firstLetter = opts.shortName.charAt(0).toUpperCase();
-    /* ── Config files ── */
-    const configFiles = [
-        ['vite.config.ts', generateViteConfig(opts)],
-        ['tsconfig.json', generateTsconfig()],
-        ['svelte.config.js', generateSvelteConfig(opts)],
-        ['eslint.config.js', generateEslintConfig()],
-        ['.prettierrc', generatePrettierrc()],
-        ['.prettierignore', generatePrettierignore()],
-        ['knip.json', generateKnipJson()],
-        ['.gitignore', generateGitignore()]
+    let filesWritten = 0;
+    const groups = [
+        {
+            label: 'Config files',
+            entries: [
+                ['vite.config.ts', generateViteConfig(opts)],
+                ['tsconfig.json', generateTsconfig()],
+                ['svelte.config.js', generateSvelteConfig(opts)],
+                ['eslint.config.js', generateEslintConfig()],
+                ['.prettierrc', generatePrettierrc()],
+                ['.prettierignore', generatePrettierignore()],
+                ['knip.json', generateKnipJson()],
+                ['.gitignore', generateGitignore()]
+            ]
+        },
+        {
+            label: 'Documentation',
+            entries: [
+                ['README.md', generateReadme(opts)],
+                ['ARCHITECTURE.md', generateArchitecture(opts)],
+                ['FRAMEWORKS.md', generateFrameworks()]
+            ]
+        },
+        {
+            label: 'Static assets',
+            entries: [
+                ['static/manifest.json', generateManifest(opts)],
+                ['static/offline.html', generateOfflineHtml(opts)],
+                ['static/icons/app.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
+                ['static/icons/app-dark.svg', generatePlaceholderSvg('#1a1a2e', firstLetter)],
+                ['static/icons/maskable.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
+                ['static/icons/favicon.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
+                ['static/icons/monochrome.svg', generateMonochromeSvg(firstLetter)],
+                ['static/icons/splash.svg', generateSplashSvg(opts.shortName)],
+                ['static/icons/apple-touch.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
+                ['static/change-email.html', generateEmailPlaceholder('Change Email')],
+                ['static/device-verification-email.html', generateEmailPlaceholder('Device Verification')],
+                ['static/signup-email.html', generateEmailPlaceholder('Signup Email')],
+                ['supabase-schema.sql', generateSupabaseSchema(opts)]
+            ]
+        },
+        {
+            label: 'Source files',
+            entries: [
+                ['src/app.html', generateAppHtml(opts)],
+                ['src/app.d.ts', generateAppDts(opts)]
+            ]
+        },
+        {
+            label: 'Route files',
+            entries: [
+                ['src/routes/+layout.ts', generateRootLayoutTs(opts)],
+                ['src/routes/+layout.svelte', generateRootLayoutSvelte(opts)],
+                ['src/routes/+page.svelte', generateHomePage(opts)],
+                ['src/routes/+error.svelte', generateErrorPage(opts)],
+                ['src/routes/setup/+page.ts', generateSetupPageTs()],
+                ['src/routes/setup/+page.svelte', generateSetupPageSvelte(opts)],
+                ['src/routes/policy/+page.svelte', generatePolicyPage(opts)],
+                ['src/routes/login/+page.svelte', generateLoginPage(opts)],
+                ['src/routes/confirm/+page.svelte', generateConfirmPage(opts)],
+                ['src/routes/api/config/+server.ts', generateConfigServer()],
+                ['src/routes/api/setup/deploy/+server.ts', generateDeployServer()],
+                ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
+                ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
+                ['src/routes/(protected)/+layout.ts', generateProtectedLayoutTs()],
+                ['src/routes/(protected)/+layout.svelte', generateProtectedLayoutSvelte()],
+                ['src/routes/(protected)/profile/+page.svelte', generateProfilePage(opts)],
+                ['src/routes/demo/+page.svelte', generateDemoPage(opts)]
+            ]
+        },
+        {
+            label: 'Library & components',
+            entries: [
+                ['src/lib/types.ts', generateAppTypes()],
+                ['src/lib/components/UpdatePrompt.svelte', generateUpdatePromptComponent()],
+                ['src/lib/demo/mockData.ts', generateDemoMockData()],
+                ['src/lib/demo/config.ts', generateDemoConfig()]
+            ]
+        }
     ];
-    sp = createSpinner('Config files');
-    const configCount = writeGroup(configFiles, cwd, createdFiles, skippedFiles);
-    sp.succeed(`Config files               ${dim(`${configCount} files`)}`);
-    /* ── Documentation ── */
-    const docFiles = [
-        ['README.md', generateReadme(opts)],
-        ['ARCHITECTURE.md', generateArchitecture(opts)],
-        ['FRAMEWORKS.md', generateFrameworks()]
-    ];
-    sp = createSpinner('Documentation');
-    const docCount = writeGroup(docFiles, cwd, createdFiles, skippedFiles);
-    sp.succeed(`Documentation              ${dim(`${docCount} files`)}`);
-    /* ── Static assets ── */
-    const staticFiles = [
-        ['static/manifest.json', generateManifest(opts)],
-        ['static/offline.html', generateOfflineHtml(opts)],
-        ['static/icons/app.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
-        ['static/icons/app-dark.svg', generatePlaceholderSvg('#1a1a2e', firstLetter)],
-        ['static/icons/maskable.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
-        ['static/icons/favicon.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
-        ['static/icons/monochrome.svg', generateMonochromeSvg(firstLetter)],
-        ['static/icons/splash.svg', generateSplashSvg(opts.shortName)],
-        ['static/icons/apple-touch.svg', generatePlaceholderSvg('#6c5ce7', firstLetter)],
-        ['static/change-email.html', generateEmailPlaceholder('Change Email')],
-        ['static/device-verification-email.html', generateEmailPlaceholder('Device Verification')],
-        ['static/signup-email.html', generateEmailPlaceholder('Signup Email')],
-        ['supabase-schema.sql', generateSupabaseSchema(opts)]
-    ];
-    sp = createSpinner('Static assets');
-    const staticCount = writeGroup(staticFiles, cwd, createdFiles, skippedFiles);
-    sp.succeed(`Static assets             ${dim(`${staticCount} files`)}`);
-    /* ── Source files ── */
-    const sourceFiles = [
-        ['src/app.html', generateAppHtml(opts)],
-        ['src/app.d.ts', generateAppDts(opts)]
-    ];
-    sp = createSpinner('Source files');
-    const sourceCount = writeGroup(sourceFiles, cwd, createdFiles, skippedFiles);
-    sp.succeed(`Source files               ${dim(`${sourceCount} files`)}`);
-    /* ── Route files ── */
-    const routeFiles = [
-        ['src/routes/+layout.ts', generateRootLayoutTs(opts)],
-        ['src/routes/+layout.svelte', generateRootLayoutSvelte(opts)],
-        ['src/routes/+page.svelte', generateHomePage(opts)],
-        ['src/routes/+error.svelte', generateErrorPage(opts)],
-        ['src/routes/setup/+page.ts', generateSetupPageTs()],
-        ['src/routes/setup/+page.svelte', generateSetupPageSvelte(opts)],
-        ['src/routes/policy/+page.svelte', generatePolicyPage(opts)],
-        ['src/routes/login/+page.svelte', generateLoginPage(opts)],
-        ['src/routes/confirm/+page.svelte', generateConfirmPage(opts)],
-        ['src/routes/api/config/+server.ts', generateConfigServer()],
-        ['src/routes/api/setup/deploy/+server.ts', generateDeployServer()],
-        ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
-        ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
-        ['src/routes/(protected)/+layout.ts', generateProtectedLayoutTs()],
-        ['src/routes/(protected)/+layout.svelte', generateProtectedLayoutSvelte()],
-        ['src/routes/(protected)/profile/+page.svelte', generateProfilePage(opts)],
-        ['src/routes/demo/+page.svelte', generateDemoPage(opts)]
-    ];
-    sp = createSpinner('Route files');
-    const routeCount = writeGroup(routeFiles, cwd, createdFiles, skippedFiles);
-    sp.succeed(`Route files               ${dim(`${routeCount} files`)}`);
-    /* ── Library & components ── */
-    const libFiles = [
-        ['src/lib/types.ts', generateAppTypes()],
-        ['src/lib/components/UpdatePrompt.svelte', generateUpdatePromptComponent()],
-        ['src/lib/demo/mockData.ts', generateDemoMockData()],
-        ['src/lib/demo/config.ts', generateDemoConfig()]
-    ];
-    sp = createSpinner('Library & components');
-    const libCount = writeGroup(libFiles, cwd, createdFiles, skippedFiles);
-    sp.succeed(`Library & components       ${dim(`${libCount} files`)}`);
+    for (const group of groups) {
+        s.start(`${group.label} [0/${group.entries.length}]...`);
+        filesWritten += writeGroup(group.entries, cwd, createdFiles, skippedFiles, group.label, s, filesWritten);
+        s.stop(`${group.label} ${color.dim(`\u2014 ${group.entries.length} files`)}`);
+    }
     // 4. Set up husky
-    sp = createSpinner('Git hooks');
+    s.start('Setting up git hooks...');
     execSync('npx husky init', { stdio: 'pipe', cwd });
     const preCommitPath = join(cwd, '.husky/pre-commit');
     writeFileSync(preCommitPath, generateHuskyPreCommit(), 'utf-8');
     createdFiles.push('.husky/pre-commit');
-    sp.succeed(`Git hooks                  ${dim('1 file')}`);
+    filesWritten++;
+    s.stop(`Git hooks ${color.dim('\u2014 1 file')}`);
+    p.log.success(`All project files generated ${color.dim(`(${filesWritten} total)`)}`);
     // 5. Print final summary
-    console.log();
-    console.log(doubleBoxWithHeader([`             ${green(bold('\u2713 Setup complete!'))}                  `], [
-        `Created: ${bold(String(createdFiles.length))} files${' '.repeat(34 - String(createdFiles.length).length)}`,
-        `Skipped: ${bold(String(skippedFiles.length))} files${' '.repeat(34 - String(skippedFiles.length).length)}`
-    ]));
-    console.log(`
-  ${bold('Next steps:')}
-    1. Set up Supabase and add .env with your keys
-    2. Run supabase-schema.sql in Supabase SQL Editor
-    3. Add app icons in static/icons/
-    4. Start building: ${cyan('npm run dev')}
-`);
+    p.note([
+        `${color.green('Created:')} ${color.bold(String(createdFiles.length))} files`,
+        `${color.dim('Skipped:')} ${color.bold(String(skippedFiles.length))} files`
+    ].join('\n'), 'Setup complete!');
+    p.log.step([
+        color.bold('Next steps:'),
+        '  1. Set up Supabase and add .env with your keys',
+        '  2. Run supabase-schema.sql in Supabase SQL Editor',
+        '  3. Add app icons in static/icons/',
+        `  4. Start building: ${color.cyan('npm run dev')}`
+    ].join('\n'));
+    p.outro('Happy building!');
 }
 // =============================================================================
 //                                 RUN

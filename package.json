@@ -85,8 +85,10 @@
     "release": "node release.js"
   },
   "dependencies": {
+    "@clack/prompts": "^1.0.1",
     "@supabase/supabase-js": "^2.49.0",
-    "dexie": "^4.2.1"
+    "dexie": "^4.2.1",
+    "picocolors": "^1.1.1"
   },
   "peerDependencies": {
     "svelte": "^5.0.0"

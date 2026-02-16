@@ -78,6 +78,12 @@ export { isOfflineEnabled, getOfflineDocuments, loadDocumentByPageId } from '../
 export { persistDocument, persistAllDirty } from '../crdt/persistence';
 
 // =============================================================================
+//  Diagnostics
+// =============================================================================
+
+export { getCRDTDiagnostics } from '../diagnostics';
+
+// =============================================================================
 //  Configuration Types
 // =============================================================================
 

@@ -45,4 +45,8 @@ export { isOfflineEnabled, getOfflineDocuments, loadDocumentByPageId } from '../
 //  Persistence (Advanced)
 // =============================================================================
 export { persistDocument, persistAllDirty } from '../crdt/persistence';
+// =============================================================================
+//  Diagnostics
+// =============================================================================
+export { getCRDTDiagnostics } from '../diagnostics';
 //# sourceMappingURL=crdt.js.map

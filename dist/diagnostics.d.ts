@@ -26,6 +26,7 @@
 import type { ConflictHistoryEntry, SyncStatus } from './types';
 import type { RealtimeConnectionState } from './realtime';
 import type { SyncError } from './stores/sync';
+import type { CRDTConnectionState } from './crdt/types';
 /**
  * Comprehensive diagnostics snapshot returned by {@link getDiagnostics}.
  *
@@ -120,6 +121,68 @@ export interface DiagnosticsSnapshot {
         lastErrorDetails: string | null;
         recentErrors: SyncError[];
     };
+    /** CRDT collaborative editing subsystem diagnostics */
+    crdt: {
+        /** Whether the CRDT subsystem is enabled (crdt config provided to initEngine). */
+        enabled: boolean;
+        /** Resolved CRDT configuration (null if not enabled). */
+        config: {
+            supabaseTable: string;
+            persistIntervalMs: number;
+            broadcastDebounceMs: number;
+            localSaveDebounceMs: number;
+            cursorDebounceMs: number;
+            maxOfflineDocuments: number;
+            maxBroadcastPayloadBytes: number;
+            syncPeerTimeoutMs: number;
+            maxReconnectAttempts: number;
+            reconnectBaseDelayMs: number;
+        } | null;
+        /** Currently active (open) CRDT documents. */
+        activeDocuments: Array<{
+            documentId: string;
+            pageId: string;
+            connectionState: CRDTConnectionState;
+            isDirty: boolean;
+            /** Current Y.Doc state size in bytes. */
+            stateSizeBytes: number;
+            stateSizeFormatted: string;
+            /** Number of remote collaborators currently connected. */
+            collaboratorCount: number;
+            /** Names of connected collaborators. */
+            collaboratorNames: string[];
+        }>;
+        /** Total number of active documents. */
+        activeDocumentCount: number;
+        /** Offline storage statistics. */
+        offline: {
+            /** Number of documents stored for offline access. */
+            documentCount: number;
+            /** Max offline documents allowed. */
+            maxDocuments: number;
+            /** Total bytes stored across all offline documents. */
+            totalSizeBytes: number;
+            totalSizeFormatted: string;
+            /** Per-document offline storage details. */
+            documents: Array<{
+                documentId: string;
+                pageId: string;
+                stateSizeBytes: number;
+                stateSizeFormatted: string;
+                localUpdatedAt: string;
+                lastPersistedAt: string | null;
+                /** Whether this document has been persisted to Supabase since last local edit. */
+                syncedWithRemote: boolean;
+            }>;
+        };
+        /** Pending crash-recovery updates per active document. */
+        pendingUpdates: Array<{
+            documentId: string;
+            updateCount: number;
+        }>;
+        /** Total pending updates across all documents. */
+        totalPendingUpdates: number;
+    };
     /** Engine configuration summary */
     config: {
         tableCount: number;
@@ -145,6 +208,18 @@ export interface DiagnosticsSnapshot {
  * ```
  */
 export declare function getDiagnostics(): Promise<DiagnosticsSnapshot>;
+/**
+ * Get CRDT subsystem diagnostics (async — reads IndexedDB for offline and pending data).
+ *
+ * Returns a comprehensive snapshot of the CRDT subsystem including active documents,
+ * their state sizes, connection states, collaborator counts, offline storage usage,
+ * and pending crash-recovery updates.
+ *
+ * If CRDT is not enabled, returns a minimal object with `enabled: false`.
+ *
+ * @returns CRDT diagnostics section of the {@link DiagnosticsSnapshot}.
+ */
+export declare function getCRDTDiagnostics(): Promise<DiagnosticsSnapshot['crdt']>;
 /**
  * Get sync cycle and egress diagnostics (synchronous).
  *

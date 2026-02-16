@@ -34,9 +34,15 @@ import { syncStatusStore } from './stores/sync';
 import { isOnline } from './stores/network';
 import { formatBytes } from './utils';
 import { get } from 'svelte/store';
+import { isCRDTEnabled, getCRDTConfig } from './crdt/config';
+import { getActiveProviderEntries } from './crdt/provider';
+import { getOfflineDocuments, loadPendingUpdates } from './crdt/store';
+import { getCollaborators } from './crdt/awareness';
 import type { ConflictHistoryEntry, SyncStatus } from './types';
 import type { RealtimeConnectionState } from './realtime';
 import type { SyncError } from './stores/sync';
+import { encodeStateAsUpdate } from 'yjs';
+import type { CRDTConnectionState } from './crdt/types';
 
 // =============================================================================
 // Types
@@ -145,6 +151,75 @@ export interface DiagnosticsSnapshot {
     recentErrors: SyncError[];
   };
 
+  /** CRDT collaborative editing subsystem diagnostics */
+  crdt: {
+    /** Whether the CRDT subsystem is enabled (crdt config provided to initEngine). */
+    enabled: boolean;
+
+    /** Resolved CRDT configuration (null if not enabled). */
+    config: {
+      supabaseTable: string;
+      persistIntervalMs: number;
+      broadcastDebounceMs: number;
+      localSaveDebounceMs: number;
+      cursorDebounceMs: number;
+      maxOfflineDocuments: number;
+      maxBroadcastPayloadBytes: number;
+      syncPeerTimeoutMs: number;
+      maxReconnectAttempts: number;
+      reconnectBaseDelayMs: number;
+    } | null;
+
+    /** Currently active (open) CRDT documents. */
+    activeDocuments: Array<{
+      documentId: string;
+      pageId: string;
+      connectionState: CRDTConnectionState;
+      isDirty: boolean;
+      /** Current Y.Doc state size in bytes. */
+      stateSizeBytes: number;
+      stateSizeFormatted: string;
+      /** Number of remote collaborators currently connected. */
+      collaboratorCount: number;
+      /** Names of connected collaborators. */
+      collaboratorNames: string[];
+    }>;
+
+    /** Total number of active documents. */
+    activeDocumentCount: number;
+
+    /** Offline storage statistics. */
+    offline: {
+      /** Number of documents stored for offline access. */
+      documentCount: number;
+      /** Max offline documents allowed. */
+      maxDocuments: number;
+      /** Total bytes stored across all offline documents. */
+      totalSizeBytes: number;
+      totalSizeFormatted: string;
+      /** Per-document offline storage details. */
+      documents: Array<{
+        documentId: string;
+        pageId: string;
+        stateSizeBytes: number;
+        stateSizeFormatted: string;
+        localUpdatedAt: string;
+        lastPersistedAt: string | null;
+        /** Whether this document has been persisted to Supabase since last local edit. */
+        syncedWithRemote: boolean;
+      }>;
+    };
+
+    /** Pending crash-recovery updates per active document. */
+    pendingUpdates: Array<{
+      documentId: string;
+      updateCount: number;
+    }>;
+
+    /** Total pending updates across all documents. */
+    totalPendingUpdates: number;
+  };
+
   /** Engine configuration summary */
   config: {
     tableCount: number;
@@ -181,9 +256,10 @@ export async function getDiagnostics(): Promise<DiagnosticsSnapshot> {
   const syncState = get(syncStatusStore);
 
   // Run async operations in parallel
-  const [queueData, conflictData] = await Promise.all([
+  const [queueData, conflictData, crdtData] = await Promise.all([
     getQueueDiagnostics(),
-    getConflictDiagnostics()
+    getConflictDiagnostics(),
+    getCRDTDiagnostics()
   ]);
 
   // Build egress section with formatted values
@@ -253,6 +329,8 @@ export async function getDiagnostics(): Promise<DiagnosticsSnapshot> {
 
     conflicts: conflictData,
 
+    crdt: crdtData,
+
     errors: getErrorDiagnostics(),
 
     config: {
@@ -262,6 +340,126 @@ export async function getDiagnostics(): Promise<DiagnosticsSnapshot> {
       syncIntervalMs: config.syncIntervalMs ?? 900000,
       tombstoneMaxAgeDays: config.tombstoneMaxAgeDays ?? 7
     }
+  };
+}
+
+// =============================================================================
+// CRDT Diagnostics
+// =============================================================================
+
+/**
+ * Get CRDT subsystem diagnostics (async — reads IndexedDB for offline and pending data).
+ *
+ * Returns a comprehensive snapshot of the CRDT subsystem including active documents,
+ * their state sizes, connection states, collaborator counts, offline storage usage,
+ * and pending crash-recovery updates.
+ *
+ * If CRDT is not enabled, returns a minimal object with `enabled: false`.
+ *
+ * @returns CRDT diagnostics section of the {@link DiagnosticsSnapshot}.
+ */
+export async function getCRDTDiagnostics(): Promise<DiagnosticsSnapshot['crdt']> {
+  if (!isCRDTEnabled()) {
+    return {
+      enabled: false,
+      config: null,
+      activeDocuments: [],
+      activeDocumentCount: 0,
+      offline: {
+        documentCount: 0,
+        maxDocuments: 0,
+        totalSizeBytes: 0,
+        totalSizeFormatted: '0 B',
+        documents: []
+      },
+      pendingUpdates: [],
+      totalPendingUpdates: 0
+    };
+  }
+
+  const config = getCRDTConfig();
+
+  /* Gather active document diagnostics. */
+  const activeDocuments: DiagnosticsSnapshot['crdt']['activeDocuments'] = [];
+  const entries = getActiveProviderEntries();
+
+  /* Collect documentIds for pending update queries. */
+  const activeDocumentIds: string[] = [];
+
+  for (const [documentId, provider] of entries) {
+    activeDocumentIds.push(documentId);
+
+    /* Get Y.Doc state size (encode to measure byte length). */
+    const state = encodeStateAsUpdate(provider.doc);
+    const stateSizeBytes = state.byteLength;
+
+    /* Get collaborators for this document. */
+    const collaborators = getCollaborators(documentId);
+
+    activeDocuments.push({
+      documentId: provider.documentId,
+      pageId: provider.pageId,
+      connectionState: provider.connectionState,
+      isDirty: provider.isDirty,
+      stateSizeBytes,
+      stateSizeFormatted: formatBytes(stateSizeBytes),
+      collaboratorCount: collaborators.length,
+      collaboratorNames: collaborators.map((c) => c.name)
+    });
+  }
+
+  /* Gather pending updates for each active document. */
+  const pendingUpdatesResults = await Promise.all(
+    activeDocumentIds.map(async (documentId) => {
+      const updates = await loadPendingUpdates(documentId);
+      return { documentId, updateCount: updates.length };
+    })
+  );
+  const pendingUpdates = pendingUpdatesResults.filter((p) => p.updateCount > 0);
+  const totalPendingUpdates = pendingUpdates.reduce((sum, p) => sum + p.updateCount, 0);
+
+  /* Gather offline document diagnostics. */
+  const offlineDocs = await getOfflineDocuments();
+  let offlineTotalSize = 0;
+
+  const offlineDocDetails = offlineDocs.map((doc) => {
+    offlineTotalSize += doc.stateSize;
+    return {
+      documentId: doc.documentId,
+      pageId: doc.pageId,
+      stateSizeBytes: doc.stateSize,
+      stateSizeFormatted: formatBytes(doc.stateSize),
+      localUpdatedAt: doc.localUpdatedAt,
+      lastPersistedAt: doc.lastPersistedAt,
+      syncedWithRemote: doc.lastPersistedAt !== null && doc.lastPersistedAt >= doc.localUpdatedAt
+    };
+  });
+
+  return {
+    enabled: true,
+    config: {
+      supabaseTable: config.supabaseTable,
+      persistIntervalMs: config.persistIntervalMs,
+      broadcastDebounceMs: config.broadcastDebounceMs,
+      localSaveDebounceMs: config.localSaveDebounceMs,
+      cursorDebounceMs: config.cursorDebounceMs,
+      maxOfflineDocuments: config.maxOfflineDocuments,
+      maxBroadcastPayloadBytes: config.maxBroadcastPayloadBytes,
+      syncPeerTimeoutMs: config.syncPeerTimeoutMs,
+      maxReconnectAttempts: config.maxReconnectAttempts,
+      reconnectBaseDelayMs: config.reconnectBaseDelayMs
+    },
+    activeDocuments,
+    activeDocumentCount: activeDocuments.length,
+    offline: {
+      documentCount: offlineDocs.length,
+      maxDocuments: config.maxOfflineDocuments,
+      totalSizeBytes: offlineTotalSize,
+      totalSizeFormatted: formatBytes(offlineTotalSize),
+      documents: offlineDocDetails
+    },
+    pendingUpdates,
+    totalPendingUpdates
   };
 }
 

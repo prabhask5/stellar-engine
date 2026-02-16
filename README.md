@@ -356,6 +356,29 @@ On first run (no snapshot), the plugin generates full `CREATE TABLE` SQL with RL
 
 If `SUPABASE_SERVICE_ROLE_KEY` is not set, types are still generated but migration push is skipped with a warning.
 
+### Deploying to Vercel (or any CI/CD)
+
+The schema migration runs automatically during every `vite build`. To enable it in CI/CD:
+
+1. **Set environment variables** in your Vercel project settings (Settings > Environment Variables):
+
+   | Variable | Type | Required |
+   |---|---|---|
+   | `PUBLIC_SUPABASE_URL` | Plain | Yes -- client auth + data access |
+   | `PUBLIC_SUPABASE_ANON_KEY` | Plain | Yes -- client auth + data access |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Secret | Yes -- auto-migration during build |
+
+2. **Commit `.stellar/schema-snapshot.json`** to git. This file tracks the last-known schema state. Without it, every build is treated as a first run (full initial SQL). The snapshot is updated locally when you run `dev` or `build` and should be committed alongside schema changes.
+
+3. **The `stellar_engine_migrate` RPC function must exist** in your Supabase database. It's created automatically on first dev run or first build with the service role key set. If you're migrating an existing database that was set up before this workflow, run the initial SQL from your first build output in the Supabase SQL Editor, or run `npm run dev` locally with all env vars set.
+
+**How it works on each deploy:**
+- The Vite plugin's `buildStart` hook loads your schema, diffs against the committed snapshot, and pushes only the changes (ALTER TABLE statements) to Supabase via RPC.
+- If the migration fails, the snapshot is **not updated**, so the next build retries the same migration.
+- IndexedDB migrations happen client-side at runtime (no build step needed).
+
+**Security:** `SUPABASE_SERVICE_ROLE_KEY` is only used server-side during the Vite build process. It is never bundled into client code or exposed to users. `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are served at runtime from your `/api/config` endpoint -- these are public keys by design, protected by Supabase Row Level Security.
+
 See [API Reference -- Vite Plugin](./API_REFERENCE.md#vite-plugin-stellarpwa) for full configuration options.
 
 ## Commands

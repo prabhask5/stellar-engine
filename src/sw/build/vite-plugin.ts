@@ -377,6 +377,16 @@ async function processLoadedSchema(
   /* 2. Load the previous schema snapshot for migration diffing. */
   const snapshot = loadSnapshot(projectRoot);
 
+  /*
+   * Track whether to save the snapshot. Only save when:
+   *   - Migration was pushed successfully, OR
+   *   - No migration was needed (schema unchanged, no tables, auto-migrate off)
+   *
+   * If a migration push FAILS, we intentionally skip saving so that the next
+   * build retries the same migration instead of silently losing it.
+   */
+  let shouldSaveSnapshot = true;
+
   if (snapshot && schemaOpts.autoMigrate) {
     /* Diff the old and new schemas. */
     const { generateMigrationSQL } = await import('../../schema.js');
@@ -394,7 +404,8 @@ async function processLoadedSchema(
 
       if (migrationSQL) {
         console.log(`[stellar-drive] Migration SQL:\n${migrationSQL}`);
-        await pushMigration(migrationSQL, schemaOpts, projectRoot);
+        const success = await pushMigration(migrationSQL, schemaOpts, projectRoot);
+        shouldSaveSnapshot = success;
       } else {
         console.log('[stellar-drive] Schema changed but no migration SQL needed');
       }
@@ -414,10 +425,12 @@ async function processLoadedSchema(
     if (hasAnyTables) {
       const fullSQL = generateSupabaseSQL(cleanedSchema as import('../../types').SchemaDefinition, {
         appName,
-        includeHelperFunctions: true
+        includeHelperFunctions: true,
+        idempotent: true
       });
       console.log(`[stellar-drive] Initial schema SQL:\n${fullSQL}`);
-      await pushMigration(fullSQL, schemaOpts, projectRoot);
+      const success = await pushMigration(fullSQL, schemaOpts, projectRoot);
+      shouldSaveSnapshot = success;
     } else {
       console.log('[stellar-drive] No tables in schema, skipping initial SQL generation');
     }
@@ -425,8 +438,17 @@ async function processLoadedSchema(
     console.log('[stellar-drive] Auto-migrate disabled, skipping schema sync');
   }
 
-  /* 3. Save the new snapshot (strip functions before serialization). */
-  saveSnapshot(projectRoot, schema);
+  /* 3. Save the new snapshot (strip functions before serialization).
+   *    Only save if migration succeeded or no migration was needed — this
+   *    ensures failed migrations are retried on the next build/save. */
+  if (shouldSaveSnapshot) {
+    saveSnapshot(projectRoot, schema);
+  } else {
+    console.warn(
+      '[stellar-drive] Snapshot NOT updated — migration failed. ' +
+        'The migration will be retried on the next build or save.'
+    );
+  }
 }
 
 /**
@@ -439,12 +461,13 @@ async function processLoadedSchema(
  * @param sql - The migration SQL to execute.
  * @param opts - The resolved schema options.
  * @param root - The project root directory.
+ * @returns `true` if the migration was pushed successfully, `false` otherwise.
  */
 async function pushMigration(
   sql: string,
   opts: Required<SchemaConfig>,
   root: string
-): Promise<void> {
+): Promise<boolean> {
   const supabaseUrl = process.env.PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -460,7 +483,7 @@ async function pushMigration(
         `\n  Set these in .env to enable automatic schema sync.\n` +
         `  Types were still generated at ${relTypes}`
     );
-    return;
+    return false;
   }
 
   try {
@@ -470,11 +493,14 @@ async function pushMigration(
 
     if (error) {
       console.error(`[stellar-drive] \u274c Migration failed: ${error.message}`);
+      return false;
     } else {
       console.log('[stellar-drive] \u2705 Schema migrated successfully');
+      return true;
     }
   } catch (err) {
     console.error('[stellar-drive] \u274c Migration RPC error:', err);
+    return false;
   }
 }
 

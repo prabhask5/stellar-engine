@@ -51,6 +51,18 @@ export interface SQLGenerationOptions {
   includeDeviceVerification?: boolean;
   /** Include helper functions (set_user_id, update_updated_at). @default true */
   includeHelperFunctions?: boolean;
+  /**
+   * Generate idempotent SQL that can safely run against an existing database.
+   * Uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`,
+   * `CREATE POLICY ... IF NOT EXISTS`, and `DROP TRIGGER IF EXISTS` before
+   * `CREATE TRIGGER`.
+   *
+   * Used by the Vite plugin on first run (no schema snapshot) to handle
+   * databases that already have tables from a previous setup.
+   *
+   * @default false
+   */
+  idempotent?: boolean;
 }
 
 /**
@@ -583,7 +595,9 @@ function generateTableSQL(
     }
   }
 
-  lines.push(`create table ${tableName} (`);
+  const ine = options?.idempotent ? ' if not exists' : '';
+
+  lines.push(`create table${ine} ${tableName} (`);
   lines.push(columnDefs.join(',\n'));
   lines.push(');');
   lines.push('');
@@ -596,20 +610,20 @@ function generateTableSQL(
     const { parent, fk } = config.ownership as { parent: string; fk: string };
     const check = `exists (select 1 from ${parent} where id = ${tableName}.${fk} and user_id = auth.uid())`;
     lines.push(
-      `create policy "Owner can view ${tableName}" on ${tableName} for select using (${check});`
+      `do $$ begin create policy "Owner can view ${tableName}" on ${tableName} for select using (${check}); exception when duplicate_object then null; end $$;`
     );
     lines.push(
-      `create policy "Owner can create ${tableName}" on ${tableName} for insert with check (${check});`
+      `do $$ begin create policy "Owner can create ${tableName}" on ${tableName} for insert with check (${check}); exception when duplicate_object then null; end $$;`
     );
     lines.push(
-      `create policy "Owner can update ${tableName}" on ${tableName} for update using (${check});`
+      `do $$ begin create policy "Owner can update ${tableName}" on ${tableName} for update using (${check}); exception when duplicate_object then null; end $$;`
     );
     lines.push(
-      `create policy "Owner can delete ${tableName}" on ${tableName} for delete using (${check});`
+      `do $$ begin create policy "Owner can delete ${tableName}" on ${tableName} for delete using (${check}); exception when duplicate_object then null; end $$;`
     );
   } else {
     lines.push(
-      `create policy "Users can manage own ${tableName}" on ${tableName} for all using (auth.uid() = user_id);`
+      `do $$ begin create policy "Users can manage own ${tableName}" on ${tableName} for all using (auth.uid() = user_id); exception when duplicate_object then null; end $$;`
     );
   }
   lines.push('');
@@ -617,10 +631,12 @@ function generateTableSQL(
   /* ---- TRIGGERS ---- */
 
   if (!isChildTable) {
+    lines.push(`drop trigger if exists set_user_id_${tableName} on ${tableName};`);
     lines.push(
       `create trigger set_user_id_${tableName} before insert on ${tableName} for each row execute function set_user_id();`
     );
   }
+  lines.push(`drop trigger if exists update_${tableName}_updated_at on ${tableName};`);
   lines.push(
     `create trigger update_${tableName}_updated_at before update on ${tableName} for each row execute function update_updated_at_column();`
   );
@@ -629,17 +645,23 @@ function generateTableSQL(
   /* ---- INDEXES ---- */
 
   if (!isChildTable) {
-    lines.push(`create index idx_${tableName}_user_id on ${tableName}(user_id);`);
+    lines.push(`create index${ine} idx_${tableName}_user_id on ${tableName}(user_id);`);
   }
-  lines.push(`create index idx_${tableName}_updated_at on ${tableName}(updated_at);`);
+  lines.push(`create index${ine} idx_${tableName}_updated_at on ${tableName}(updated_at);`);
   lines.push(
-    `create index idx_${tableName}_deleted on ${tableName}(deleted) where deleted = false;`
+    `create index${ine} idx_${tableName}_deleted on ${tableName}(deleted) where deleted = false;`
   );
   lines.push('');
 
   /* ---- REALTIME ---- */
 
-  lines.push(`alter publication supabase_realtime add table ${tableName};`);
+  if (options?.idempotent) {
+    lines.push(
+      `do $$ begin alter publication supabase_realtime add table ${tableName}; exception when duplicate_object then null; end $$;`
+    );
+  } else {
+    lines.push(`alter publication supabase_realtime add table ${tableName};`);
+  }
 
   return lines.join('\n');
 }
@@ -688,6 +710,7 @@ export function generateSupabaseSQL(
   const includeHelpers = options?.includeHelperFunctions !== false;
   const includeDeviceVerification = options?.includeDeviceVerification !== false;
   const includeCRDT = options?.includeCRDT === true;
+  const idempotent = options?.idempotent === true;
 
   /* ---- Header ---- */
 
@@ -765,11 +788,13 @@ export function generateSupabaseSQL(
   /* ---- Trusted Devices ---- */
 
   if (includeDeviceVerification) {
+    const ine = idempotent ? ' if not exists' : '';
+
     parts.push('-- ============================================================');
     parts.push('-- TRUSTED DEVICES (required for device verification)');
     parts.push('-- ============================================================');
     parts.push('');
-    parts.push('create table trusted_devices (');
+    parts.push(`create table${ine} trusted_devices (`);
     parts.push('  id uuid default gen_random_uuid() primary key,');
     parts.push('  user_id uuid references auth.users(id) on delete cascade not null,');
     parts.push('  device_id text not null,');
@@ -781,25 +806,35 @@ export function generateSupabaseSQL(
     parts.push('');
     parts.push('alter table trusted_devices enable row level security;');
     parts.push(
-      'create policy "Users can manage own devices" on trusted_devices for all using (auth.uid() = user_id);'
+      'do $$ begin create policy "Users can manage own devices" on trusted_devices for all using (auth.uid() = user_id); exception when duplicate_object then null; end $$;'
     );
     parts.push('');
+    parts.push('drop trigger if exists set_user_id_trusted_devices on trusted_devices;');
     parts.push(
       'create trigger set_user_id_trusted_devices before insert on trusted_devices for each row execute function set_user_id();'
     );
+    parts.push('drop trigger if exists update_trusted_devices_updated_at on trusted_devices;');
     parts.push(
       'create trigger update_trusted_devices_updated_at before update on trusted_devices for each row execute function update_updated_at_column();'
     );
     parts.push('');
-    parts.push('create index idx_trusted_devices_user_id on trusted_devices(user_id);');
+    parts.push(`create index${ine} idx_trusted_devices_user_id on trusted_devices(user_id);`);
     parts.push('');
-    parts.push('alter publication supabase_realtime add table trusted_devices;');
+    if (idempotent) {
+      parts.push(
+        'do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;'
+      );
+    } else {
+      parts.push('alter publication supabase_realtime add table trusted_devices;');
+    }
     parts.push('');
   }
 
   /* ---- CRDT Documents ---- */
 
   if (includeCRDT) {
+    const ine = idempotent ? ' if not exists' : '';
+
     parts.push('-- ============================================================');
     parts.push('-- CRDT DOCUMENT STORAGE (optional — only needed for collaborative editing)');
     parts.push('-- ============================================================');
@@ -831,7 +866,7 @@ export function generateSupabaseSQL(
       '--   device_id    — Identifies which device last persisted, used for echo suppression'
     );
     parts.push('');
-    parts.push('create table crdt_documents (');
+    parts.push(`create table${ine} crdt_documents (`);
     parts.push('  id uuid primary key default gen_random_uuid(),');
     parts.push('  page_id uuid not null,');
     parts.push('  state text not null,');
@@ -845,24 +880,28 @@ export function generateSupabaseSQL(
     parts.push('');
     parts.push('alter table crdt_documents enable row level security;');
     parts.push('');
-    parts.push('create policy "Users can manage own CRDT documents"');
+    parts.push('do $$ begin create policy "Users can manage own CRDT documents"');
     parts.push('  on crdt_documents for all');
-    parts.push('  using (auth.uid() = user_id);');
+    parts.push(
+      '  using (auth.uid() = user_id); exception when duplicate_object then null; end $$;'
+    );
     parts.push('');
+    parts.push('drop trigger if exists set_crdt_documents_user_id on crdt_documents;');
     parts.push('create trigger set_crdt_documents_user_id');
     parts.push('  before insert on crdt_documents');
     parts.push('  for each row execute function set_user_id();');
     parts.push('');
+    parts.push('drop trigger if exists update_crdt_documents_updated_at on crdt_documents;');
     parts.push('create trigger update_crdt_documents_updated_at');
     parts.push('  before update on crdt_documents');
     parts.push('  for each row execute function update_updated_at_column();');
     parts.push('');
-    parts.push('create index idx_crdt_documents_page_id on crdt_documents(page_id);');
-    parts.push('create index idx_crdt_documents_user_id on crdt_documents(user_id);');
+    parts.push(`create index${ine} idx_crdt_documents_page_id on crdt_documents(page_id);`);
+    parts.push(`create index${ine} idx_crdt_documents_user_id on crdt_documents(user_id);`);
     parts.push('');
     parts.push('-- Unique constraint per page per user (upsert target for persistence)');
     parts.push(
-      'create unique index idx_crdt_documents_page_user on crdt_documents(page_id, user_id);'
+      `create unique index${ine} idx_crdt_documents_page_user on crdt_documents(page_id, user_id);`
     );
     parts.push('');
   }

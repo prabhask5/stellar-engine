@@ -149,27 +149,14 @@ async function resolveSingleUserAuthState() {
             return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
         }
         if (!config.email) {
-            /* Legacy config from anonymous auth era -- no email means user needs to
-               go through the new setup flow (email + PIN). Old anonymous data will not
-               be accessible under ownership-based RLS anyway.
-               Nuke all legacy auth artifacts so the user gets a clean slate. */
-            debugLog('[Auth] Legacy config without email detected, clearing old auth state');
-            try {
-                await db.table('singleUserConfig').delete('config');
-                await db.table('offlineCredentials').delete('current_user');
-                await db.table('offlineSession').delete('current_session');
-            }
-            catch (e) {
-                debugWarn('[Auth] Failed to clear legacy auth state:', e);
-            }
+            /* Config without email is invalid — user needs to go through setup. */
             return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
         }
         /* codeLength migration: if the engine config specifies a different PIN length
            than what is stored locally, the user must re-setup. This handles the case
-           where the app developer changes the codeLength in their engine config.
-           Existing configs from before codeLength was stored default to 4. */
+           where the app developer changes the codeLength in their engine config. */
         const expectedCodeLength = getEngineConfig().auth?.singleUser?.codeLength;
-        const storedCodeLength = config.codeLength ?? 4;
+        const storedCodeLength = config.codeLength;
         if (expectedCodeLength && storedCodeLength !== expectedCodeLength) {
             debugLog('[Auth] codeLength mismatch detected:', storedCodeLength, '→', expectedCodeLength);
             try {

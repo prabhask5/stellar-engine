@@ -2,14 +2,9 @@
  * @fileoverview IndexedDB Database Management via Dexie
  *
  * Manages the lifecycle of the Dexie (IndexedDB) database instance used
- * by the sync engine. The engine can operate in two modes:
- *
- *   1. **Managed mode** — The engine creates and owns the Dexie instance
- *      via {@link createDatabase}. System tables (syncQueue, conflictHistory,
- *      etc.) are automatically merged into every schema version declaration.
- *
- *   2. **Provided mode** — The consumer passes a pre-created Dexie instance
- *      via {@link _setManagedDb} (backward compatibility).
+ * by the sync engine. The engine creates and owns the Dexie instance
+ * via {@link createDatabase}. System tables (syncQueue, conflictHistory,
+ * etc.) are automatically merged into every schema version declaration.
  *
  * Recovery strategy:
  *   If the database fails to open (e.g., blocked by another tab, corrupted
@@ -85,16 +80,6 @@ export declare function createDatabase(config: DatabaseConfig, crdtEnabled?: boo
  * @returns The active Dexie instance.
  */
 export declare function getDb(): Dexie;
-/**
- * Register a consumer-provided Dexie instance as the managed database.
- *
- * Used in backward-compatibility mode when the consumer creates their own
- * Dexie instance and passes it via `initEngine({ db: myDexie })`.
- *
- * @param db - The consumer-created Dexie instance.
- * @internal
- */
-export declare function _setManagedDb(db: Dexie): void;
 /**
  * Result of schema version computation.
  *

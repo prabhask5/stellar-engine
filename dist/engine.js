@@ -750,14 +750,15 @@ async function getCurrentUserId() {
  * issues when multiple accounts use the same browser (each user has their own
  * cursor so switching accounts doesn't skip or re-pull data).
  *
- * @param userId - The user ID for cursor isolation (null = legacy global cursor)
+ * @param userId - The user ID for cursor isolation
  * @returns ISO timestamp cursor, or epoch if no cursor is stored
  */
 function getLastSyncCursor(userId) {
     if (typeof localStorage === 'undefined')
         return '1970-01-01T00:00:00.000Z';
-    const key = userId ? `lastSyncCursor_${userId}` : 'lastSyncCursor';
-    return localStorage.getItem(key) || '1970-01-01T00:00:00.000Z';
+    if (!userId)
+        return '1970-01-01T00:00:00.000Z';
+    return localStorage.getItem(`lastSyncCursor_${userId}`) || '1970-01-01T00:00:00.000Z';
 }
 /**
  * Persist the sync cursor to localStorage (per-user).
@@ -766,9 +767,8 @@ function getLastSyncCursor(userId) {
  * @param userId - The user ID for cursor isolation
  */
 function setLastSyncCursor(cursor, userId) {
-    if (typeof localStorage !== 'undefined') {
-        const key = userId ? `lastSyncCursor_${userId}` : 'lastSyncCursor';
-        localStorage.setItem(key, cursor);
+    if (typeof localStorage !== 'undefined' && userId) {
+        localStorage.setItem(`lastSyncCursor_${userId}`, cursor);
     }
 }
 /**
@@ -776,9 +776,8 @@ function setLastSyncCursor(cursor, userId) {
  */
 async function resetSyncCursor() {
     const userId = await getCurrentUserId();
-    if (typeof localStorage !== 'undefined') {
-        const key = userId ? `lastSyncCursor_${userId}` : 'lastSyncCursor';
-        localStorage.removeItem(key);
+    if (typeof localStorage !== 'undefined' && userId) {
+        localStorage.removeItem(`lastSyncCursor_${userId}`);
         debugLog('[SYNC] Sync cursor reset - next sync will pull all data');
     }
 }
@@ -2631,8 +2630,6 @@ export async function clearLocalCache() {
         if (userId) {
             localStorage.removeItem(`lastSyncCursor_${userId}`);
         }
-        // Also remove legacy cursor for cleanup
-        localStorage.removeItem('lastSyncCursor');
     }
     _hasHydrated = false;
 }

@@ -2,20 +2,19 @@
  * @fileoverview Engine Configuration and Initialization
  *
  * Central configuration hub for the sync engine. {@link initEngine} is the
- * first function consumers call — it accepts a {@link SyncEngineConfig} object
- * that describes:
+ * first function consumers call — it accepts a configuration object that
+ * describes:
  *   - Which Supabase tables to sync and their IndexedDB schemas
  *   - Authentication configuration (single-user gate, offline auth, etc.)
  *   - Sync timing parameters (debounce, polling interval, tombstone TTL)
  *   - Optional callbacks for auth state changes
  *
  * The config is stored as a module-level singleton and accessed by every other
- * module via {@link getEngineConfig}. The database creation flow supports two
- * modes:
- *   1. **Managed** — Engine creates and owns the Dexie instance from a
- *      {@link DatabaseConfig} (recommended).
- *   2. **Provided** — Consumer passes a pre-created `Dexie` instance for
- *      backward compatibility.
+ * module via {@link getEngineConfig}. Supports two configuration modes:
+ *   1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
+ *      auto-generates tables, Dexie stores, versioning, and database naming.
+ *   2. **Manual** — Provide explicit `tables` and `database` for full control
+ *      over IndexedDB versioning and migration history.
  *
  * @see {@link database.ts} for Dexie instance creation
  * @see {@link engine.ts} for the sync lifecycle that consumes this config
@@ -34,25 +33,20 @@ import { type DatabaseConfig } from './database';
  *
  * 1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
  *    auto-generates `tables`, Dexie stores, versioning, and database naming.
- * 2. **Manual** (backward compat) — Provide explicit `tables` and `database`.
+ * 2. **Manual** — Provide explicit `tables` and `database` for full control
+ *    over IndexedDB versioning and migration history.
  *
  * The two modes are mutually exclusive (`schema` vs `tables` + `database`).
  *
  * @example
- * // Schema-driven (new, recommended):
+ * // Schema-driven (recommended):
  * initEngine({
  *   prefix: 'myapp',
  *   schema: {
  *     goals: 'goal_list_id, order',
  *     focus_settings: { singleton: true },
  *   },
- * });
- *
- * // Manual (backward compat):
- * initEngine({
- *   prefix: 'myapp',
- *   tables: [...],
- *   database: { name: 'myapp-db', versions: [...] },
+ *   auth: { gateType: 'code', codeLength: 6 },
  * });
  */
 export interface SyncEngineConfig {
@@ -77,11 +71,11 @@ export interface SyncEngineConfig {
      * Use this to keep an existing database name for data continuity.
      */
     databaseName?: string;
-    /** Provide a pre-created Dexie instance (backward compat). Mutually exclusive with `database`. */
+    /** Dexie instance — set internally by `createDatabase()`. Do not set manually. */
     db?: Dexie;
-    /** Provide a pre-created Supabase client (backward compat). Engine creates one internally if not provided. */
+    /** Supabase client — pass to use a custom client instead of the engine's internal proxy. */
     supabase?: SupabaseClient;
-    /** Engine creates and owns the Dexie instance when this is provided. */
+    /** Database creation config — auto-generated when using `schema`, or provided manually. */
     database?: DatabaseConfig;
     /** Authentication configuration (nested/internal form). */
     auth?: {
@@ -183,17 +177,15 @@ export interface TableConfig {
  *
  * Must be called once at app startup, before any other engine function.
  * Propagates the `prefix` to all internal modules (debug, deviceId,
- * Supabase client, runtime config) and creates or registers the Dexie
- * database instance.
+ * Supabase client, runtime config) and creates the Dexie database instance.
  *
- * @param config - The full engine configuration object.
+ * @param config - The engine configuration object.
  *
  * @example
- * // In your app's root layout or entry point:
  * initEngine({
  *   prefix: 'myapp',
- *   tables: [...],
- *   database: { name: 'myapp-db', versions: [...] },
+ *   schema: { goals: 'goal_list_id, order' },
+ *   auth: { gateType: 'code', codeLength: 6 },
  * });
  */
 /**
@@ -202,9 +194,6 @@ export interface TableConfig {
  * Differs from {@link SyncEngineConfig} in two ways:
  * - `tables` is optional (auto-generated when `schema` is provided)
  * - `auth` accepts either the flat {@link AuthConfig} or the nested internal form
- *
- * The flat auth form is detected by the absence of a `singleUser` key and is
- * normalized to the nested structure before being stored on the config singleton.
  */
 export type InitEngineInput = Omit<SyncEngineConfig, 'tables' | 'auth'> & {
     tables?: TableConfig[];

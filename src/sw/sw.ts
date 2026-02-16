@@ -151,8 +151,6 @@ self.addEventListener('install', (event: ExtendableEvent) => {
  *
  * **Deletes:**
  *   - Old versioned shell caches (e.g., `__SW_PREFIX__-shell-<old-version>`)
- *   - The legacy `__SW_PREFIX__-cache-v1` cache (one-time migration from the
- *     original single-cache strategy)
  *
  * **Keeps:**
  *   - `ASSET_CACHE` — immutable assets persist across versions
@@ -171,8 +169,6 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
           .filter((name) => {
             /* Delete old versioned shell caches (not the current one) */
             if (name.startsWith('__SW_PREFIX__-shell-') && name !== SHELL_CACHE) return true;
-            /* Delete legacy shared cache (one-time migration) */
-            if (name === '__SW_PREFIX__-cache-v1') return true;
             return false;
           })
           .map((name) => {

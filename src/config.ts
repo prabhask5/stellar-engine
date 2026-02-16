@@ -2,20 +2,19 @@
  * @fileoverview Engine Configuration and Initialization
  *
  * Central configuration hub for the sync engine. {@link initEngine} is the
- * first function consumers call — it accepts a {@link SyncEngineConfig} object
- * that describes:
+ * first function consumers call — it accepts a configuration object that
+ * describes:
  *   - Which Supabase tables to sync and their IndexedDB schemas
  *   - Authentication configuration (single-user gate, offline auth, etc.)
  *   - Sync timing parameters (debounce, polling interval, tombstone TTL)
  *   - Optional callbacks for auth state changes
  *
  * The config is stored as a module-level singleton and accessed by every other
- * module via {@link getEngineConfig}. The database creation flow supports two
- * modes:
- *   1. **Managed** — Engine creates and owns the Dexie instance from a
- *      {@link DatabaseConfig} (recommended).
- *   2. **Provided** — Consumer passes a pre-created `Dexie` instance for
- *      backward compatibility.
+ * module via {@link getEngineConfig}. Supports two configuration modes:
+ *   1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
+ *      auto-generates tables, Dexie stores, versioning, and database naming.
+ *   2. **Manual** — Provide explicit `tables` and `database` for full control
+ *      over IndexedDB versioning and migration history.
  *
  * @see {@link database.ts} for Dexie instance creation
  * @see {@link engine.ts} for the sync lifecycle that consumes this config
@@ -34,7 +33,6 @@ import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
 import {
   createDatabase,
-  _setManagedDb,
   SYSTEM_INDEXES,
   computeSchemaVersion,
   type DatabaseConfig
@@ -53,25 +51,20 @@ import { snakeToCamel } from './utils';
  *
  * 1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
  *    auto-generates `tables`, Dexie stores, versioning, and database naming.
- * 2. **Manual** (backward compat) — Provide explicit `tables` and `database`.
+ * 2. **Manual** — Provide explicit `tables` and `database` for full control
+ *    over IndexedDB versioning and migration history.
  *
  * The two modes are mutually exclusive (`schema` vs `tables` + `database`).
  *
  * @example
- * // Schema-driven (new, recommended):
+ * // Schema-driven (recommended):
  * initEngine({
  *   prefix: 'myapp',
  *   schema: {
  *     goals: 'goal_list_id, order',
  *     focus_settings: { singleton: true },
  *   },
- * });
- *
- * // Manual (backward compat):
- * initEngine({
- *   prefix: 'myapp',
- *   tables: [...],
- *   database: { name: 'myapp-db', versions: [...] },
+ *   auth: { gateType: 'code', codeLength: 6 },
  * });
  */
 export interface SyncEngineConfig {
@@ -99,11 +92,11 @@ export interface SyncEngineConfig {
    */
   databaseName?: string;
 
-  /** Provide a pre-created Dexie instance (backward compat). Mutually exclusive with `database`. */
+  /** Dexie instance — set internally by `createDatabase()`. Do not set manually. */
   db?: Dexie;
-  /** Provide a pre-created Supabase client (backward compat). Engine creates one internally if not provided. */
+  /** Supabase client — pass to use a custom client instead of the engine's internal proxy. */
   supabase?: SupabaseClient;
-  /** Engine creates and owns the Dexie instance when this is provided. */
+  /** Database creation config — auto-generated when using `schema`, or provided manually. */
   database?: DatabaseConfig;
 
   /** Authentication configuration (nested/internal form). */
@@ -226,17 +219,15 @@ let _dbReady: Promise<void> | null = null;
  *
  * Must be called once at app startup, before any other engine function.
  * Propagates the `prefix` to all internal modules (debug, deviceId,
- * Supabase client, runtime config) and creates or registers the Dexie
- * database instance.
+ * Supabase client, runtime config) and creates the Dexie database instance.
  *
- * @param config - The full engine configuration object.
+ * @param config - The engine configuration object.
  *
  * @example
- * // In your app's root layout or entry point:
  * initEngine({
  *   prefix: 'myapp',
- *   tables: [...],
- *   database: { name: 'myapp-db', versions: [...] },
+ *   schema: { goals: 'goal_list_id, order' },
+ *   auth: { gateType: 'code', codeLength: 6 },
  * });
  */
 /**
@@ -245,9 +236,6 @@ let _dbReady: Promise<void> | null = null;
  * Differs from {@link SyncEngineConfig} in two ways:
  * - `tables` is optional (auto-generated when `schema` is provided)
  * - `auth` accepts either the flat {@link AuthConfig} or the nested internal form
- *
- * The flat auth form is detected by the absence of a `singleUser` key and is
- * normalized to the nested structure before being stored on the config singleton.
  */
 export type InitEngineInput = Omit<SyncEngineConfig, 'tables' | 'auth'> & {
   tables?: TableConfig[];
@@ -287,7 +275,7 @@ export function initEngine(config: InitEngineInput): void {
 
   /* Validate that tables are configured (either manually or via schema). */
   if (!config.tables || config.tables.length === 0) {
-    throw new Error('initEngine: No tables configured. Provide either `schema` or `tables`.');
+    throw new Error('initEngine: No tables configured. Provide `schema` or `tables` + `database`.');
   }
 
   /* At this point tables is guaranteed to be populated — safe to cast. */
@@ -317,17 +305,12 @@ export function initEngine(config: InitEngineInput): void {
     config.database = { ...config.database, name: config.database.name + '_demo' };
   }
 
-  /* Handle database creation — either managed or provided.
+  /* Create the Dexie database and store the instance on config for engine.ts access.
    * Pass crdtEnabled flag so CRDT IndexedDB tables are conditionally included. */
   if (config.database) {
     _dbReady = createDatabase(config.database, !!config.crdt).then((db) => {
-      /* Store on config for backward compat (engine.ts reads config.db). */
       (config as { db: Dexie }).db = db;
     });
-  } else if (config.db) {
-    /* Backward compat: use the consumer-provided Dexie instance. */
-    _setManagedDb(config.db);
-    _dbReady = Promise.resolve();
   }
 }
 
@@ -623,8 +606,8 @@ function buildRenameUpgradeCallback(
 /**
  * Normalize an auth config to the internal nested structure.
  *
- * Detects whether the config is in the new flat form ({@link AuthConfig}) or
- * the legacy nested form (has a `singleUser` key). Flat form is converted to
+ * Detects whether the config is in the flat form ({@link AuthConfig}) or
+ * the nested form (has a `singleUser` key). Flat form is converted to
  * nested; nested form is passed through unchanged.
  *
  * @param auth - The auth config (flat or nested).
@@ -634,7 +617,7 @@ function buildRenameUpgradeCallback(
 function normalizeAuthConfig(auth: InitEngineInput['auth']): SyncEngineConfig['auth'] {
   if (!auth) return auth;
 
-  /* Detect legacy nested form by the presence of `singleUser` key. */
+  /* Detect nested form by the presence of `singleUser` key. */
   if ('singleUser' in auth) {
     return auth;
   }

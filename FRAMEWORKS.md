@@ -128,6 +128,13 @@ openRequest.onerror = () => {
 
 That is over 30 lines of nested callbacks just to add one record. Querying, updating, and managing schema versions are even more verbose. This is why virtually every application that uses IndexedDB does so through a wrapper library like Dexie.js.
 
+### How stellar-engine Uses IndexedDB
+
+- **All reads come from IndexedDB.** The UI never queries the remote server directly. Every piece of data displayed in the app is read from the local IndexedDB database, which makes reads instant regardless of network conditions.
+- **All writes go to IndexedDB first.** When the user creates or edits a record, it is written to IndexedDB immediately (no network wait). A corresponding sync queue entry is enqueued in the same transaction, guaranteeing that a background push will eventually ship the change to the server.
+- **Five internal system tables** live in IndexedDB alongside app data: `syncQueue` (pending outbound operations), `conflictHistory` (field-level conflict resolution records), `offlineCredentials` (cached user credentials for offline sign-in), `offlineSession` (offline session tokens), and `singleUserConfig` (single-user gate configuration).
+- **Recovery via delete-and-rebuild.** If the IndexedDB database is corrupted or has mismatched object stores (e.g., from a stale service worker), the engine deletes the entire database and recreates it from scratch. Data is rehydrated from Supabase on the next sync cycle.
+
 ---
 
 ## 2. Dexie.js (IndexedDB Wrapper)
@@ -290,11 +297,24 @@ Dexie handles the migration automatically when the database is opened. Each vers
 
 ### How stellar-engine Uses Dexie
 
-- **Auto-creates and manages the Dexie instance** via `initEngine()`. Consumer apps do not need to create their own Dexie database; the engine creates it based on the provided configuration.
-- **System tables auto-merged** into every schema version. The engine requires five internal tables (`syncQueue`, `offlineCredentials`, `offlineSession`, `singleUserConfig`, `conflictHistory`) and automatically adds them to the consumer's schema definition.
+- **Auto-creates and manages the Dexie instance** via `initEngine()`. Consumer apps do not need to create their own Dexie database; the engine creates it based on the provided schema configuration:
+
+```typescript
+initEngine({
+  prefix: 'myapp',
+  schema: {
+    tasks: 'project_id, order',
+    settings: { singleton: true },
+  },
+  auth: { gateType: 'code', codeLength: 6 },
+});
+```
+
+- **System tables auto-merged** into every schema version. The engine requires five internal tables (`syncQueue`, `offlineCredentials`, `offlineSession`, `singleUserConfig`, `conflictHistory`) and automatically adds them to the consumer's schema definition. Consumers never declare these.
+- **System indexes auto-appended** to every user table: `id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`. These are required for sync, conflict resolution, and soft-delete filtering. A schema entry like `tasks: 'project_id, order'` becomes the Dexie index string `'id, user_id, created_at, updated_at, deleted, _version, project_id, order'`.
+- **Automatic version management.** The engine hashes the merged store schema, compares it to a localStorage-persisted hash, and bumps the Dexie version number only when the schema actually changes. When upgrading, it declares both the previous and current version so Dexie has a proper upgrade path.
 - **All CRUD operations go through Dexie transactions.** Every local write is paired with a sync queue entry inside a single transaction, guaranteeing that if the data is written locally, a sync operation is always queued for it.
-- **Schema-driven mode** auto-generates Dexie store definitions from `SchemaDefinition` objects. Instead of writing Dexie schema strings by hand, consumers declare their schema as structured TypeScript objects, and the engine generates the Dexie index strings.
-- **System indexes auto-appended** to every user table: `id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`. These are required for sync, conflict resolution, and soft-delete filtering.
+- **Snake-to-camel table name conversion.** Supabase table names are snake_case (`goal_lists`), but Dexie table names are auto-converted to camelCase (`goalLists`) for JavaScript-idiomatic access.
 
 ---
 
@@ -343,14 +363,17 @@ Supabase provides a complete authentication system out of the box:
 
 When a user signs up, Supabase creates a record in its internal `auth.users` table and returns a session token. This token is sent with every subsequent request to identify the user.
 
+**How JWTs work:** A JWT (JSON Web Token) is a signed string that contains the user's identity (their UUID, email, etc.). The server generates and signs it with a secret key. On every API request, the client sends this token in the `Authorization` header. The server verifies the signature to confirm the token has not been tampered with, then extracts the user's ID without needing a database lookup. JWTs expire after a configurable duration (typically 1 hour), and Supabase automatically refreshes them using a separate refresh token.
+
 #### Realtime
 
 Supabase Realtime uses WebSockets to push database changes to connected clients instantly. A WebSocket is a persistent, two-way connection between the browser and server (unlike HTTP, which is request-response). When a record is inserted, updated, or deleted in the database, Supabase broadcasts the change to all subscribed clients within milliseconds.
 
-This enables features like:
-- Live dashboards that update without page refresh
-- Collaborative editing where you see other users' changes instantly
-- Multi-device sync where changes on your phone appear on your laptop immediately
+Supabase Realtime has three modes:
+
+- **Postgres Changes** -- subscribe to INSERT, UPDATE, DELETE events on specific tables. The server watches PostgreSQL's write-ahead log and pushes changes to subscribed clients.
+- **Broadcast** -- a pub/sub channel not tied to database tables. Any client can publish a message, and all other clients on the same channel receive it. Useful for ephemeral data like cursor positions or CRDT document updates.
+- **Presence** -- tracks which users are currently connected to a channel. Each client can share arbitrary state (like their cursor position), and all clients receive join/leave events. Useful for "who's online" features.
 
 #### Row Level Security (RLS)
 
@@ -373,10 +396,6 @@ CREATE POLICY "Users insert own tasks" ON tasks
 #### REST API (PostgREST)
 
 Supabase automatically generates a complete REST API for every table in your database. You do not need to write any server-side code. If you have a `tasks` table, you immediately get endpoints for creating, reading, updating, and deleting tasks. The API respects RLS policies, so it is secure by default.
-
-#### Storage
-
-Supabase Storage provides file upload and management. You can upload images, documents, or any other files, organize them into buckets, and control access with policies similar to RLS.
 
 ### JavaScript Client Library
 
@@ -464,12 +483,13 @@ supabase
 
 ### How stellar-engine Uses Supabase
 
-- **REST API for push/pull sync operations.** The engine pushes local changes to the server via Supabase's REST API (insert, update, upsert) and pulls remote changes by querying for records updated since the last sync cursor.
-- **Realtime for instant cross-device updates.** The engine subscribes to PostgreSQL changes via Supabase Realtime, so when Device A pushes a change, Device B receives it within milliseconds via WebSocket instead of waiting for the next poll.
-- **Auth for email/password authentication** (including single-user PIN mode). The engine uses Supabase Auth for user registration, login, session management, and token refresh. In single-user mode, the PIN or password is padded and used as a real Supabase password, giving the user a real `auth.uid()` for RLS compliance.
-- **RLS policies enforce per-user data access.** Every table uses `user_id = auth.uid()` policies so users can only access their own data, enforced at the database level.
-- **Broadcast for CRDT document sync.** Supabase Realtime Broadcast (a pub/sub channel not tied to database tables) is used to send Yjs document updates between collaborating clients in real time.
-- **Presence for collaborative cursor tracking.** Supabase Realtime Presence tracks which users are currently viewing or editing a document, enabling features like showing collaborator cursors.
+- **REST API for push/pull sync operations.** The engine pushes local changes to the server via Supabase's REST API (insert, update, upsert) and pulls remote changes by querying for records updated since the last sync cursor (an `updated_at` timestamp stored in localStorage).
+- **Realtime Postgres Changes for instant cross-device updates.** The engine subscribes to PostgreSQL changes on every configured table via Supabase Realtime. When Device A pushes a change, Device B receives it within milliseconds via WebSocket instead of waiting for the next background poll.
+- **Realtime Broadcast for CRDT document sync.** Yjs document updates (typically a few bytes per keystroke) are broadcast to other connected clients via Supabase's Broadcast pub/sub channel. This avoids writing every keystroke to the database.
+- **Realtime Presence for collaborative cursor tracking.** Supabase Presence tracks which users are currently viewing or editing a document, enabling features like showing collaborator cursors.
+- **Auth for single-user PIN mode.** The engine uses Supabase Auth for user registration, login, session management, and token refresh. In single-user mode, the PIN or password is padded to meet Supabase's minimum password length and used as a real Supabase password, giving the user a real `auth.uid()` for RLS compliance.
+- **RLS policies enforce per-user data access.** Every table uses `user_id = auth.uid()` policies so users can only access their own data, enforced at the database level. The engine auto-generates these policies via `generateSupabaseSQL()`.
+- **SQL generation from schema.** The engine can generate complete Supabase SQL (CREATE TABLE, RLS policies, triggers, indexes, realtime publication) from the same declarative schema passed to `initEngine()`, so the schema in code is the single source of truth for both IndexedDB and PostgreSQL.
 
 ---
 
@@ -538,6 +558,8 @@ When `count` changes (via the button click), Svelte automatically updates just t
 </script>
 ```
 
+The Svelte compiler automatically detects which reactive values are read inside the `$effect` callback and re-runs it when any of them change. Unlike React's `useEffect`, there is no dependency array to maintain -- Svelte figures out the dependencies at compile time.
+
 **`$props()`** declares the properties (inputs) a component accepts from its parent:
 
 ```svelte
@@ -552,11 +574,24 @@ When `count` changes (via the button click), Svelte automatically updates just t
 **`$bindable()`** creates props that support two-way binding (parent and child can both update the value):
 
 ```svelte
+<!-- TextInput.svelte -->
 <script>
   let { value = $bindable('') } = $props();
 </script>
 
 <input bind:value={value} />
+```
+
+The parent can then use `bind:value` to create a two-way data flow:
+
+```svelte
+<script>
+  import TextInput from './TextInput.svelte';
+  let name = $state('');
+</script>
+
+<TextInput bind:value={name} />
+<p>You typed: {name}</p>
 ```
 
 #### Components
@@ -610,6 +645,8 @@ Snippets replaced Svelte 4's "slots" system. They are reusable template fragment
 <List items={data} {itemRenderer} />
 ```
 
+Inside the `List` component, the snippet is rendered with `{@render itemRenderer(item)}`. This is more flexible than the old slot system because snippets are first-class values that can be conditionally passed, stored in variables, or composed.
+
 #### Store Contract
 
 Any JavaScript object with a `subscribe` method is a valid Svelte store. The `subscribe` method must accept a callback and return an unsubscribe function. In Svelte components, you can prefix a store variable with `$` to automatically subscribe and get the current value:
@@ -627,11 +664,13 @@ Any JavaScript object with a `subscribe` method is a valid Svelte store. The `su
 {/if}
 ```
 
+When the component is created, Svelte calls `syncStatusStore.subscribe(callback)` and updates `$syncStatusStore` whenever the store emits a new value. When the component is destroyed, Svelte calls the unsubscribe function to clean up. This is all automatic -- you never manually manage subscriptions.
+
 ### How stellar-engine Integrates with Svelte
 
-- **All stores implement the Svelte store contract** (subscribe method). The engine exports reactive stores like `syncStatusStore`, `authState`, `isOnline`, and `remoteChangesStore` that work seamlessly with Svelte's `$store` syntax.
-- **`use:` actions for DOM-level behavior.** Svelte actions are functions that run when an element is mounted. The engine provides `remoteChangeAnimation` (animate elements when remote changes arrive) and `trackEditing` (protect user edits from being overwritten by incoming sync changes).
-- **Components** like `SyncStatus`, `DeferredChangesBanner`, and `DemoBanner` are provided as ready-to-use Svelte components.
+- **All stores implement the Svelte store contract** (subscribe method). The engine exports reactive stores: `syncStatusStore` (sync cycle state), `authState` (authentication mode and session), `isOnline` (network connectivity), `isAuthenticated` (derived boolean), and `remoteChangesStore` (tracks which entities were changed by remote sync).
+- **Store factory functions** for app-specific data. `createCollectionStore()` and `createDetailStore()` generate Svelte-compatible stores backed by IndexedDB queries. Collection stores load all records for a table; detail stores load a single record by ID. Both refresh automatically after sync cycles.
+- **`use:` actions for DOM-level behavior.** Svelte actions are functions that run when an element is mounted. The engine provides `remoteChangeAnimation` (animate elements when remote changes arrive), `trackEditing` (protect user edits from being overwritten by incoming sync), and `truncateTooltip` (attach native tooltips to text-overflow elements).
 - **CSS custom properties for theming.** Components use CSS custom properties (variables like `--sync-color`) that consumer apps can override to match their design.
 - **Svelte is an OPTIONAL peer dependency.** The core engine (sync, queue, conflicts, realtime, auth, config) is framework-agnostic TypeScript. If a consumer app does not use Svelte, the stores and actions are simply not imported and are tree-shaken away by the bundler.
 
@@ -671,7 +710,7 @@ src/routes/
       +page.svelte       --> /settings/profile
 ```
 
-Each `+page.svelte` file is a page component that renders when the user navigates to that URL.
+Each `+page.svelte` file is a page component that renders when the user navigates to that URL. Directories with `[brackets]` create dynamic route parameters extracted from the URL.
 
 #### Load Functions
 
@@ -696,7 +735,7 @@ export async function load({ params }) {
 <p>{data.post.content}</p>
 ```
 
-Load functions can run on the server (in `+page.server.ts`) or on the client (in `+page.ts`). Server-only load functions can access databases, secrets, and other server-side resources.
+Load functions can run on the server (in `+page.server.ts`) or on the client (in `+page.ts`). Server-only load functions can access databases, secrets, and other server-side resources. Client-side load functions run in the browser and are used for things like reading from IndexedDB or calling browser-only APIs.
 
 #### Layouts
 
@@ -768,19 +807,6 @@ src/routes/
 
 This lets you have completely different layouts for different sections of your app (e.g., authenticated pages with navigation vs. login pages with a centered form) without adding prefixes to URLs.
 
-#### Error Pages
-
-`+error.svelte` files handle errors at each level of the route hierarchy:
-
-```svelte
-<!-- src/routes/+error.svelte -->
-<script>
-  import { page } from '$app/stores';
-</script>
-
-<h1>{$page.status} - {$page.error?.message}</h1>
-```
-
 #### Hooks
 
 Server hooks (`src/hooks.server.ts`) act like middleware, running on every request before it reaches a route:
@@ -806,16 +832,16 @@ SvelteKit adapters configure how your app is deployed. Different adapters target
 
 You configure the adapter in `svelte.config.js` and SvelteKit handles the rest.
 
-### How stellar-engine Integrates with SvelteKit (OPTIONAL)
+### How stellar-engine Integrates with SvelteKit
 
 SvelteKit integration is provided through the `@prabhask5/stellar-engine/kit` subpath export. It is entirely optional -- the core engine works without SvelteKit.
 
-- **Layout load functions**: `resolveRootLayout()` and `resolveProtectedLayout()` are factory functions that generate SvelteKit load functions for common patterns. `resolveRootLayout()` initializes the engine, loads config, and determines auth state. `resolveProtectedLayout()` guards routes that require authentication, redirecting unauthenticated users.
-- **Server API handlers**: `getServerConfig()` creates a `GET` handler for `/api/config` that serves runtime configuration. `createValidateHandler()` creates a `POST` handler for validating Supabase connection credentials. `deployToVercel()` provides deployment utilities.
-- **Email confirmation page helpers**: `handleEmailConfirmation()` processes the token exchange when a user clicks an email confirmation link.
-- **Auth hydration**: `hydrateAuthState()` bridges SvelteKit load data (available on first render) to reactive stores (used throughout the app lifecycle).
-- **Service worker lifecycle**: `pollForNewServiceWorker()` and `monitorSwLifecycle()` manage PWA service worker updates, prompting users when a new version is available.
-- **Project scaffolding**: `stellar-engine install pwa` generates a complete SvelteKit project structure with routes, layouts, service worker, and configuration files.
+- **Layout load function factories.** `resolveRootLayout()` is a factory that generates the root `+layout.ts` load function. It initializes the engine, loads runtime configuration (Supabase URL and keys) from the server, determines the current auth state (Supabase session, offline session, demo mode, or unauthenticated), and starts the background sync engine. `resolveProtectedLayout()` guards route groups that require authentication, redirecting unauthenticated users to the login page.
+- **Server API handlers.** `getServerConfig()` creates a `GET` handler for `/api/config` that serves the Supabase URL and anon key from server-side environment variables. `createValidateHandler()` creates a `POST` handler for validating Supabase connection credentials during initial setup.
+- **Auth hydration.** `hydrateAuthState()` bridges SvelteKit load data (available on first render) to reactive stores (used throughout the app lifecycle), ensuring the `authState` store is populated before any component reads it.
+- **Email confirmation.** `handleEmailConfirmation()` processes the token exchange when a user clicks an email confirmation link, converting the URL token into a Supabase session.
+- **Service worker lifecycle.** `pollForNewServiceWorker()` and `monitorSwLifecycle()` manage PWA service worker updates, prompting users when a new version is available.
+- **Project scaffolding.** The CLI command `stellar-engine install pwa` generates a complete SvelteKit project structure with routes, layouts, service worker, manifest, and configuration files.
 
 ---
 
@@ -827,25 +853,28 @@ Yjs is a high-performance implementation of CRDTs (Conflict-free Replicated Data
 
 ### What are CRDTs?
 
-CRDT stands for **Conflict-free Replicated Data Type**. To understand why they matter, consider the problem they solve:
+CRDT stands for **Conflict-free Replicated Data Type**. To understand why they matter, consider the problem they solve.
 
-Imagine two users, Alice and Bob, are editing the same document. Alice types "Hello" at the beginning, and at the same time (before either sees the other's change), Bob types "World" at the end. With a naive approach, you have a conflict -- whose version wins? Do you overwrite one person's work? Show a conflict dialog?
+Imagine two users, Alice and Bob, are editing the same text document that currently says "The cat". Alice adds " sat" at the end (making "The cat sat"), and at the same time (before either sees the other's change), Bob adds "big " before "cat" (making "The big cat"). With a naive approach, you have a conflict -- whose version wins? Do you overwrite one person's work? Show a conflict dialog?
 
-CRDTs are data structures mathematically designed so that **any two copies can always be merged automatically, without conflicts, regardless of the order operations arrive**. Alice's "Hello" and Bob's "World" both appear in the final document, in the correct positions, on every device, even if the operations arrive in different orders on different devices.
+CRDTs are data structures mathematically designed so that **any two copies can always be merged automatically, without conflicts, regardless of the order operations arrive**. Both edits survive: the final document becomes "The big cat sat" on every device, even if the operations arrive in different orders.
 
-This "always mergeable" property holds even when:
-- Users are offline and make many edits before reconnecting
-- Network messages arrive out of order
-- Devices connect and disconnect unpredictably
+The key insight is that each operation in a CRDT carries enough metadata (who made it, when, and where in the document) to be placed unambiguously, no matter what other operations have been applied. This is achieved through a structure where each character (or element) has a globally unique ID and a reference to its left neighbor at the time of insertion.
 
 ### Why CRDTs Matter
 
-Without CRDTs, collaborative editing requires a central server that serializes all operations (like Operational Transformation, used by the original Google Docs). This approach:
+Without CRDTs, collaborative editing requires a central server that serializes all operations (like Operational Transformation, used by the original Google Docs). That approach:
 - Requires a persistent server connection
 - Does not work offline
-- Has complex edge cases around operation ordering
+- Has complex edge cases around operation ordering that are hard to get right
 
-CRDTs eliminate these problems. Each client has a complete local copy, can edit freely offline, and merges are always automatic and correct.
+CRDTs eliminate these problems. Each client has a complete local copy, can edit freely offline, and merges are always automatic and correct. This aligns perfectly with an offline-first architecture.
+
+### How CRDTs Differ from the Engine's Regular Sync
+
+The engine's regular sync system (push/pull with conflict resolution) handles structured records -- rows in a table with fields like `title`, `completed`, `order`. When two devices change the same field on the same record, the engine uses last-write-wins or additive merge to resolve the conflict. This works well for discrete values but breaks down for text -- you cannot meaningfully "last-write-wins" two people typing in the same paragraph.
+
+CRDTs solve the text problem by tracking every individual character insertion and deletion as a separate, ordered operation. This is why the engine uses both systems: structured records go through the push/pull sync queue, and rich text content goes through Yjs.
 
 ### Key Shared Types in Yjs
 
@@ -898,7 +927,7 @@ Each Yjs document (`Y.Doc`) tracks all changes as operations. Every operation is
 
 This means every character typed, every deletion, every formatting change has a globally unique identifier.
 
-**State vectors** track what each peer has seen. A state vector is essentially a map of `{ clientId: lastSeenClock }`. When two peers connect, they exchange state vectors, and each peer can compute exactly which operations the other is missing.
+**State vectors** track what each peer has seen. A state vector is a map of `{ clientId: lastSeenClock }`. When two peers connect, they exchange state vectors, and each peer can compute exactly which operations the other is missing.
 
 **Delta sync** means only missing operations are sent. If Alice has made 1000 edits and Bob has seen 990 of them, only the 10 missing edits are transmitted. This makes sync extremely efficient, even for large documents.
 
@@ -906,10 +935,22 @@ This means every character typed, every deletion, every formatting change has a 
 
 ### How stellar-engine Uses Yjs
 
-The engine's CRDT subsystem is optional and used for rich collaborative content (like text documents or structured editors):
+The engine's CRDT subsystem is optional (enabled by passing `crdt: true` or `crdt: {}` to `initEngine()`) and used for rich collaborative content like text documents or structured editors:
 
-- **Documents are `Y.Doc` instances.** Each collaborative document in the application is backed by a Yjs document that holds the shared state.
-- **Updates broadcast via Supabase Realtime Broadcast** (not database writes per keystroke). When a user types a character, the Yjs update (typically a few bytes) is broadcast to other connected clients via Supabase's pub/sub channel. This is much more efficient than writing every keystroke to the database.
-- **State persisted to IndexedDB** for offline support and crash recovery. The full Yjs document state is periodically saved to the local database, so if the user closes the tab or loses connection, no work is lost.
-- **Periodic full-state persistence to Supabase** (every 30 seconds). The complete document state is saved to the server database at regular intervals. This serves as a backup and allows new devices to load the latest state without replaying all historical operations.
-- **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the engine package, keeping the dependency tree clean.
+```typescript
+initEngine({
+  prefix: 'myapp',
+  schema: {
+    tasks: 'project_id, order',
+    settings: { singleton: true },
+  },
+  auth: { gateType: 'code', codeLength: 6 },
+  crdt: true,
+});
+```
+
+- **Documents are `Y.Doc` instances managed by `CRDTProvider`.** Each collaborative document is opened via `openDocument(documentId, pageId)`, which returns a provider containing the `Y.Doc`. The provider manages the full lifecycle: loading state, wiring up persistence, and broadcasting updates.
+- **Updates broadcast via Supabase Realtime Broadcast** (not database writes per keystroke). When a user types a character, the Yjs update (typically a few bytes) is broadcast to other connected clients via Supabase's pub/sub channel. This is far more efficient than writing every keystroke to the database.
+- **Two IndexedDB tables for local persistence.** `crdtDocuments` stores the full Yjs document state (for offline access and cross-session recovery). `crdtPendingUpdates` stores incremental update deltas for crash safety -- if the browser crashes between full saves, these deltas are replayed on next load.
+- **Periodic full-state persistence to Supabase.** The complete document state is saved to the `crdt_documents` Supabase table at regular intervals. This serves as a durable backup and allows new devices to load the latest state without replaying all historical operations.
+- **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the `@prabhask5/stellar-engine/crdt` subpath export, keeping the dependency tree clean.

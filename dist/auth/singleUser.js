@@ -564,9 +564,8 @@ export async function unlockSingleUser(gate) {
             return { error: null };
         }
         else {
-            // --- OFFLINE UNLOCK (or no email — legacy migration) ---
-            /* Fall back to local hash verification when offline or when the
-               config has no email (legacy accounts before email was required) */
+            // --- OFFLINE UNLOCK ---
+            /* Fall back to local hash verification when offline */
             const inputHash = await hashValue(gate);
             if (config.gateHash && inputHash !== config.gateHash) {
                 return { error: 'Incorrect code' };

@@ -2,20 +2,19 @@
  * @fileoverview Engine Configuration and Initialization
  *
  * Central configuration hub for the sync engine. {@link initEngine} is the
- * first function consumers call — it accepts a {@link SyncEngineConfig} object
- * that describes:
+ * first function consumers call — it accepts a configuration object that
+ * describes:
  *   - Which Supabase tables to sync and their IndexedDB schemas
  *   - Authentication configuration (single-user gate, offline auth, etc.)
  *   - Sync timing parameters (debounce, polling interval, tombstone TTL)
  *   - Optional callbacks for auth state changes
  *
  * The config is stored as a module-level singleton and accessed by every other
- * module via {@link getEngineConfig}. The database creation flow supports two
- * modes:
- *   1. **Managed** — Engine creates and owns the Dexie instance from a
- *      {@link DatabaseConfig} (recommended).
- *   2. **Provided** — Consumer passes a pre-created `Dexie` instance for
- *      backward compatibility.
+ * module via {@link getEngineConfig}. Supports two configuration modes:
+ *   1. **Schema-driven** (recommended) — Provide a `schema` object. The engine
+ *      auto-generates tables, Dexie stores, versioning, and database naming.
+ *   2. **Manual** — Provide explicit `tables` and `database` for full control
+ *      over IndexedDB versioning and migration history.
  *
  * @see {@link database.ts} for Dexie instance creation
  * @see {@link engine.ts} for the sync lifecycle that consumes this config
@@ -25,7 +24,7 @@ import { _setDeviceIdPrefix } from './deviceId';
 import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
-import { createDatabase, _setManagedDb, SYSTEM_INDEXES, computeSchemaVersion } from './database';
+import { createDatabase, SYSTEM_INDEXES, computeSchemaVersion } from './database';
 import { _initCRDT } from './crdt/config';
 import { snakeToCamel } from './utils';
 // =============================================================================
@@ -58,7 +57,7 @@ export function initEngine(config) {
     }
     /* Validate that tables are configured (either manually or via schema). */
     if (!config.tables || config.tables.length === 0) {
-        throw new Error('initEngine: No tables configured. Provide either `schema` or `tables`.');
+        throw new Error('initEngine: No tables configured. Provide `schema` or `tables` + `database`.');
     }
     /* At this point tables is guaranteed to be populated — safe to cast. */
     engineConfig = config;
@@ -82,18 +81,12 @@ export function initEngine(config) {
     if (isDemoMode() && config.database) {
         config.database = { ...config.database, name: config.database.name + '_demo' };
     }
-    /* Handle database creation — either managed or provided.
+    /* Create the Dexie database and store the instance on config for engine.ts access.
      * Pass crdtEnabled flag so CRDT IndexedDB tables are conditionally included. */
     if (config.database) {
         _dbReady = createDatabase(config.database, !!config.crdt).then((db) => {
-            /* Store on config for backward compat (engine.ts reads config.db). */
             config.db = db;
         });
-    }
-    else if (config.db) {
-        /* Backward compat: use the consumer-provided Dexie instance. */
-        _setManagedDb(config.db);
-        _dbReady = Promise.resolve();
     }
 }
 // =============================================================================
@@ -350,8 +343,8 @@ function buildRenameUpgradeCallback(schema) {
 /**
  * Normalize an auth config to the internal nested structure.
  *
- * Detects whether the config is in the new flat form ({@link AuthConfig}) or
- * the legacy nested form (has a `singleUser` key). Flat form is converted to
+ * Detects whether the config is in the flat form ({@link AuthConfig}) or
+ * the nested form (has a `singleUser` key). Flat form is converted to
  * nested; nested form is passed through unchanged.
  *
  * @param auth - The auth config (flat or nested).
@@ -361,7 +354,7 @@ function buildRenameUpgradeCallback(schema) {
 function normalizeAuthConfig(auth) {
     if (!auth)
         return auth;
-    /* Detect legacy nested form by the presence of `singleUser` key. */
+    /* Detect nested form by the presence of `singleUser` key. */
     if ('singleUser' in auth) {
         return auth;
     }

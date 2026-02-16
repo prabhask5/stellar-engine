@@ -1,23 +1,22 @@
 # @prabhask5/stellar-engine [![npm version](https://img.shields.io/npm/v/@prabhask5/stellar-engine.svg?style=flat)](https://www.npmjs.com/package/@prabhask5/stellar-engine) [![Made with Supabase](https://supabase.com/badge-made-with-supabase-dark.svg)](https://supabase.com)
 
-An offline-first, real-time sync engine for **Supabase + Dexie.js** applications. All reads come from IndexedDB, all writes land locally first, and a background sync loop ships changes to Supabase -- so your app stays fast and functional regardless of network state. Optional SvelteKit integrations are included for teams building with Svelte 5.
+A plug-and-play, offline-first sync engine for **Supabase + Dexie.js** applications. All reads come from IndexedDB, all writes land locally first, and a background sync loop ships changes to Supabase -- so your app stays fast and functional regardless of network state. Optional **SvelteKit** integrations are included for teams building with Svelte 5, but the core engine works with any framework or vanilla JS.
 
 ## Documentation
 
-- [API Reference](./API_REFERENCE.md) -- full signatures, parameters, and usage examples for every public export
 - [Architecture](./ARCHITECTURE.md) -- internal design, data flow, and module responsibilities
-- [Frameworks](./FRAMEWORKS.md) -- More reading on
-frameworks used in stellar-engine
+- [API Reference](./API_REFERENCE.md) -- full signatures, parameters, and usage examples for every public export
+- [Frameworks](./FRAMEWORKS.md) -- more reading on frameworks used in stellar-engine
 
 ## Features
 
-- **Schema-driven configuration** -- declare tables once and the engine auto-generates Dexie stores, database versioning, TypeScript interfaces, and Supabase SQL
+- **Schema-driven configuration** -- declare tables once in a simple object; the engine auto-generates Dexie stores, database versioning, TypeScript interfaces, and Supabase SQL
 - **Intent-based sync operations** -- operations preserve intent (`increment`, `set`, `create`, `delete`) instead of final state, enabling smarter coalescing and conflict handling
 - **6-step operation coalescing** -- 50 rapid writes are compressed into 1 outbound operation, dramatically reducing sync traffic
 - **Three-tier conflict resolution** -- field-level auto-merge for non-overlapping changes, different-field merge, and same-field resolution (`local_pending` > `delete_wins` > `last_write_wins` with device ID tiebreaker)
 - **Offline authentication** -- SHA-256 credential caching and offline session tokens let users sign in and work without connectivity; sessions reconcile automatically on reconnect
 - **Single-user PIN/password auth** -- simplified gate backed by real Supabase email/password auth; PIN is padded to meet minimum length and verified server-side
-- **Device verification** -- email OTP for untrusted devices with 90-day trust duration
+- **Device verification** -- email OTP for untrusted devices with configurable trust duration
 - **Realtime subscriptions** -- Supabase Realtime WebSocket push with echo suppression and deduplication against polling
 - **Tombstone management** -- soft deletes with configurable garbage collection
 - **Egress optimization** -- column-level selects, operation coalescing, push-only mode when realtime is healthy, cursor-based pulls
@@ -28,6 +27,7 @@ frameworks used in stellar-engine
 - **Svelte actions** -- `remoteChangeAnimation`, `trackEditing`, `triggerLocalAnimation` for declarative UI behavior
 - **SQL generation** -- auto-generate `CREATE TABLE` statements, RLS policies, and migrations from your schema config
 - **TypeScript generation** -- auto-generate interfaces from schema
+- **Migration generation** -- auto-generate `ALTER TABLE` rename and column rename SQL from `renamedFrom` / `renamedColumns` hints
 - **Diagnostics** -- comprehensive runtime diagnostics covering sync, queue, realtime, conflicts, egress, and network
 - **Debug utilities** -- opt-in debug logging and `window` debug utilities for browser console inspection
 - **SvelteKit integration** (optional) -- layout helpers, server handlers, email confirmation, service worker lifecycle, and auth hydration
@@ -50,92 +50,73 @@ frameworks used in stellar-engine
 // npm install @prabhask5/stellar-engine
 
 // ─── 1. Initialize the engine ──────────────────────────────────────
-// Call once at app startup (e.g., root layout, main entry point)
+// Call once at app startup (e.g., root layout, main entry point).
+// Schema-driven: declare tables once, engine handles everything else.
 
-import {
-  initEngine,
-  startSyncEngine,
-  supabase,
-  getDb,
-  resetDatabase,
-  validateSupabaseCredentials,
-  validateSchema,
-} from '@prabhask5/stellar-engine';
+import { initEngine, startSyncEngine, getDb, resetDatabase } from '@prabhask5/stellar-engine';
 import { initConfig } from '@prabhask5/stellar-engine/config';
 import { resolveAuthState } from '@prabhask5/stellar-engine/auth';
 
 initEngine({
   prefix: 'myapp',
-  supabase,
-  // Schema-driven: declare tables once, engine handles the rest
-  tables: [
-    {
-      supabaseName: 'projects',                       // Supabase table name
-      // Dexie name auto-derived: 'projects'
-      columns: 'id, name, description, sort_order, created_at, updated_at, is_deleted, user_id',
-      ownershipFilter: 'user_id',                     // RLS-aware egress filter
-      mergeFields: [],                                // Fields for numeric merge
-      excludeFromConflictResolution: ['updated_at'],  // Fields to skip in conflict diffing
-    },
-    {
-      supabaseName: 'tasks',
-      columns: 'id, title, project_id, count, sort_order, created_at, updated_at, is_deleted, user_id',
-      ownershipFilter: 'user_id',
-      mergeFields: ['count'],                          // Numeric merge: concurrent increments add up
-    },
-  ],
 
-  // Declarative database versioning -- system tables (syncQueue, conflictHistory,
-  // offlineCredentials, offlineSession, singleUserConfig) are auto-merged
-  database: {
-    name: 'MyAppDB',
-    versions: [
-      {
-        version: 1,
-        stores: {
-          projects: 'id, user_id, updated_at',
-          tasks: 'id, project_id, user_id, updated_at',
-        },
-      },
-    ],
+  // Schema-driven: declare tables once, engine handles the rest.
+  // System indexes (id, user_id, created_at, updated_at, deleted, _version)
+  // are auto-appended to every table. Database name auto-derived as `${prefix}DB`.
+  schema: {
+    projects: 'order',                              // String shorthand = indexes only
+    tasks: 'project_id, order',                     // Comma-separated Dexie indexes
+    focus_settings: { singleton: true },             // Object form for full control
+    goals: {
+      indexes: 'goal_list_id, order',
+      numericMergeFields: ['current_value'],         // Additive merge on conflicts
+      excludeFromConflict: ['device_id'],            // Skip these in conflict diffing
+    },
   },
 
-  // Auth config -- single-user mode with 4-digit PIN
+  // Auth: flat format with sensible defaults (all fields optional).
+  // No nested `singleUser` key needed -- engine normalizes internally.
   auth: {
-    singleUser: { gateType: 'code', codeLength: 4 },
-    enableOfflineAuth: true,
-    // emailConfirmation: { enabled: true },
-    // deviceVerification: { enabled: true },
+    gateType: 'code',                               // 'code' | 'password' (default: 'code')
+    codeLength: 6,                                   // 4 | 6 (default: 6)
+    emailConfirmation: true,                         // default: true
+    deviceVerification: true,                        // default: true
+    profileExtractor: (meta) => ({ firstName: meta.first_name }),
+    profileToMetadata: (p) => ({ first_name: p.firstName }),
   },
 
-  // Demo mode config (optional)
+  // Optional CRDT collaborative editing
+  crdt: true,  // or { persistIntervalMs: 60000, maxOfflineDocuments: 50 }
+
+  // Optional demo mode
   demo: {
     seedData: async (db) => {
       await db.table('projects').bulkPut([
-        { id: 'demo-1', name: 'Sample Project', sort_order: 1, is_deleted: false },
+        { id: 'demo-1', name: 'Sample Project', order: 1 },
       ]);
     },
-    mockProfile: { email: 'demo@example.com', firstName: 'Demo', lastName: 'User' },
+    mockProfile: { email: 'demo@test.com', firstName: 'Demo', lastName: 'User' },
   },
 
-  // CRDT config (optional)
-  crdt: {
-    persistIntervalMs: 30000,
-    maxOfflineDocuments: 50,
-  },
+  // Tuning (all optional with defaults)
+  syncDebounceMs: 2000,        // Default: 2000
+  syncIntervalMs: 900000,      // Default: 900000 (15 min)
+  tombstoneMaxAgeDays: 7,      // Default: 7
 });
 
 // ─── 2. Resolve auth and start the engine ──────────────────────────
+// The engine fetches runtime config (Supabase URL + anon key) from
+// your /api/config endpoint -- no need to pass a supabase client.
 
 await initConfig();
 const auth = await resolveAuthState();
 
 if (!auth.singleUserSetUp) {
   // First-time setup flow
-  // → call setupSingleUser(code, profile, email) from your UI
+  // -> call setupSingleUser(code, profile, email) from your UI
 } else if (auth.authMode === 'none') {
   // Locked -- show unlock screen
-  // → call unlockSingleUser(code) from your UI
+  // -> call unlockSingleUser(code) from your UI
 } else {
   // Authenticated -- start syncing
   await startSyncEngine();
@@ -160,10 +141,10 @@ const projectId = generateId();
 await engineCreate('projects', {
   id: projectId,
   name: 'New Project',
-  sort_order: 1,
+  order: 1,
   created_at: now(),
   updated_at: now(),
-  is_deleted: false,
+  deleted: false,
   user_id: 'current-user-id',
 });
 
@@ -177,7 +158,7 @@ await engineUpdate('tasks', taskId, {
 await engineDelete('tasks', taskId);
 
 // Increment (intent-preserved -- concurrent increments merge correctly)
-await engineIncrement('tasks', taskId, 'count', 1);
+await engineIncrement('goals', goalId, 'current_value', 1);
 
 // Query all rows from local IndexedDB
 const projects = await queryAll('projects');
@@ -186,20 +167,19 @@ const projects = await queryAll('projects');
 const project = await queryOne('projects', projectId);
 
 // Get or create (atomic upsert)
-const { record, created } = await engineGetOrCreate('projects', projectId, {
-  id: projectId,
-  name: 'Default Project',
-  sort_order: 0,
+const { record, created } = await engineGetOrCreate('focus_settings', settingsId, {
+  id: settingsId,
+  theme: 'dark',
   created_at: now(),
   updated_at: now(),
-  is_deleted: false,
+  deleted: false,
   user_id: 'current-user-id',
 });
 
 // Batch writes (multiple operations in one sync push)
 await engineBatchWrite([
-  { type: 'create', table: 'tasks', data: { id: generateId(), title: 'Task 1', project_id: projectId, count: 0, sort_order: 1, created_at: now(), updated_at: now(), is_deleted: false, user_id: 'current-user-id' } },
-  { type: 'create', table: 'tasks', data: { id: generateId(), title: 'Task 2', project_id: projectId, count: 0, sort_order: 2, created_at: now(), updated_at: now(), is_deleted: false, user_id: 'current-user-id' } },
+  { type: 'create', table: 'tasks', data: { id: generateId(), title: 'Task 1', project_id: projectId, order: 1, created_at: now(), updated_at: now(), deleted: false, user_id: 'uid' } },
+  { type: 'create', table: 'tasks', data: { id: generateId(), title: 'Task 2', project_id: projectId, order: 2, created_at: now(), updated_at: now(), deleted: false, user_id: 'uid' } },
   { type: 'update', table: 'projects', id: projectId, data: { updated_at: now() } },
 ]);
 
@@ -209,8 +189,8 @@ import { createCollectionStore, createDetailStore } from '@prabhask5/stellar-eng
 
 // Collection store -- live-updating list from IndexedDB
 const projectsStore = createCollectionStore('projects', {
-  filter: (p) => !p.is_deleted,
-  sort: (a, b) => a.sort_order - b.sort_order,
+  filter: (p) => !p.deleted,
+  sort: (a, b) => a.order - b.order,
 });
 // Subscribe: projectsStore.subscribe(items => { ... })
 
@@ -218,7 +198,7 @@ const projectsStore = createCollectionStore('projects', {
 const projectDetail = createDetailStore('projects', projectId);
 // Subscribe: projectDetail.subscribe(record => { ... })
 
-// ─── 5. Reactive stores ───────────────────────────────────────────
+// ─── 5. Reactive stores ────────────────────────────────────────────
 
 import {
   syncStatusStore,
@@ -228,12 +208,27 @@ import {
   onSyncComplete,
 } from '@prabhask5/stellar-engine/stores';
 
+// $syncStatusStore -- current SyncStatus, last sync time, errors
+// $authState       -- { mode, session, offlineProfile, isLoading, authKickedMessage }
+// $isOnline        -- reactive boolean reflecting network state
+// remoteChangesStore -- tracks entities recently changed by remote peers
+
 // Listen for sync completions
 onSyncComplete(() => {
   console.log('Sync cycle finished');
 });
 
-// ─── 6. CRDT collaborative editing ────────────────────────────────
+// ─── 6. Svelte actions ─────────────────────────────────────────────
+
+import { remoteChangeAnimation, trackEditing } from '@prabhask5/stellar-engine/actions';
+
+// use:remoteChangeAnimation={{ table: 'tasks', id: task.id }}
+// Animates elements when remote changes arrive for that entity.
+
+// use:trackEditing={{ table: 'tasks', id: task.id }}
+// Signals the engine a field is being actively edited (suppresses incoming overwrites).
+
+// ─── 7. CRDT collaborative editing ────────────────────────────────
 
 import {
   openDocument,
@@ -255,6 +250,9 @@ const provider = await openDocument('doc-1', 'page-1', {
 const { content, meta } = createBlockDocument(provider.doc);
 meta.set('title', 'My Page');
 
+// Shared text for simpler use cases
+const text = createSharedText(provider.doc);
+
 // Track collaborator cursors and presence
 const unsub = onCollaboratorsChange('doc-1', (collaborators) => {
   // Update avatar list, cursor positions, etc.
@@ -262,52 +260,55 @@ const unsub = onCollaboratorsChange('doc-1', (collaborators) => {
 
 await closeDocument('doc-1');
 
-// ─── 7. Demo mode ─────────────────────────────────────────────────
+// ─── 8. Demo mode ──────────────────────────────────────────────────
 
-import { setDemoMode } from '@prabhask5/stellar-engine';
+import { setDemoMode, isDemoMode } from '@prabhask5/stellar-engine';
 
-// Toggle demo mode (requires full page reload)
+// Check if demo mode is active
+if (isDemoMode()) {
+  // In demo mode:
+  // - Uses '${prefix}DB_demo' IndexedDB (real DB never opened)
+  // - Zero Supabase network requests
+  // - authMode === 'demo', protected routes work with mock data
+  // - seedData callback runs on each page load
+}
+
+// Toggle demo mode from your UI (requires full page reload)
 setDemoMode(true);
 window.location.href = '/';
 
-// In demo mode:
-// - Uses '${name}_demo' IndexedDB (real DB never opened)
-// - Zero Supabase network requests
-// - authMode === 'demo', protected routes work with mock data
-// - seedData callback runs on each page load
+// ─── 9. SQL and TypeScript generation ──────────────────────────────
 
-// ─── 8. Diagnostics and debug ──────────────────────────────────────
+import { generateSupabaseSQL, generateTypeScript } from '@prabhask5/stellar-engine/utils';
+import { getEngineConfig } from '@prabhask5/stellar-engine';
 
-import {
-  setDebugMode,
-  isDebugMode,
-  getSyncDiagnostics,
-  getQueueDiagnostics,
-  getRealtimeDiagnostics,
-  getConflictDiagnostics,
-  getEgressDiagnostics,
-  getNetworkDiagnostics,
-} from '@prabhask5/stellar-engine/utils';
+const config = getEngineConfig();
+
+// Auto-generate Supabase SQL (CREATE TABLE + RLS policies) from schema
+const sql = generateSupabaseSQL(config.schema!);
+
+// Auto-generate TypeScript interfaces from schema
+const ts = generateTypeScript(config.schema!);
+
+// ─── 10. Diagnostics and debug ─────────────────────────────────────
+
+import { setDebugMode, isDebugMode } from '@prabhask5/stellar-engine/utils';
+import { getDiagnostics } from '@prabhask5/stellar-engine';
 
 setDebugMode(true);
 
-// Runtime diagnostics
-const syncInfo = getSyncDiagnostics();
-const queueInfo = getQueueDiagnostics();
-const egressInfo = getEgressDiagnostics();
+// Comprehensive runtime diagnostics
+const diagnostics = await getDiagnostics();
+// diagnostics.sync     -- sync cycle statistics and recent cycle details
+// diagnostics.queue    -- pending operation queue state
+// diagnostics.realtime -- realtime connection state and health
+// diagnostics.conflict -- conflict resolution history and stats
+// diagnostics.egress   -- data transfer from Supabase (bytes, per-table breakdown)
+// diagnostics.network  -- network state and connectivity info
 
-// ─── 9. SQL and TypeScript generation ──────────────────────────────
-
-import {
-  generateCreateTableSQL,
-  generateRLSPolicies,
-  generateTypeScriptInterfaces,
-} from '@prabhask5/stellar-engine/utils';
-
-// Auto-generate Supabase SQL from your schema config
-const sql = generateCreateTableSQL('projects', tableConfig);
-const rls = generateRLSPolicies('projects', tableConfig);
-const tsInterfaces = generateTypeScriptInterfaces(allTables);
+// When debug mode is enabled, utilities are exposed on `window`:
+// window.__myappSyncStats(), window.__myappEgress(), window.__myappTombstones()
+// window.__myappSync.forceFullSync()
 ```
 
 ## Commands
@@ -346,7 +347,7 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 
 | Export | Description |
 |---|---|
-| `initEngine(config)` | Initialize the engine with table definitions, auth, database, and optional CRDT/demo config |
+| `initEngine(config)` | Initialize the engine with schema, auth, and optional CRDT/demo config |
 | `startSyncEngine()` | Start the sync loop, realtime subscriptions, and event listeners |
 | `stopSyncEngine()` | Tear down sync loop and subscriptions cleanly |
 | `runFullSync()` | Run a complete pull-then-push cycle |
@@ -359,12 +360,11 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 
 | Export | Description |
 |---|---|
-| `supabase` | The configured `SupabaseClient` instance |
 | `getDb()` | Get the Dexie database instance |
 | `resetDatabase()` | Drop and recreate the local IndexedDB database |
 | `clearLocalCache()` | Wipe all local application data |
 | `clearPendingSyncQueue()` | Drop all pending outbound operations |
-| `getSupabaseAsync()` | Async getter that waits for initialization |
+| `getSupabaseAsync()` | Async getter that waits for Supabase client initialization |
 | `resetSupabaseClient()` | Tear down and reinitialize the Supabase client |
 
 ### CRUD and Query Operations
@@ -465,7 +465,7 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 
 | Export | Description |
 |---|---|
-| `initConfig()` | Initialize runtime configuration |
+| `initConfig()` | Initialize runtime configuration (fetches Supabase credentials from `/api/config`) |
 | `getConfig()` | Get current config |
 | `setConfig(config)` | Update runtime config |
 | `waitForConfig()` | Async getter that waits for config initialization |
@@ -477,12 +477,7 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 
 | Export | Description |
 |---|---|
-| `getSyncDiagnostics()` | Sync cycle statistics and recent cycle details |
-| `getQueueDiagnostics()` | Pending operation queue state |
-| `getRealtimeDiagnostics()` | Realtime connection state and health |
-| `getConflictDiagnostics()` | Conflict resolution history and stats |
-| `getEgressDiagnostics()` | Data transfer from Supabase (bytes, per-table breakdown) |
-| `getNetworkDiagnostics()` | Network state and connectivity info |
+| `getDiagnostics()` | Comprehensive runtime diagnostics (sync, queue, realtime, conflict, egress, network) |
 | `setDebugMode(enabled)` | Enable/disable debug logging |
 | `isDebugMode()` | Check if debug mode is active |
 | `debugLog` / `debugWarn` / `debugError` | Prefixed console helpers (gated by debug mode) |
@@ -503,9 +498,9 @@ When debug mode is enabled, the engine exposes utilities on `window` using your 
 
 | Export | Description |
 |---|---|
-| `generateCreateTableSQL(name, config)` | Generate `CREATE TABLE` statement from schema config |
-| `generateRLSPolicies(name, config)` | Generate Row-Level Security policies |
-| `generateTypeScriptInterfaces(tables)` | Generate TypeScript interfaces from all table configs |
+| `generateSupabaseSQL(schema)` | Generate `CREATE TABLE` statements and RLS policies from schema |
+| `generateTypeScript(schema)` | Generate TypeScript interfaces from schema |
+| `generateMigrationSQL(oldSchema, newSchema)` | Generate `ALTER TABLE` migration SQL for schema changes |
 
 ### Svelte Actions
 
@@ -516,17 +511,17 @@ When debug mode is enabled, the engine exposes utilities on `window` using your 
 | `triggerLocalAnimation` | Programmatically trigger the local-change animation on a node |
 | `truncateTooltip` | Action that shows a tooltip with full text when content is truncated |
 
-### Svelte Components
+### Svelte Components (Optional - SvelteKit)
 
 | Export | Description |
 |---|---|
-| `@prabhask5/stellar-engine/components/SyncStatus` | Animated sync-state indicator with tooltip and PWA refresh (offline/syncing/synced/error/pending states) |
-| `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Cross-device data conflict notification with Update/Dismiss/Show Changes actions and diff preview |
+| `@prabhask5/stellar-engine/components/SyncStatus` | Animated sync-state indicator with tooltip and PWA refresh |
+| `@prabhask5/stellar-engine/components/DeferredChangesBanner` | Cross-device data conflict notification with diff preview |
 | `@prabhask5/stellar-engine/components/DemoBanner` | Demo mode indicator banner |
 
-### SvelteKit Helpers (optional)
+### SvelteKit Helpers (Optional - SvelteKit)
 
-These require `svelte ^5.0.0` as a peer dependency.
+These require `svelte ^5.0.0` and `@sveltejs/kit` as peer dependencies.
 
 | Export | Description |
 |---|---|
@@ -553,7 +548,7 @@ These require `svelte ^5.0.0` as a peer dependency.
 
 All TypeScript types are available from `@prabhask5/stellar-engine/types`:
 
-`Session`, `SyncEngineConfig`, `TableConfig`, `BatchOperation`, `SingleUserConfig`, `DemoConfig`, `SyncStatus`, `AuthState`, `CRDTConfig`, and more.
+`Session`, `SyncEngineConfig`, `TableConfig`, `AuthConfig`, `SchemaDefinition`, `SchemaTableConfig`, `FieldType`, `BatchOperation`, `SingleUserConfig`, `DemoConfig`, `SyncStatus`, `AuthMode`, `CRDTConfig`, and more.
 
 ## Subpath exports
 
@@ -561,7 +556,7 @@ Import only what you need:
 
 | Subpath | Contents |
 |---|---|
-| `@prabhask5/stellar-engine` | Core: `initEngine`, `startSyncEngine`, `runFullSync`, `supabase`, `getDb`, `resetDatabase`, `validateSupabaseCredentials`, `validateSchema`, CRUD, auth, stores, and all re-exports |
+| `@prabhask5/stellar-engine` | Core: `initEngine`, `startSyncEngine`, `runFullSync`, `getDb`, `resetDatabase`, `getDiagnostics`, CRUD, auth, stores, and all re-exports |
 | `@prabhask5/stellar-engine/data` | CRUD + query operations + helpers |
 | `@prabhask5/stellar-engine/auth` | All auth functions |
 | `@prabhask5/stellar-engine/stores` | Reactive stores + store factories + event subscriptions |
@@ -580,7 +575,7 @@ Import only what you need:
 
 stellar-engine includes a built-in demo mode that provides a completely isolated sandbox. When active:
 
-- **Separate database** -- uses `${name}_demo` IndexedDB; the real database is never opened
+- **Separate database** -- uses `${prefix}DB_demo` IndexedDB; the real database is never opened
 - **No Supabase** -- zero network requests to the backend
 - **Mock auth** -- `authMode === 'demo'`; protected routes work with mock data only
 - **Auto-seeded** -- your `seedData(db)` callback populates the demo database on each page load
@@ -588,13 +583,13 @@ stellar-engine includes a built-in demo mode that provides a completely isolated
 
 ```ts
 import type { DemoConfig } from '@prabhask5/stellar-engine';
-import { setDemoMode } from '@prabhask5/stellar-engine';
+import { setDemoMode, isDemoMode } from '@prabhask5/stellar-engine';
 
 // Define demo config in initEngine
 const demoConfig: DemoConfig = {
   seedData: async (db) => {
     await db.table('projects').bulkPut([
-      { id: 'demo-1', name: 'Sample Project', sort_order: 1, is_deleted: false },
+      { id: 'demo-1', name: 'Sample Project', order: 1 },
     ]);
   },
   mockProfile: { email: 'demo@example.com', firstName: 'Demo', lastName: 'User' },

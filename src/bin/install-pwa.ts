@@ -250,7 +250,7 @@ function generatePackageJson(opts: InstallOptions): string {
           vite: '^6.0.0'
         },
         dependencies: {
-          'stellar-drive': '^1.0.3'
+          'stellar-drive': '^1.0.4'
         },
         type: 'module'
       },

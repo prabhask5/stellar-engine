@@ -90,7 +90,7 @@ These rules guarantee that the application feels instant regardless of network c
 
 ### 1.3 Supabase Client Creation
 
-The engine does NOT require a pre-created Supabase client. By default, the engine creates its own Supabase client internally from runtime config (Supabase URL and anon key fetched from an `/api/config` endpoint and cached in localStorage). The `supabase/client.ts` module exports a proxy-based lazy singleton that defers initialization until first use. A consumer may optionally pass a custom Supabase client via `initEngine({ supabase: myClient })`, but this is not required.
+The engine does NOT require a pre-created Supabase client. By default, the engine creates its own Supabase client internally from runtime config (Supabase URL and publishable key fetched from an `/api/config` endpoint and cached in localStorage). The `supabase/client.ts` module exports a proxy-based lazy singleton that defers initialization until first use. A consumer may optionally pass a custom Supabase client via `initEngine({ supabase: myClient })`, but this is not required.
 
 ---
 

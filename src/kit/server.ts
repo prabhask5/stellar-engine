@@ -73,8 +73,8 @@ export interface DeployConfig {
   /** The Supabase project URL (e.g. `https://abc.supabase.co`). */
   supabaseUrl: string;
 
-  /** The Supabase anonymous/public key for client-side access. */
-  supabaseAnonKey: string;
+  /** The Supabase publishable key for client-side access. */
+  supabasePublishableKey: string;
 }
 
 /**
@@ -113,8 +113,8 @@ export interface ServerConfig {
   /** The Supabase project URL, if configured. */
   supabaseUrl?: string;
 
-  /** The Supabase anonymous key, if configured. */
-  supabaseAnonKey?: string;
+  /** The Supabase publishable key, if configured. */
+  supabasePublishableKey?: string;
 }
 
 // =============================================================================
@@ -252,10 +252,10 @@ async function setEnvVar(
  */
 export function getServerConfig(): ServerConfig {
   const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
+  const supabasePublishableKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
 
-  if (supabaseUrl && supabaseAnonKey) {
-    return { configured: true, supabaseUrl, supabaseAnonKey };
+  if (supabaseUrl && supabasePublishableKey) {
+    return { configured: true, supabaseUrl, supabasePublishableKey };
   }
   return { configured: false };
 }
@@ -286,7 +286,7 @@ export function getServerConfig(): ServerConfig {
  *   vercelToken: 'tok_...',
  *   projectId: 'prj_...',
  *   supabaseUrl: 'https://abc.supabase.co',
- *   supabaseAnonKey: 'eyJ...'
+ *   supabasePublishableKey: 'eyJ...'
  * });
  * if (!result.success) console.error(result.error);
  * ```
@@ -310,7 +310,7 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
       config.projectId,
       config.vercelToken,
       'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY',
-      config.supabaseAnonKey
+      config.supabasePublishableKey
     );
 
     // -------------------------------------------------------------------------
@@ -374,7 +374,7 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
  * credentials by attempting to connect to the provided Supabase instance.
  *
  * The returned handler:
- *   1. Parses the JSON request body for `supabaseUrl` and `supabaseAnonKey`
+ *   1. Parses the JSON request body for `supabaseUrl` and `supabasePublishableKey`
  *   2. Validates that both fields are present (returns 400 if not)
  *   3. Delegates to `validateSupabaseCredentials` for the actual check
  *   4. Returns a JSON response with the validation result
@@ -403,16 +403,16 @@ export function createValidateHandler() {
        for routes that don't need validation. */
     const { validateSupabaseCredentials } = await import('../supabase/validate.js');
     try {
-      const { supabaseUrl, supabaseAnonKey } = await request.json();
+      const { supabaseUrl, supabasePublishableKey } = await request.json();
 
-      if (!supabaseUrl || !supabaseAnonKey) {
+      if (!supabaseUrl || !supabasePublishableKey) {
         return new Response(
-          JSON.stringify({ valid: false, error: 'Supabase URL and Anon Key are required' }),
+          JSON.stringify({ valid: false, error: 'Supabase URL and Publishable Key are required' }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
 
-      const result = await validateSupabaseCredentials(supabaseUrl, supabaseAnonKey);
+      const result = await validateSupabaseCredentials(supabaseUrl, supabasePublishableKey);
       return new Response(JSON.stringify(result), {
         headers: { 'Content-Type': 'application/json' }
       });

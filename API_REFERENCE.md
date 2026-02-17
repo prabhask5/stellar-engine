@@ -339,25 +339,25 @@ const unsub = onSyncComplete(async () => {
 
 ## Credential Validation
 
-### `validateSupabaseCredentials(url, anonKey)`
+### `validateSupabaseCredentials(url, publishableKey)`
 
-Server-side utility that tests whether the provided Supabase URL and anonymous key can successfully connect.
+Server-side utility that tests whether the provided Supabase URL and publishable key can successfully connect.
 
 ```ts
 function validateSupabaseCredentials(
   url: string,
-  anonKey: string
+  publishableKey: string
 ): Promise<{ valid: boolean; error?: string }>
 ```
 
-### `validateSchema(url, anonKey, schema)`
+### `validateSchema(url, publishableKey, schema)`
 
 Verifies that the required database tables and columns exist in the connected Supabase project.
 
 ```ts
 function validateSchema(
   url: string,
-  anonKey: string,
+  publishableKey: string,
   schema: SchemaDefinition
 ): Promise<{ valid: boolean; errors?: string[] }>
 ```
@@ -1061,7 +1061,7 @@ function setConfig(partial: Partial<AppConfig>): void
 ```ts
 interface AppConfig {
   supabaseUrl: string;
-  supabaseAnonKey: string;
+  supabasePublishableKey: string;
   configured: boolean;
 }
 ```
@@ -1705,7 +1705,7 @@ The Vite plugin and SvelteKit server helpers read these environment variables:
 | Variable | Required For | Description |
 |---|---|---|
 | `PUBLIC_SUPABASE_URL` | Runtime | Your Supabase project URL (e.g., `https://abc.supabase.co`). Find it: Supabase Dashboard > Settings > API > Project URL. |
-| `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Runtime | The anonymous/public API key for client-side auth and data access. Find it: Supabase Dashboard > Settings > API > Project API keys > anon public. |
+| `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Runtime | The publishable API key for client-side auth and data access. Find it: Supabase Dashboard > Settings > API > Project API keys > publishable. |
 | `DATABASE_URL` | Auto-migration only | Postgres connection string for direct SQL execution. Used by the Vite plugin to push schema migrations. If not set, migrations are skipped. Find it: Supabase Dashboard > Settings > Database > Connection string (URI). **Never expose this to the client.** |
 
 ### Generated Files

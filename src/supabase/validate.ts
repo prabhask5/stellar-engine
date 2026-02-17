@@ -4,7 +4,7 @@
  * Provides two complementary validation capabilities:
  *
  * 1. **Credential validation** (`validateSupabaseCredentials`):
- *    Tests that a given Supabase URL and anon key are well-formed and can
+ *    Tests that a given Supabase URL and publishable key are well-formed and can
  *    reach the Supabase REST API. Used during setup / onboarding flows
  *    where the user manually enters their project credentials.
  *
@@ -44,7 +44,7 @@ import { isDemoMode } from '../demo';
  * Validate Supabase credentials by attempting a lightweight API call.
  *
  * This function is designed for **setup flows** where a user provides their
- * Supabase URL and anon key and the app needs to verify them before saving.
+ * Supabase URL and publishable key and the app needs to verify them before saving.
  *
  * Validation steps:
  * 1. Parse the URL to ensure it is syntactically valid.
@@ -58,7 +58,7 @@ import { isDemoMode } from '../demo';
  *    - Network error => Supabase is unreachable.
  *
  * @param url       - The Supabase project URL (e.g. `https://xyz.supabase.co`).
- * @param anonKey   - The project's anonymous (public) API key.
+ * @param publishableKey   - The project's publishable (public) API key.
  * @param testTable - Optional table name to query. Defaults to `'_health_check'`.
  *                    Using a table that does not exist is fine — we only care
  *                    whether the API responds, not whether the table is present.
@@ -81,7 +81,7 @@ import { isDemoMode } from '../demo';
  */
 export async function validateSupabaseCredentials(
   url: string,
-  anonKey: string,
+  publishableKey: string,
   testTable?: string
 ): Promise<{ valid: boolean; error?: string }> {
   try {
@@ -94,7 +94,7 @@ export async function validateSupabaseCredentials(
     /* Create a throwaway client scoped to this validation call. We
        intentionally do NOT reuse the module-level singleton because the
        credentials being tested may differ from the app's active config. */
-    const tempClient = createClient(url, anonKey);
+    const tempClient = createClient(url, publishableKey);
 
     // Test REST API reachability by attempting a simple query
     const { error } = await tempClient
@@ -107,11 +107,11 @@ export async function validateSupabaseCredentials(
       if (error.message?.includes('Invalid API key') || error.code === 'PGRST301') {
         return {
           valid: false,
-          error: 'Invalid Supabase credentials. Check your URL and Anon Key.'
+          error: 'Invalid Supabase credentials. Check your URL and Publishable Key.'
         };
       }
       /* Table doesn't exist but the API responded — this means the URL and
-         anon key are correct; the schema just hasn't been set up yet. We
+         publishable key are correct; the schema just hasn't been set up yet. We
          treat this as a successful credential validation.
          PostgREST may phrase this as "relation does not exist" or
          "Could not find the table ... in the schema cache". */

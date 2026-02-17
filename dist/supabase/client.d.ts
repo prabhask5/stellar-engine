@@ -6,7 +6,7 @@
  * that defers client creation until the **first property access**. This
  * "lazy singleton" pattern solves a critical bootstrapping problem:
  *
- *   The Supabase URL and anon key are loaded at **runtime** (via
+ *   The Supabase URL and publishable key are loaded at **runtime** (via
  *   `getConfig()` from `../runtime/runtimeConfig`), not at build time.
  *   Modules that `import { supabase }` at the top level would otherwise
  *   crash because the config has not been initialized yet when the import
@@ -34,7 +34,7 @@
  *     which helps with server-side debugging of session eviction issues.
  *
  * Security considerations:
- *   - The anon key is a **public** key (safe to include in client bundles).
+ *   - The publishable key is a **public** key (safe to include in client bundles).
  *   - PKCE flow is used instead of the implicit flow for stronger OAuth
  *     security and better compatibility with PWA environments.
  *   - Session persistence uses localStorage; the module proactively scrubs
@@ -62,7 +62,7 @@ export declare function _setClientPrefix(prefix: string): void;
  * The public Supabase client — a Proxy-based lazy singleton.
  *
  * **Why a Proxy?**
- * The Supabase URL and anon key are not available at import time (they come
+ * The Supabase URL and publishable key are not available at import time (they come
  * from a runtime config that is loaded asynchronously). A Proxy lets every
  * module `import { supabase }` at the top level without worrying about
  * initialization order. The real client is created transparently on first

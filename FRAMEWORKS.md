@@ -404,10 +404,10 @@ The `@supabase/supabase-js` library is the official client for interacting with 
 ```javascript
 import { createClient } from '@supabase/supabase-js';
 
-// Create a client with your project URL and public anonymous key
+// Create a client with your project URL and publishable key
 const supabase = createClient(
   'https://your-project.supabase.co',
-  'your-anon-key'
+  'your-publishable-key'
 );
 ```
 
@@ -837,7 +837,7 @@ You configure the adapter in `svelte.config.js` and SvelteKit handles the rest.
 SvelteKit integration is provided through the `stellar-drive/kit` subpath export. It is entirely optional -- the core engine works without SvelteKit.
 
 - **Layout load function factories.** `resolveRootLayout()` is a factory that generates the root `+layout.ts` load function. It initializes the engine, loads runtime configuration (Supabase URL and keys) from the server, determines the current auth state (Supabase session, offline session, demo mode, or unauthenticated), and starts the background sync engine. `resolveProtectedLayout()` guards route groups that require authentication, redirecting unauthenticated users to the login page.
-- **Server API handlers.** `getServerConfig()` creates a `GET` handler for `/api/config` that serves the Supabase URL and anon key from server-side environment variables. `createValidateHandler()` creates a `POST` handler for validating Supabase connection credentials during initial setup.
+- **Server API handlers.** `getServerConfig()` creates a `GET` handler for `/api/config` that serves the Supabase URL and publishable key from server-side environment variables. `createValidateHandler()` creates a `POST` handler for validating Supabase connection credentials during initial setup.
 - **Auth hydration.** `hydrateAuthState()` bridges SvelteKit load data (available on first render) to reactive stores (used throughout the app lifecycle), ensuring the `authState` store is populated before any component reads it.
 - **Email confirmation.** `handleEmailConfirmation()` processes the token exchange when a user clicks an email confirmation link, converting the URL token into a Supabase session.
 - **Service worker lifecycle.** `pollForNewServiceWorker()` and `monitorSwLifecycle()` manage PWA service worker updates, prompting users when a new version is available.

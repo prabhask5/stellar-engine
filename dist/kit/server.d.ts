@@ -42,8 +42,8 @@ export interface DeployConfig {
     projectId: string;
     /** The Supabase project URL (e.g. `https://abc.supabase.co`). */
     supabaseUrl: string;
-    /** The Supabase anonymous/public key for client-side access. */
-    supabaseAnonKey: string;
+    /** The Supabase publishable key for client-side access. */
+    supabasePublishableKey: string;
 }
 /**
  * Result of a Vercel deployment attempt.
@@ -76,8 +76,8 @@ export interface ServerConfig {
     configured: boolean;
     /** The Supabase project URL, if configured. */
     supabaseUrl?: string;
-    /** The Supabase anonymous key, if configured. */
-    supabaseAnonKey?: string;
+    /** The Supabase publishable key, if configured. */
+    supabasePublishableKey?: string;
 }
 /**
  * Reads Supabase configuration from `process.env` at runtime.
@@ -132,7 +132,7 @@ export declare function getServerConfig(): ServerConfig;
  *   vercelToken: 'tok_...',
  *   projectId: 'prj_...',
  *   supabaseUrl: 'https://abc.supabase.co',
- *   supabaseAnonKey: 'eyJ...'
+ *   supabasePublishableKey: 'eyJ...'
  * });
  * if (!result.success) console.error(result.error);
  * ```
@@ -147,7 +147,7 @@ export declare function deployToVercel(config: DeployConfig): Promise<DeployResu
  * credentials by attempting to connect to the provided Supabase instance.
  *
  * The returned handler:
- *   1. Parses the JSON request body for `supabaseUrl` and `supabaseAnonKey`
+ *   1. Parses the JSON request body for `supabaseUrl` and `supabasePublishableKey`
  *   2. Validates that both fields are present (returns 400 if not)
  *   3. Delegates to `validateSupabaseCredentials` for the actual check
  *   4. Returns a JSON response with the validation result

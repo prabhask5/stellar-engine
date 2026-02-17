@@ -32,8 +32,8 @@ export interface AppConfig {
   /** The full URL of the Supabase project (e.g., `https://xyz.supabase.co`). */
   supabaseUrl: string;
 
-  /** The public anonymous key for the Supabase project. */
-  supabaseAnonKey: string;
+  /** The public publishable key for the Supabase project. */
+  supabasePublishableKey: string;
 
   /**
    * Whether the application has completed initial setup.
@@ -116,7 +116,7 @@ function loadFromCache(): AppConfig | null {
     const stored = localStorage.getItem(getCacheKey());
     if (!stored) return null;
     const parsed = JSON.parse(stored) as AppConfig;
-    if (parsed.configured && parsed.supabaseUrl && parsed.supabaseAnonKey) {
+    if (parsed.configured && parsed.supabaseUrl && parsed.supabasePublishableKey) {
       return parsed;
     }
     return null;
@@ -187,7 +187,7 @@ export async function initConfig(): Promise<AppConfig | null> {
         if (serverConfig.configured) {
           const config: AppConfig = {
             supabaseUrl: serverConfig.supabaseUrl,
-            supabaseAnonKey: serverConfig.supabaseAnonKey,
+            supabasePublishableKey: serverConfig.supabasePublishableKey,
             configured: true
           };
           configCache = config;
@@ -263,7 +263,7 @@ export function getConfig(): AppConfig | null {
  * ```ts
  * setConfig({
  *   supabaseUrl: 'https://xyz.supabase.co',
- *   supabaseAnonKey: 'eyJ...',
+ *   supabasePublishableKey: 'eyJ...',
  *   configured: true
  * });
  * ```

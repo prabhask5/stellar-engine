@@ -754,7 +754,7 @@ Copy \`.env.example\` to \`.env\` and fill in:
 | Variable | Where to find it | Required for |
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data access |
-| \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data access |
+| \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`publishable\` key | Client auth + data access |
 | \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto-migration (dev/build) |
 
 > **Note:** \`DATABASE_URL\` is optional for local development. Without it, types still auto-generate but Supabase schema migrations are skipped.
@@ -878,7 +878,7 @@ static/
 | Variable | Where to find it | Required for |
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data |
-| \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data |
+| \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`publishable\` key | Client auth + data |
 | \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto-migration |
 
 > \`DATABASE_URL\` is only used server-side during builds. It is never bundled into client code. Without it, types still auto-generate but Supabase migrations are skipped.
@@ -1885,7 +1885,7 @@ function generateSetupPageSvelte(opts) {
    * 1. Create a Supabase project (instructions only).
    * 2. Configure authentication (enable anonymous sign-ins).
    * 3. Initialize the database by running the schema SQL.
-   * 4. Enter and validate Supabase credentials (URL + anon key).
+   * 4. Enter and validate Supabase credentials (URL + publishable key).
    * 5. Persist configuration via Vercel API (set env vars + redeploy).
    *
    * After a successful deploy the page polls for a new service-worker
@@ -1908,8 +1908,8 @@ function generateSetupPageSvelte(opts) {
   /** Supabase project URL entered by the user */
   let supabaseUrl = $state('');
 
-  /** Supabase public anon key entered by the user */
-  let supabaseAnonKey = $state('');
+  /** Supabase publishable key entered by the user */
+  let supabasePublishableKey = $state('');
 
   /** One-time Vercel API token for setting env vars */
   let vercelToken = $state('');
@@ -1958,7 +1958,7 @@ function generateSetupPageSvelte(opts) {
    * validation — the "Continue" button should be re-disabled.
    */
   const credentialsChanged = $derived(
-    validateSuccess && (supabaseUrl !== validatedUrl || supabaseAnonKey !== validatedKey)
+    validateSuccess && (supabaseUrl !== validatedUrl || supabasePublishableKey !== validatedKey)
   );
 
   // =============================================================================
@@ -1995,7 +1995,7 @@ function generateSetupPageSvelte(opts) {
       const res = await fetch('/api/setup/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supabaseUrl, supabaseAnonKey })
+        body: JSON.stringify({ supabaseUrl, supabasePublishableKey })
       });
 
       const data = await res.json();
@@ -2003,11 +2003,11 @@ function generateSetupPageSvelte(opts) {
       if (data.valid) {
         validateSuccess = true;
         validatedUrl = supabaseUrl;
-        validatedKey = supabaseAnonKey;
+        validatedKey = supabasePublishableKey;
         /* Cache config locally so the app works immediately after deploy */
         setConfig({
           supabaseUrl,
-          supabaseAnonKey,
+          supabasePublishableKey,
           configured: true
         });
       } else {
@@ -2062,7 +2062,7 @@ function generateSetupPageSvelte(opts) {
       const res = await fetch('/api/setup/deploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supabaseUrl, supabaseAnonKey, vercelToken })
+        body: JSON.stringify({ supabaseUrl, supabasePublishableKey, vercelToken })
       });
 
       const data = await res.json();
@@ -2988,7 +2988,7 @@ function generateConfigServer() {
     return `/**
  * Config API Endpoint — \`GET /api/config\`
  *
- * Returns the runtime configuration object (Supabase URL, anon key, app
+ * Returns the runtime configuration object (Supabase URL, publishable key, app
  * settings) that the client fetches on first load via \`initConfig()\`.
  */
 
@@ -3032,11 +3032,11 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = async ({ request }) => {
   /* ── Parse and validate request body ── */
-  const { supabaseUrl, supabaseAnonKey, vercelToken } = await request.json();
+  const { supabaseUrl, supabasePublishableKey, vercelToken } = await request.json();
 
-  if (!supabaseUrl || !supabaseAnonKey || !vercelToken) {
+  if (!supabaseUrl || !supabasePublishableKey || !vercelToken) {
     return json(
-      { success: false, error: 'Supabase URL, Anon Key, and Vercel Token are required' },
+      { success: false, error: 'Supabase URL, Publishable Key, and Vercel Token are required' },
       { status: 400 }
     );
   }
@@ -3051,7 +3051,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   /* ── Delegate to engine ── */
-  const result = await deployToVercel({ vercelToken, projectId, supabaseUrl, supabaseAnonKey });
+  const result = await deployToVercel({ vercelToken, projectId, supabaseUrl, supabasePublishableKey });
   return json(result);
 };
 `;
@@ -3065,7 +3065,7 @@ function generateValidateServer() {
     return `/**
  * Supabase Credential Validation Endpoint — \`POST /api/setup/validate\`
  *
- * Accepts a Supabase URL and anon key, attempts a lightweight query
+ * Accepts a Supabase URL and publishable key, attempts a lightweight query
  * against the project, and returns whether the credentials are valid.
  * Used by the setup wizard before saving config.
  */
@@ -4531,9 +4531,9 @@ function generateEnvExample(opts) {
 # Find it: Supabase Dashboard → Settings → API → Project URL
 PUBLIC_SUPABASE_URL=
 
-# The anonymous (public) API key — used for client-side auth and data access.
+# The publishable (public) API key — used for client-side auth and data access.
 # This key is safe to include in client bundles; RLS policies protect data.
-# Find it: Supabase Dashboard → Settings → API → Project API keys → anon public
+# Find it: Supabase Dashboard → Settings → API → Project API keys → publishable
 PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=
 
 # -----------------------------------------------------------------------------

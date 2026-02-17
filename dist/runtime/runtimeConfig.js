@@ -85,7 +85,7 @@ function loadFromCache() {
         if (!stored)
             return null;
         const parsed = JSON.parse(stored);
-        if (parsed.configured && parsed.supabaseUrl && parsed.supabaseAnonKey) {
+        if (parsed.configured && parsed.supabaseUrl && parsed.supabasePublishableKey) {
             return parsed;
         }
         return null;
@@ -155,7 +155,7 @@ export async function initConfig() {
                 if (serverConfig.configured) {
                     const config = {
                         supabaseUrl: serverConfig.supabaseUrl,
-                        supabaseAnonKey: serverConfig.supabaseAnonKey,
+                        supabasePublishableKey: serverConfig.supabasePublishableKey,
                         configured: true
                     };
                     configCache = config;
@@ -228,7 +228,7 @@ export function getConfig() {
  * ```ts
  * setConfig({
  *   supabaseUrl: 'https://xyz.supabase.co',
- *   supabaseAnonKey: 'eyJ...',
+ *   supabasePublishableKey: 'eyJ...',
  *   configured: true
  * });
  * ```

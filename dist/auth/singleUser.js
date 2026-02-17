@@ -1051,7 +1051,7 @@ export async function resetSingleUser() {
  *
  * Returns user info if a user exists in the Supabase project, `null` otherwise.
  * This is used by browser extensions and new devices to discover the existing
- * account before linking. Works without authentication (uses the anon key).
+ * account before linking. Works without authentication (uses the publishable key).
  *
  * @returns An object with `email`, `gateType`, `codeLength`, and `profile`,
  *   or `null` if no user exists or the RPC fails.

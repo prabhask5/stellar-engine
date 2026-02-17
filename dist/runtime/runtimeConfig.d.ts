@@ -26,8 +26,8 @@
 export interface AppConfig {
     /** The full URL of the Supabase project (e.g., `https://xyz.supabase.co`). */
     supabaseUrl: string;
-    /** The public anonymous key for the Supabase project. */
-    supabaseAnonKey: string;
+    /** The public publishable key for the Supabase project. */
+    supabasePublishableKey: string;
     /**
      * Whether the application has completed initial setup.
      * `false` when `/api/config` returns a "not yet configured" response.
@@ -101,7 +101,7 @@ export declare function getConfig(): AppConfig | null;
  * ```ts
  * setConfig({
  *   supabaseUrl: 'https://xyz.supabase.co',
- *   supabaseAnonKey: 'eyJ...',
+ *   supabasePublishableKey: 'eyJ...',
  *   configured: true
  * });
  * ```

@@ -105,7 +105,7 @@ initEngine({
 });
 
 // ─── 2. Resolve auth and start the engine ──────────────────────────
-// The engine fetches runtime config (Supabase URL + anon key) from
+// The engine fetches runtime config (Supabase URL + publishable key) from
 // your /api/config endpoint -- no need to pass a supabase client.
 
 await initConfig();
@@ -316,7 +316,7 @@ const diagnostics = await getDiagnostics();
 | Variable | Required | Description |
 |---|---|---|
 | `PUBLIC_SUPABASE_URL` | Yes | Supabase project URL. Find it: Dashboard > Settings > API > Project URL. |
-| `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase anon/public key. Find it: Dashboard > Settings > API > Project API keys > anon public. |
+| `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase publishable key. Find it: Dashboard > Settings > API > Project API keys > publishable. |
 | `DATABASE_URL` | For auto-migration | Postgres connection string. Used by the Vite plugin to push schema migrations directly to Postgres. If not set, migrations are skipped and types are still generated. Find it: Dashboard > Settings > Database > Connection string (URI). |
 
 ## Schema workflow
@@ -423,7 +423,7 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 | `runFullSync()` | Run a complete pull-then-push cycle |
 | `scheduleSyncPush()` | Trigger a debounced push of pending operations |
 | `getEngineConfig()` | Retrieve the current engine config (throws if not initialized) |
-| `validateSupabaseCredentials()` | Verify Supabase URL and anon key are valid |
+| `validateSupabaseCredentials()` | Verify Supabase URL and publishable key are valid |
 | `validateSchema()` | Validate all configured tables exist in Supabase |
 
 ### Database

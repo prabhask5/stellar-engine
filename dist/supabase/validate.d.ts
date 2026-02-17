@@ -4,7 +4,7 @@
  * Provides two complementary validation capabilities:
  *
  * 1. **Credential validation** (`validateSupabaseCredentials`):
- *    Tests that a given Supabase URL and anon key are well-formed and can
+ *    Tests that a given Supabase URL and publishable key are well-formed and can
  *    reach the Supabase REST API. Used during setup / onboarding flows
  *    where the user manually enters their project credentials.
  *
@@ -33,7 +33,7 @@
  * Validate Supabase credentials by attempting a lightweight API call.
  *
  * This function is designed for **setup flows** where a user provides their
- * Supabase URL and anon key and the app needs to verify them before saving.
+ * Supabase URL and publishable key and the app needs to verify them before saving.
  *
  * Validation steps:
  * 1. Parse the URL to ensure it is syntactically valid.
@@ -47,7 +47,7 @@
  *    - Network error => Supabase is unreachable.
  *
  * @param url       - The Supabase project URL (e.g. `https://xyz.supabase.co`).
- * @param anonKey   - The project's anonymous (public) API key.
+ * @param publishableKey   - The project's publishable (public) API key.
  * @param testTable - Optional table name to query. Defaults to `'_health_check'`.
  *                    Using a table that does not exist is fine — we only care
  *                    whether the API responds, not whether the table is present.
@@ -68,7 +68,7 @@
  *
  * @see {@link validateSchema} — for post-setup table existence checks
  */
-export declare function validateSupabaseCredentials(url: string, anonKey: string, testTable?: string): Promise<{
+export declare function validateSupabaseCredentials(url: string, publishableKey: string, testTable?: string): Promise<{
     valid: boolean;
     error?: string;
 }>;

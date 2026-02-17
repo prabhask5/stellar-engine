@@ -219,7 +219,7 @@ export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTyp
 // =============================================================================
 // Server-side utilities for validating Supabase credentials and database
 // schema during initial app setup flows:
-// - `validateSupabaseCredentials` — tests that the provided URL and anon key
+// - `validateSupabaseCredentials` — tests that the provided URL and publishable key
 //   can successfully connect to a Supabase project.
 // - `validateSchema` — verifies that the required database tables and columns
 //   exist in the connected Supabase project.

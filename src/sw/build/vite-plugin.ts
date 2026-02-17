@@ -504,7 +504,19 @@ async function pushMigration(
   opts: Required<SchemaConfig>,
   root: string
 ): Promise<boolean> {
-  const databaseUrl = process.env.DATABASE_URL;
+  let databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    for (const envFile of ['.env.local', '.env']) {
+      const envPath = join(root, envFile);
+      if (existsSync(envPath)) {
+        const match = readFileSync(envPath, 'utf-8').match(/^DATABASE_URL\s*=\s*(.+)$/m);
+        if (match) {
+          databaseUrl = match[1].trim();
+          break;
+        }
+      }
+    }
+  }
 
   if (!databaseUrl) {
     const relTypes = relative(root, resolve(opts.typesOutput));

@@ -379,7 +379,19 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
  * @returns `true` if the migration was pushed successfully, `false` otherwise.
  */
 async function pushMigration(sql, opts, root) {
-    const databaseUrl = process.env.DATABASE_URL;
+    let databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+        for (const envFile of ['.env.local', '.env']) {
+            const envPath = join(root, envFile);
+            if (existsSync(envPath)) {
+                const match = readFileSync(envPath, 'utf-8').match(/^DATABASE_URL\s*=\s*(.+)$/m);
+                if (match) {
+                    databaseUrl = match[1].trim();
+                    break;
+                }
+            }
+        }
+    }
     if (!databaseUrl) {
         const relTypes = relative(root, resolve(opts.typesOutput));
         console.warn(`[stellar-drive] \u26a0 Supabase auto-migration skipped \u2014 missing env var:\n` +

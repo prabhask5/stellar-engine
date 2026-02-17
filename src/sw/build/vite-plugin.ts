@@ -419,6 +419,12 @@ async function pushSchema(
     /* DNS resolution failed — fall through with default resolution. */
   }
 
+  /* Log Postgres NOTICEs (e.g. "relation already exists, skipping") as
+     concise one-liners instead of full JSON objects. */
+  connectOpts.onnotice = (notice: { message?: string }) => {
+    if (notice.message) console.log(`[stellar-drive] ${notice.message}`);
+  };
+
   const sql_client = postgres(databaseUrl, connectOpts);
 
   try {

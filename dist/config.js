@@ -56,7 +56,7 @@ export function initEngine(config) {
             throw new Error('initEngine: `schema` is mutually exclusive with `tables` and `database`. ' +
                 'Use either the schema-driven API or the manual API, not both.');
         }
-        config.tables = generateTablesFromSchema(config.schema);
+        config.tables = generateTablesFromSchema(config.schema, config.prefix);
         config.database = generateDatabaseFromSchema(config.schema, config.prefix, config.databaseName, !!config.crdt);
     }
     /* Validate that tables are configured (either manually or via schema). */
@@ -128,7 +128,7 @@ export function getEngineConfig() {
  * @returns The camelCase Dexie table name (e.g., `'goalLists'` for `'goal_lists'`).
  */
 export function getDexieTableFor(table) {
-    return snakeToCamel(table.supabaseName);
+    return snakeToCamel(table.schemaKey || table.supabaseName);
 }
 /**
  * Build a lookup map from Supabase table names to Dexie table names.
@@ -144,7 +144,8 @@ export function getTableMap() {
     const config = getEngineConfig();
     const map = {};
     for (const table of config.tables) {
-        map[table.supabaseName] = getDexieTableFor(table);
+        const key = table.schemaKey || table.supabaseName;
+        map[key] = getDexieTableFor(table);
     }
     return map;
 }
@@ -157,13 +158,42 @@ export function getTableMap() {
  * @throws {Error} If the table is not found in the engine config.
  * @returns The comma-separated column string.
  */
-export function getTableColumns(supabaseName) {
+export function getTableColumns(name) {
     const config = getEngineConfig();
-    const table = config.tables.find((t) => t.supabaseName === supabaseName);
+    const table = config.tables.find((t) => t.supabaseName === name || t.schemaKey === name);
     if (!table) {
-        throw new Error(`Table ${supabaseName} not found in engine config`);
+        throw new Error(`Table ${name} not found in engine config`);
     }
     return table.columns;
+}
+// =============================================================================
+// Table Name Prefixing (Multi-Tenant Support)
+// =============================================================================
+/**
+ * Prefix a raw table name with the app prefix for Supabase.
+ *
+ * @param prefix - The app prefix (e.g., `'stellar'`).
+ * @param tableName - The raw table name (e.g., `'goals'`).
+ * @returns The prefixed name (e.g., `'stellar_goals'`).
+ */
+function prefixTableName(prefix, tableName) {
+    return `${prefix}_${tableName}`;
+}
+/**
+ * Resolve a consumer-facing schema key to the actual Supabase table name.
+ *
+ * Consumers use unprefixed names (e.g., `'goals'`), but the actual Supabase
+ * table is prefixed (e.g., `'stellar_goals'`). This function performs the
+ * lookup. Falls back to the input name if no match is found (backward
+ * compatibility with manual config or direct supabase name usage).
+ *
+ * @param schemaKey - The raw schema key (e.g., `'goals'`).
+ * @returns The prefixed Supabase table name (e.g., `'stellar_goals'`).
+ */
+export function resolveSupabaseName(schemaKey) {
+    const config = getEngineConfig();
+    const table = config.tables.find((t) => t.schemaKey === schemaKey || t.supabaseName === schemaKey);
+    return table ? table.supabaseName : schemaKey;
 }
 // =============================================================================
 // Schema → Config Generation
@@ -223,13 +253,14 @@ function buildColumnsFromFields(config) {
     const appCols = Object.keys(config.fields);
     return [...systemCols, ...appCols].join(',');
 }
-function generateTablesFromSchema(schema) {
+function generateTablesFromSchema(schema, prefix) {
     const tables = [];
     for (const [tableName, definition] of Object.entries(schema)) {
         /* String form is sugar for { indexes: theString }. */
         const config = typeof definition === 'string' ? { indexes: definition } : definition;
         const tableConfig = {
-            supabaseName: tableName,
+            supabaseName: prefixTableName(prefix, tableName),
+            schemaKey: tableName,
             columns: config.columns || buildColumnsFromFields(config) || '*',
             ownershipFilter: hasDirectOwnership(config)
                 ? config.ownership || 'user_id'

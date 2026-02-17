@@ -157,8 +157,14 @@ export interface SyncEngineConfig {
  * }
  */
 export interface TableConfig {
-    /** The table name in Supabase (snake_case). Also used as the API surface name. */
+    /** The actual table name in Supabase (prefixed, e.g., `'stellar_goals'`). */
     supabaseName: string;
+    /**
+     * The raw schema key (unprefixed, e.g., `'goals'`).
+     * Used for Dexie table name derivation and consumer-facing API lookups.
+     * When not set (manual config), falls back to `supabaseName`.
+     */
+    schemaKey?: string;
     /** Comma-separated column list for Supabase SELECT queries (egress optimization). */
     columns: string;
     /** Column name used to filter rows by the current user (e.g., `'user_id'`). */
@@ -245,5 +251,17 @@ export declare function getTableMap(): Record<string, string>;
  * @throws {Error} If the table is not found in the engine config.
  * @returns The comma-separated column string.
  */
-export declare function getTableColumns(supabaseName: string): string;
+export declare function getTableColumns(name: string): string;
+/**
+ * Resolve a consumer-facing schema key to the actual Supabase table name.
+ *
+ * Consumers use unprefixed names (e.g., `'goals'`), but the actual Supabase
+ * table is prefixed (e.g., `'stellar_goals'`). This function performs the
+ * lookup. Falls back to the input name if no match is found (backward
+ * compatibility with manual config or direct supabase name usage).
+ *
+ * @param schemaKey - The raw schema key (e.g., `'goals'`).
+ * @returns The prefixed Supabase table name (e.g., `'stellar_goals'`).
+ */
+export declare function resolveSupabaseName(schemaKey: string): string;
 //# sourceMappingURL=config.d.ts.map

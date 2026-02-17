@@ -103,7 +103,7 @@ The engine does NOT require a pre-created Supabase client. By default, the engin
 Every consuming application calls `initEngine()` once at startup before using any other engine function. This single call:
 
 1. Validates and normalizes the configuration
-2. Propagates the `prefix` to all internal modules (debug logging, deviceId, Supabase client, runtime config, demo mode)
+2. Propagates the `prefix` to all internal modules (debug logging, deviceId, Supabase client, runtime config, demo mode, Supabase table name prefixing)
 3. Initializes the CRDT subsystem if configured
 4. Creates or registers the Dexie database instance
 5. Registers demo mode configuration if provided
@@ -131,7 +131,7 @@ initEngine({
 
 **Schema-Driven (Recommended):**
 
-The consumer provides a declarative `schema` object where each key is a Supabase table name and the value is either a Dexie index string or a `SchemaTableConfig` object. The engine auto-generates everything:
+The consumer provides a declarative `schema` object where each key is a logical table name and the value is either a Dexie index string or a `SchemaTableConfig` object. The actual Supabase table name is `${prefix}_${schemaKey}` -- consumers write raw keys (e.g., `goals`) and the engine automatically prefixes them (e.g., `stellar_goals`). The engine auto-generates everything:
 
 - `TableConfig[]` -- per-table sync configuration (columns, ownership filter, singleton flag, conflict settings)
 - Dexie store schemas -- by merging app-specific indexes with `SYSTEM_INDEXES`
@@ -231,7 +231,7 @@ When an upgrade is detected, both the old version and new version are declared t
 When `initEngine({ schema: {...} })` is called, two internal functions run:
 
 **`generateTablesFromSchema(schema)`** produces a `TableConfig[]` where each schema key becomes:
-- `supabaseName` = the schema key (snake_case)
+- `supabaseName` = `${prefix}_${schemaKey}` (the actual Supabase table name is automatically prefixed; consumers write raw schema keys and the engine prefixes them transparently)
 - `columns` = `'*'` (SELECT all by default)
 - `ownershipFilter` = `'user_id'` (default)
 - Plus optional `isSingleton`, `excludeFromConflict`, `numericMergeFields`, `onRemoteChange` from the object form
@@ -922,6 +922,7 @@ const channelName = `${prefix}_sync_${userId}`;
 state.channel = supabase.channel(channelName);
 
 for (const table of realtimeTables) {
+  // table is the prefixed Supabase table name (e.g., 'stellar_goals')
   state.channel = state.channel.on(
     'postgres_changes',
     { event: '*', schema: 'public', table },
@@ -929,6 +930,8 @@ for (const table of realtimeTables) {
   );
 }
 ```
+
+The engine subscribes to prefixed table names in PostgreSQL changes (e.g., `stellar_goals`, not `goals`), matching the actual Supabase table names.
 
 This reduces WebSocket overhead from N connections to 1.
 
@@ -1714,8 +1717,10 @@ User -> setDemoMode(true) + page reload
 
 ### 15.1 `generateSupabaseSQL(schema, options)`
 
-Generates complete Supabase SQL from a declarative schema:
-- `CREATE TABLE` statements with system columns (`id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`, `device_id`)
+Generates complete Supabase SQL from a declarative schema. Accepts a `prefix` option which causes all generated `CREATE TABLE` names, RLS policy names, trigger names, and index names to be prefixed with `${prefix}_`. Auto-migration SQL is also generated to rename legacy unprefixed tables (e.g., `ALTER TABLE goals RENAME TO stellar_goals`) for backward compatibility.
+
+Generated output includes:
+- `CREATE TABLE` statements with system columns (`id`, `user_id`, `created_at`, `updated_at`, `deleted`, `_version`, `device_id`) -- table names are prefixed (e.g., `stellar_goals`)
 - Row-Level Security (RLS) policies per table
 - `updated_at` trigger (auto-update on modification)
 - `set_user_id` trigger (auto-set `user_id` from `auth.uid()`)
@@ -2036,7 +2041,7 @@ If `DATABASE_URL` is not set, TypeScript types are still generated but migration
 Migrations are pushed via a **direct Postgres connection** using the `DATABASE_URL` environment variable and the `postgres` npm package. This approach:
 
 - **Eliminates bootstrap requirements** -- works on completely fresh databases with no prior setup
-- **Uses idempotent SQL on first run** -- `CREATE TABLE IF NOT EXISTS` ensures existing databases aren't affected
+- **Uses idempotent SQL on first run** -- `CREATE TABLE IF NOT EXISTS` ensures existing databases aren't affected (table names are prefixed, e.g., `stellar_goals`)
 - **Retries on failure** -- the schema snapshot is only saved after a successful push, so the next build retries automatically
 - **Short-lived connections** -- one connection per migration push, closed immediately after
 

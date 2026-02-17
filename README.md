@@ -58,7 +58,7 @@ import { initConfig } from 'stellar-drive/config';
 import { resolveAuthState } from 'stellar-drive/auth';
 
 initEngine({
-  prefix: 'myapp',
+  prefix: 'myapp', // Used to prefix Supabase table names (e.g., goals → myapp_goals)
 
   // Schema-driven: declare tables once, engine handles the rest.
   // System indexes (id, user_id, created_at, updated_at, deleted, _version)
@@ -283,7 +283,8 @@ import { getEngineConfig } from 'stellar-drive';
 const config = getEngineConfig();
 
 // Auto-generate Supabase SQL (CREATE TABLE + RLS policies) from schema
-const sql = generateSupabaseSQL(config.schema!);
+// Pass prefix to generate prefixed table names (e.g., myapp_goals)
+const sql = generateSupabaseSQL(config.schema!, { prefix: config.prefix });
 
 // Auto-generate TypeScript interfaces from schema
 const ts = generateTypeScript(config.schema!);
@@ -395,7 +396,7 @@ The wizard prompts for:
 |--------|----------|-------------|
 | App Name | Yes | Full app name (e.g., "Stellar Planner") |
 | Short Name | Yes | Short name for PWA home screen (under 12 chars) |
-| Prefix | Yes | Lowercase key for localStorage, caches, SW (auto-suggested from name) |
+| Prefix | Yes | Lowercase key for localStorage, caches, SW, and Supabase table names (auto-suggested from name) |
 | Description | No | App description (default: "A self-hosted offline-first PWA") |
 
 Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
@@ -566,7 +567,7 @@ When debug mode is enabled, the engine exposes utilities on `window` using your 
 
 | Export | Description |
 |---|---|
-| `generateSupabaseSQL(schema)` | Generate `CREATE TABLE` statements and RLS policies from schema |
+| `generateSupabaseSQL(schema, options?)` | Generate `CREATE TABLE` statements and RLS policies from schema (accepts `prefix` to prefix table names) |
 | `generateTypeScript(schema)` | Generate TypeScript interfaces from schema |
 | `generateMigrationSQL(oldSchema, newSchema)` | Generate `ALTER TABLE` migration SQL for schema changes |
 
@@ -669,6 +670,53 @@ initEngine({ /* ...config */, demo: demoConfig });
 setDemoMode(true);
 window.location.href = '/'; // Full reload required
 ```
+
+## Multi-Tenant Supabase
+
+Multiple stellar-drive apps can share a **single Supabase instance** — same Postgres database, Auth, Realtime, and SMTP server. Each app's tables are automatically isolated via name prefixing.
+
+### How it works
+
+Given `prefix: 'stellar'` and schema key `goals`, the Supabase table becomes `stellar_goals`. This is automatic — consumers still write `goals` in their schema and API calls.
+
+**Shared across apps (unprefixed):**
+- `auth.users` (Supabase Auth)
+- `trusted_devices` (device verification)
+- `crdt_documents` (CRDT collaborative editing)
+- Helper functions: `set_user_id()`, `update_updated_at_column()`
+
+**Isolated per app (prefixed):**
+- All app-defined tables: `stellar_goals`, `infinite_notes`, etc.
+- RLS policies, triggers, and indexes
+
+**What does NOT change:**
+- IndexedDB (Dexie) — already namespaced by `${prefix}DB`
+- Consumer schema files — still write `goals`, not `stellar_goals`
+- Consumer API calls — `engineCreate('goals', data)` works as before
+- Generated TypeScript types — still `Goal`, not `StellarGoal`
+- Auth flow — same Supabase Auth, same user accounts across apps
+
+### Auto-migration
+
+When generating SQL, the engine includes safe, idempotent migration statements that rename legacy unprefixed tables to their prefixed equivalents:
+
+```sql
+-- Only renames if old table exists AND new table doesn't
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'goals')
+  AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'stellar_goals') THEN
+    ALTER TABLE goals RENAME TO stellar_goals;
+  END IF;
+END $$;
+```
+
+### Self-hosting notes
+
+On managed Supabase (Free tier), no configuration changes are needed. For self-hosted instances with 5+ apps:
+
+- Postgres `max_connections`: increase to 200 (`postgres -c max_connections=200`)
+- Realtime `max_concurrent_users`: increase via `REALTIME_MAX_CONCURRENT_USERS` env var
+- PostgREST pool: `PGRST_DB_POOL=50` in docker-compose
 
 ## License
 

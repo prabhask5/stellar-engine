@@ -315,6 +315,7 @@ initEngine({
 - **Automatic version management.** The engine hashes the merged store schema, compares it to a localStorage-persisted hash, and bumps the Dexie version number only when the schema actually changes. When upgrading, it declares both the previous and current version so Dexie has a proper upgrade path.
 - **All CRUD operations go through Dexie transactions.** Every local write is paired with a sync queue entry inside a single transaction, guaranteeing that if the data is written locally, a sync operation is always queued for it.
 - **Snake-to-camel table name conversion.** Supabase table names are snake_case (`goal_lists`), but Dexie table names are auto-converted to camelCase (`goalLists`) for JavaScript-idiomatic access.
+- **Table names are unprefixed.** Dexie table names are derived from the raw schema keys (e.g., `tasks`), not the prefixed Supabase names (e.g., `myapp_tasks`). IndexedDB is already namespaced by the database name `${prefix}DB`, so no table-level prefixing is needed.
 
 ---
 
@@ -334,6 +335,8 @@ At the core of Supabase is a full PostgreSQL database. PostgreSQL is a relationa
 
 ```sql
 -- A table definition in PostgreSQL
+-- Note: in practice, the engine prefixes table names with the app's prefix
+-- (e.g., "myapp_tasks" instead of "tasks"). Shown unprefixed here for clarity.
 CREATE TABLE tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id),
@@ -380,6 +383,7 @@ Supabase Realtime has three modes:
 RLS is a PostgreSQL feature that restricts which rows a user can see or modify, enforced at the database level. This is more secure than application-level access control because even if someone bypasses your frontend code, the database itself refuses unauthorized access:
 
 ```sql
+-- In practice, "tasks" would be prefixed (e.g., "myapp_tasks") by the engine.
 -- Policy: users can only see their own tasks
 CREATE POLICY "Users see own tasks" ON tasks
   FOR SELECT
@@ -483,6 +487,7 @@ supabase
 
 ### How stellar-drive Uses Supabase
 
+- **Table prefixing for multi-tenant isolation.** All app-defined tables in Supabase are prefixed with the app's `prefix` value from `initEngine()`. For example, with `prefix: 'myapp'` and a schema key `tasks`, the actual Supabase table name is `myapp_tasks`. This allows multiple apps to share a single Supabase project without table name collisions. Consumer code and IndexedDB always use the unprefixed names -- the engine transparently adds and strips the prefix when communicating with Supabase.
 - **REST API for push/pull sync operations.** The engine pushes local changes to the server via Supabase's REST API (insert, update, upsert) and pulls remote changes by querying for records updated since the last sync cursor (an `updated_at` timestamp stored in localStorage).
 - **Realtime Postgres Changes for instant cross-device updates.** The engine subscribes to PostgreSQL changes on every configured table via Supabase Realtime. When Device A pushes a change, Device B receives it within milliseconds via WebSocket instead of waiting for the next background poll.
 - **Realtime Broadcast for CRDT document sync.** Yjs document updates (typically a few bytes per keystroke) are broadcast to other connected clients via Supabase's Broadcast pub/sub channel. This avoids writing every keystroke to the database.

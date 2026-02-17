@@ -179,7 +179,7 @@ async function loadSchemaFromFile(schemaPath) {
  * @param schemaOpts - Resolved schema options (paths, autoMigrate flag).
  * @param projectRoot - Absolute path to the project root.
  */
-async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
+async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectRoot) {
     const typesAbsPath = resolve(schemaOpts.typesOutput);
     /* 1. Generate TypeScript types (only write if content changed). */
     const { generateTypeScript } = await import('../../schema.js');
@@ -225,6 +225,7 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
     console.log(`[stellar-drive] Syncing ${tableNames.length} tables: ${tableNames.join(', ')}`);
     const fullSQL = generateSupabaseSQL(schema, {
         appName,
+        prefix,
         includeHelperFunctions: true
     });
     await pushSchema(fullSQL, schemaOpts, projectRoot);
@@ -399,7 +400,7 @@ export function stellarPWA(config) {
                     console.warn('[stellar-drive] Schema file does not export a `schema` object — skipping.');
                     return;
                 }
-                await processLoadedSchema(schema, config.name, schemaOpts, projectRoot);
+                await processLoadedSchema(schema, config.name, config.prefix, schemaOpts, projectRoot);
             }
             catch (err) {
                 console.error('[stellar-drive] Error processing schema during build:', err);
@@ -481,7 +482,7 @@ export function stellarPWA(config) {
                         console.warn('[stellar-drive] Schema file does not export a `schema` object — skipping.');
                         return;
                     }
-                    await processLoadedSchema(schema, config.name, schemaOpts, projectRoot);
+                    await processLoadedSchema(schema, config.name, config.prefix, schemaOpts, projectRoot);
                 }
                 catch (err) {
                     console.error('[stellar-drive] Error processing schema:', err);

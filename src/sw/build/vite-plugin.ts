@@ -279,6 +279,7 @@ async function loadSchemaFromFile(schemaPath: string): Promise<Record<string, un
 async function processLoadedSchema(
   schema: Record<string, unknown>,
   appName: string,
+  prefix: string,
   schemaOpts: Required<SchemaConfig>,
   projectRoot: string
 ): Promise<void> {
@@ -336,6 +337,7 @@ async function processLoadedSchema(
   console.log(`[stellar-drive] Syncing ${tableNames.length} tables: ${tableNames.join(', ')}`);
   const fullSQL = generateSupabaseSQL(schema as import('../../types').SchemaDefinition, {
     appName,
+    prefix,
     includeHelperFunctions: true
   });
   await pushSchema(fullSQL, schemaOpts, projectRoot);
@@ -539,7 +541,7 @@ export function stellarPWA(config: SWConfig) {
           console.warn('[stellar-drive] Schema file does not export a `schema` object — skipping.');
           return;
         }
-        await processLoadedSchema(schema, config.name, schemaOpts, projectRoot);
+        await processLoadedSchema(schema, config.name, config.prefix, schemaOpts, projectRoot);
       } catch (err) {
         console.error('[stellar-drive] Error processing schema during build:', err);
       }
@@ -642,7 +644,7 @@ export function stellarPWA(config: SWConfig) {
             return;
           }
 
-          await processLoadedSchema(schema, config.name, schemaOpts, projectRoot);
+          await processLoadedSchema(schema, config.name, config.prefix, schemaOpts, projectRoot);
         } catch (err) {
           console.error('[stellar-drive] Error processing schema:', err);
         } finally {

@@ -498,9 +498,11 @@ function generateTableSQL(tableName, config, options) {
     /* ---- ROW LEVEL SECURITY ---- */
     lines.push(`alter table ${tableName} enable row level security;`);
     if (isChildTable) {
-        /* Child table — RLS via parent FK existence check. */
+        /* Child table — RLS via parent FK existence check.
+           The parent name from schema config is the raw key — prefix it for multi-tenant. */
         const { parent, fk } = config.ownership;
-        const check = `exists (select 1 from ${parent} where id = ${tableName}.${fk} and user_id = auth.uid())`;
+        const parentName = options?.prefix ? `${options.prefix}_${parent}` : parent;
+        const check = `exists (select 1 from ${parentName} where id = ${tableName}.${fk} and user_id = auth.uid())`;
         lines.push(`do $$ begin create policy "Owner can view ${tableName}" on ${tableName} for select using (${check}); exception when duplicate_object then null; end $$;`);
         lines.push(`do $$ begin create policy "Owner can create ${tableName}" on ${tableName} for insert with check (${check}); exception when duplicate_object then null; end $$;`);
         lines.push(`do $$ begin create policy "Owner can update ${tableName}" on ${tableName} for update using (${check}); exception when duplicate_object then null; end $$;`);
@@ -610,10 +612,36 @@ export function generateSupabaseSQL(schema, options) {
     parts.push('-- APPLICATION TABLES');
     parts.push('-- ============================================================');
     parts.push('');
+    const prefix = options?.prefix;
+    /* ---- Auto-migration: rename legacy unprefixed tables if they exist ---- */
+    if (prefix) {
+        parts.push('-- ============================================================');
+        parts.push('-- AUTO-MIGRATION: Rename legacy unprefixed tables');
+        parts.push('-- ============================================================');
+        parts.push('-- Safe: only renames if old table exists AND new table does not.');
+        parts.push('-- Idempotent: running twice does nothing.');
+        parts.push('');
+        for (const tableName of Object.keys(schema)) {
+            const prefixedName = `${prefix}_${tableName}`;
+            parts.push(`DO $$ BEGIN`);
+            parts.push(`  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '${tableName}')`);
+            parts.push(`  AND NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '${prefixedName}') THEN`);
+            parts.push(`    ALTER TABLE ${tableName} RENAME TO ${prefixedName};`);
+            parts.push(`  END IF;`);
+            parts.push(`END $$;`);
+            /* Rename indexes to match the new table name. */
+            parts.push(`ALTER INDEX IF EXISTS idx_${tableName}_user_id RENAME TO idx_${prefixedName}_user_id;`);
+            parts.push(`ALTER INDEX IF EXISTS idx_${tableName}_updated_at RENAME TO idx_${prefixedName}_updated_at;`);
+            parts.push(`ALTER INDEX IF EXISTS idx_${tableName}_deleted RENAME TO idx_${prefixedName}_deleted;`);
+            parts.push('');
+        }
+    }
     for (const [tableName, definition] of Object.entries(schema)) {
         /* Normalize string shorthand to object form. */
         const config = typeof definition === 'string' ? { indexes: definition } : definition;
-        parts.push(generateTableSQL(tableName, config, options));
+        /* Derive the actual Supabase table name (prefixed when multi-tenant). */
+        const supaTableName = prefix ? `${prefix}_${tableName}` : tableName;
+        parts.push(generateTableSQL(supaTableName, config, options));
         parts.push('');
     }
     /* ---- Trusted Devices ---- */

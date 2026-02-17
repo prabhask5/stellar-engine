@@ -120,7 +120,7 @@ Full engine configuration shape (the internal, normalized form after `initEngine
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `prefix` | `string` | *required* | App prefix for localStorage keys, debug logging, etc. |
+| `prefix` | `string` | *required* | App prefix for localStorage keys, debug logging, and multi-tenant table name prefixing. When set, all app tables are prefixed (e.g., `stellar_goals`). Shared tables (`trusted_devices`, `crdt_documents`) remain unprefixed. |
 | `schema` | `SchemaDefinition` | -- | Declarative schema (replaces `tables` + `database`). |
 | `tables` | `TableConfig[]` | -- | Per-table sync config. Auto-populated when using `schema`. |
 | `database` | `DatabaseConfig` | -- | Dexie database config. Auto-populated when using `schema`. |
@@ -185,7 +185,8 @@ Per-table sync configuration. Each entry describes one Supabase table and how it
 
 ```ts
 interface TableConfig {
-  supabaseName: string;                        // Supabase table name (snake_case)
+  supabaseName: string;                        // Actual (prefixed) Supabase table name (e.g., 'stellar_goals')
+  schemaKey?: string;                          // Raw schema key (unprefixed, e.g., 'goals'). Used for Dexie table name derivation and consumer-facing API lookups.
   columns: string;                             // Supabase SELECT columns (egress optimization)
   ownershipFilter?: string;                    // Column for RLS ownership filtering (undefined for child tables)
   isSingleton?: boolean;                       // One record per user (e.g., user settings)
@@ -195,7 +196,7 @@ interface TableConfig {
 }
 ```
 
-The Dexie (IndexedDB) table name is automatically derived from `supabaseName` via `snakeToCamel()` conversion. For example, `supabaseName: 'goal_lists'` produces the Dexie table name `goalLists`.
+The Dexie (IndexedDB) table name is automatically derived from `schemaKey` (or `supabaseName` if no prefix) via `snakeToCamel()` conversion. For example, `schemaKey: 'goal_lists'` produces the Dexie table name `goalLists`.
 
 ### `SchemaDefinition`
 
@@ -366,7 +367,7 @@ function validateSchema(
 
 ## CRUD Operations
 
-All CRUD functions reference tables by their **Supabase** name (snake_case). Internally, each operation resolves that name to the corresponding Dexie (IndexedDB) table name. All writes are transactional: the local mutation and sync queue entry are committed atomically.
+All CRUD functions reference tables by their **consumer-facing schema key** (the unprefixed snake_case name, e.g., `'goals'`). The engine automatically resolves this to the actual prefixed Supabase table name (e.g., `'stellar_goals'`) and the corresponding Dexie (IndexedDB) table name. All writes are transactional: the local mutation and sync queue entry are committed atomically.
 
 ### `engineCreate(table, data)`
 
@@ -1156,6 +1157,14 @@ function calculateNewOrder<T extends { order: number }>(
 ): number
 ```
 
+### `resolveSupabaseName(schemaKey)`
+
+Resolve a consumer-facing schema key to the actual (prefixed) Supabase table name. For example, if the engine prefix is `'stellar'`, `resolveSupabaseName('goals')` returns `'stellar_goals'`.
+
+```ts
+function resolveSupabaseName(schemaKey: string): string
+```
+
 ### `snakeToCamel(s)`
 
 Convert a `snake_case` string to `camelCase`.
@@ -1192,7 +1201,7 @@ Generate complete Supabase SQL or TypeScript interfaces from a `SchemaDefinition
 
 ### `generateSupabaseSQL(schema, options?)`
 
-Produces complete SQL: CREATE TABLE, RLS policies, triggers, indexes, and realtime subscriptions. Tables with `ownership: { parent, fk }` generate parent-FK RLS policies (per-operation `exists` checks) instead of direct `user_id` ownership, and skip the `user_id` column, `set_user_id` trigger, and `user_id` index.
+Produces complete SQL: CREATE TABLE, RLS policies, triggers, indexes, and realtime subscriptions. Tables with `ownership: { parent, fk }` generate parent-FK RLS policies (per-operation `exists` checks) instead of direct `user_id` ownership, and skip the `user_id` column, `set_user_id` trigger, and `user_id` index. When `prefix` is set, generated SQL uses prefixed table names (e.g., `stellar_goals` instead of `goals`) and includes auto-migration SQL to rename legacy unprefixed tables.
 
 ```ts
 function generateSupabaseSQL(
@@ -1206,6 +1215,7 @@ function generateSupabaseSQL(
 ```ts
 interface SQLGenerationOptions {
   appName?: string;
+  prefix?: string;                           // App prefix for multi-tenant table name prefixing. When set, all app tables are prefixed (e.g., `stellar_goals`). Shared tables (`trusted_devices`, `crdt_documents`) remain unprefixed.
   includeCRDT?: boolean;                     // Default: false
   includeDeviceVerification?: boolean;        // Default: true
   includeHelperFunctions?: boolean;           // Default: true

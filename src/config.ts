@@ -184,8 +184,14 @@ export interface SyncEngineConfig {
  * }
  */
 export interface TableConfig {
-  /** The table name in Supabase (snake_case). Also used as the API surface name. */
+  /** The actual table name in Supabase (prefixed, e.g., `'stellar_goals'`). */
   supabaseName: string;
+  /**
+   * The raw schema key (unprefixed, e.g., `'goals'`).
+   * Used for Dexie table name derivation and consumer-facing API lookups.
+   * When not set (manual config), falls back to `supabaseName`.
+   */
+  schemaKey?: string;
   /** Comma-separated column list for Supabase SELECT queries (egress optimization). */
   columns: string;
   /** Column name used to filter rows by the current user (e.g., `'user_id'`). */
@@ -269,7 +275,7 @@ export function initEngine(config: InitEngineInput): void {
           'Use either the schema-driven API or the manual API, not both.'
       );
     }
-    config.tables = generateTablesFromSchema(config.schema);
+    config.tables = generateTablesFromSchema(config.schema, config.prefix);
     config.database = generateDatabaseFromSchema(
       config.schema,
       config.prefix,
@@ -357,7 +363,7 @@ export function getEngineConfig(): SyncEngineConfig {
  * @returns The camelCase Dexie table name (e.g., `'goalLists'` for `'goal_lists'`).
  */
 export function getDexieTableFor(table: TableConfig): string {
-  return snakeToCamel(table.supabaseName);
+  return snakeToCamel(table.schemaKey || table.supabaseName);
 }
 
 /**
@@ -374,7 +380,8 @@ export function getTableMap(): Record<string, string> {
   const config = getEngineConfig();
   const map: Record<string, string> = {};
   for (const table of config.tables) {
-    map[table.supabaseName] = getDexieTableFor(table);
+    const key = table.schemaKey || table.supabaseName;
+    map[key] = getDexieTableFor(table);
   }
   return map;
 }
@@ -388,13 +395,47 @@ export function getTableMap(): Record<string, string> {
  * @throws {Error} If the table is not found in the engine config.
  * @returns The comma-separated column string.
  */
-export function getTableColumns(supabaseName: string): string {
+export function getTableColumns(name: string): string {
   const config = getEngineConfig();
-  const table = config.tables.find((t) => t.supabaseName === supabaseName);
+  const table = config.tables.find((t) => t.supabaseName === name || t.schemaKey === name);
   if (!table) {
-    throw new Error(`Table ${supabaseName} not found in engine config`);
+    throw new Error(`Table ${name} not found in engine config`);
   }
   return table.columns;
+}
+
+// =============================================================================
+// Table Name Prefixing (Multi-Tenant Support)
+// =============================================================================
+
+/**
+ * Prefix a raw table name with the app prefix for Supabase.
+ *
+ * @param prefix - The app prefix (e.g., `'stellar'`).
+ * @param tableName - The raw table name (e.g., `'goals'`).
+ * @returns The prefixed name (e.g., `'stellar_goals'`).
+ */
+function prefixTableName(prefix: string, tableName: string): string {
+  return `${prefix}_${tableName}`;
+}
+
+/**
+ * Resolve a consumer-facing schema key to the actual Supabase table name.
+ *
+ * Consumers use unprefixed names (e.g., `'goals'`), but the actual Supabase
+ * table is prefixed (e.g., `'stellar_goals'`). This function performs the
+ * lookup. Falls back to the input name if no match is found (backward
+ * compatibility with manual config or direct supabase name usage).
+ *
+ * @param schemaKey - The raw schema key (e.g., `'goals'`).
+ * @returns The prefixed Supabase table name (e.g., `'stellar_goals'`).
+ */
+export function resolveSupabaseName(schemaKey: string): string {
+  const config = getEngineConfig();
+  const table = config.tables.find(
+    (t) => t.schemaKey === schemaKey || t.supabaseName === schemaKey
+  );
+  return table ? table.supabaseName : schemaKey;
 }
 
 // =============================================================================
@@ -457,7 +498,7 @@ function buildColumnsFromFields(config: SchemaTableConfig): string | null {
   return [...systemCols, ...appCols].join(',');
 }
 
-function generateTablesFromSchema(schema: SchemaDefinition): TableConfig[] {
+function generateTablesFromSchema(schema: SchemaDefinition, prefix: string): TableConfig[] {
   const tables: TableConfig[] = [];
 
   for (const [tableName, definition] of Object.entries(schema)) {
@@ -466,7 +507,8 @@ function generateTablesFromSchema(schema: SchemaDefinition): TableConfig[] {
       typeof definition === 'string' ? { indexes: definition } : definition;
 
     const tableConfig: TableConfig = {
-      supabaseName: tableName,
+      supabaseName: prefixTableName(prefix, tableName),
+      schemaKey: tableName,
       columns: config.columns || buildColumnsFromFields(config) || '*',
       ownershipFilter: hasDirectOwnership(config)
         ? (config.ownership as string) || 'user_id'

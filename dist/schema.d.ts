@@ -39,6 +39,12 @@ import type { SchemaDefinition } from './types';
 export interface SQLGenerationOptions {
     /** Application name for SQL comments. */
     appName?: string;
+    /**
+     * App prefix for multi-tenant table name prefixing.
+     * When set, all app tables are prefixed (e.g., `stellar_goals`).
+     * Shared tables (`trusted_devices`, `crdt_documents`) remain unprefixed.
+     */
+    prefix?: string;
     /** Include CRDT document storage table. @default false */
     includeCRDT?: boolean;
     /** Include trusted_devices table. @default true */

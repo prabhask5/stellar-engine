@@ -27,7 +27,7 @@
  * @see {@link ./engine} for sync push scheduling and entity modification tracking
  * @see {@link ./conflicts} for conflict resolution during sync pull
  */
-import { getTableMap, getTableColumns } from './config';
+import { getTableMap, getTableColumns, resolveSupabaseName } from './config';
 import { getDb } from './database';
 import { queueCreateOperation, queueDeleteOperation, queueSyncOperation } from './queue';
 import { markEntityModified, scheduleSyncPush, hasHydrated } from './engine';
@@ -97,6 +97,7 @@ function getDexieTableName(supabaseName) {
 export async function engineCreate(table, data) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
+    const supaTable = resolveSupabaseName(table);
     const entityId = data.id || generateId();
     const timestamp = now();
     const payload = {
@@ -110,7 +111,7 @@ export async function engineCreate(table, data) {
     const { id: _id, ...queuePayload } = payload;
     await db.transaction('rw', [db.table(dexieTable), db.table('syncQueue')], async () => {
         await db.table(dexieTable).add(payload);
-        await queueCreateOperation(table, entityId, queuePayload);
+        await queueCreateOperation(supaTable, entityId, queuePayload);
     });
     /* Post-transaction side effects: these are intentionally outside the transaction
        because they are non-critical (UI reactivity + debounced network push). */
@@ -146,6 +147,7 @@ export async function engineCreate(table, data) {
 export async function engineUpdate(table, id, fields) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
+    const supaTable = resolveSupabaseName(table);
     const timestamp = now();
     const updateFields = { ...fields, updated_at: timestamp };
     let updated;
@@ -156,7 +158,7 @@ export async function engineUpdate(table, id, fields) {
         updated = await db.table(dexieTable).get(id);
         if (updated) {
             await queueSyncOperation({
-                table,
+                table: supaTable,
                 entityId: id,
                 operationType: 'set',
                 value: updateFields
@@ -196,10 +198,11 @@ export async function engineUpdate(table, id, fields) {
 export async function engineDelete(table, id) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
+    const supaTable = resolveSupabaseName(table);
     const timestamp = now();
     await db.transaction('rw', [db.table(dexieTable), db.table('syncQueue')], async () => {
         await db.table(dexieTable).update(id, { deleted: true, updated_at: timestamp });
-        await queueDeleteOperation(table, id);
+        await queueDeleteOperation(supaTable, id);
     });
     markEntityModified(id);
     scheduleSyncPush();
@@ -252,6 +255,7 @@ export async function engineBatchWrite(operations) {
     await db.transaction('rw', tables, async () => {
         for (const op of operations) {
             const dexieTable = getDexieTableName(op.table);
+            const supaTable = resolveSupabaseName(op.table);
             switch (op.type) {
                 case 'create': {
                     const entityId = op.data.id || generateId();
@@ -263,7 +267,7 @@ export async function engineBatchWrite(operations) {
                     };
                     const { id: _id, ...queuePayload } = payload;
                     await db.table(dexieTable).add(payload);
-                    await queueCreateOperation(op.table, entityId, queuePayload);
+                    await queueCreateOperation(supaTable, entityId, queuePayload);
                     modifiedIds.push(entityId);
                     break;
                 }
@@ -271,7 +275,7 @@ export async function engineBatchWrite(operations) {
                     const updateFields = { ...op.fields, updated_at: timestamp };
                     await db.table(dexieTable).update(op.id, updateFields);
                     await queueSyncOperation({
-                        table: op.table,
+                        table: supaTable,
                         entityId: op.id,
                         operationType: 'set',
                         value: updateFields
@@ -281,7 +285,7 @@ export async function engineBatchWrite(operations) {
                 }
                 case 'delete': {
                     await db.table(dexieTable).update(op.id, { deleted: true, updated_at: timestamp });
-                    await queueDeleteOperation(op.table, op.id);
+                    await queueDeleteOperation(supaTable, op.id);
                     modifiedIds.push(op.id);
                     break;
                 }
@@ -336,6 +340,7 @@ export async function engineBatchWrite(operations) {
 export async function engineIncrement(table, id, field, amount, additionalFields) {
     const db = getDb();
     const dexieTable = getDexieTableName(table);
+    const supaTable = resolveSupabaseName(table);
     const timestamp = now();
     let updated;
     await db.transaction('rw', [db.table(dexieTable), db.table('syncQueue')], async () => {
@@ -358,7 +363,7 @@ export async function engineIncrement(table, id, field, amount, additionalFields
             /* Queue the increment as its own operation type so the sync push
                can send it as an RPC / SQL increment rather than a flat set. */
             await queueSyncOperation({
-                table,
+                table: supaTable,
                 entityId: id,
                 operationType: 'increment',
                 field,
@@ -369,7 +374,7 @@ export async function engineIncrement(table, id, field, amount, additionalFields
                conflated with plain field overwrites during conflict resolution. */
             if (additionalFields && Object.keys(additionalFields).length > 0) {
                 await queueSyncOperation({
-                    table,
+                    table: supaTable,
                     entityId: id,
                     operationType: 'set',
                     value: { ...additionalFields, updated_at: timestamp }
@@ -430,9 +435,10 @@ export async function engineGet(table, id, opts) {
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
+            const supaTable = resolveSupabaseName(table);
             const columns = getTableColumns(table);
             const { data, error } = await supabase
-                .from(table)
+                .from(supaTable)
                 .select(columns)
                 .eq('id', id)
                 .or('deleted.is.null,deleted.eq.false')
@@ -499,9 +505,10 @@ export async function engineGetAll(table, opts) {
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
+            const supaTable = resolveSupabaseName(table);
             const columns = getTableColumns(table);
             const { data, error } = await supabase
-                .from(table)
+                .from(supaTable)
                 .select(columns)
                 .or('deleted.is.null,deleted.eq.false');
             if (!error && data && data.length > 0) {
@@ -563,9 +570,10 @@ export async function engineQuery(table, index, value, opts) {
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
+            const supaTable = resolveSupabaseName(table);
             const columns = getTableColumns(table);
             const { data, error } = await supabase
-                .from(table)
+                .from(supaTable)
                 .select(columns)
                 .eq(index, value)
                 .or('deleted.is.null,deleted.eq.false');
@@ -624,9 +632,10 @@ export async function engineQueryRange(table, index, lower, upper, opts) {
         typeof navigator !== 'undefined' &&
         navigator.onLine) {
         try {
+            const supaTable = resolveSupabaseName(table);
             const columns = getTableColumns(table);
             const { data, error } = await supabase
-                .from(table)
+                .from(supaTable)
                 .select(columns)
                 .gte(index, lower)
                 .lte(index, upper)
@@ -706,11 +715,12 @@ export async function engineGetOrCreate(table, index, value, defaults, opts) {
         return existing;
     /* Step 2: Check remote if requested -- prevents duplicate creation across devices.
        Skipped in demo mode (sandboxed, no Supabase). */
+    const supaTable = resolveSupabaseName(table);
     if (opts?.checkRemote && !isDemoMode() && typeof navigator !== 'undefined' && navigator.onLine) {
         try {
             const columns = getTableColumns(table);
             const { data } = await supabase
-                .from(table)
+                .from(supaTable)
                 .select(columns)
                 .eq(index, value)
                 .is('deleted', null)
@@ -739,7 +749,7 @@ export async function engineGetOrCreate(table, index, value, defaults, opts) {
     const { id: _id, ...queuePayload } = payload;
     await db.transaction('rw', [db.table(dexieTable), db.table('syncQueue')], async () => {
         await db.table(dexieTable).add(payload);
-        await queueCreateOperation(table, entityId, queuePayload);
+        await queueCreateOperation(supaTable, entityId, queuePayload);
     });
     markEntityModified(entityId);
     scheduleSyncPush();

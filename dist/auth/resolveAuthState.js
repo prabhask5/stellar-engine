@@ -183,6 +183,12 @@ async function resolveSingleUserAuthState() {
             }
             return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
         }
+        /* Lock check: if the user explicitly locked the app, honour the lock
+           even if a valid Supabase session still exists in localStorage. */
+        const lockState = await db.table('singleUserConfig').get('lock_state');
+        if (lockState?.locked) {
+            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
+        }
         // =========================================================================
         // Config exists -- check for an active session
         // =========================================================================

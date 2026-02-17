@@ -28,13 +28,11 @@ export type { DeployConfig, DeployResult, ServerConfig } from '../kit/server.js'
 // SvelteKit `load` function helpers for `+layout.ts` / `+layout.server.ts`:
 // - `resolveRootLayout` — top-level layout loader; initializes the engine,
 //   resolves auth state, and provides data to the root layout.
-// - `resolveProtectedLayout` — guards protected routes; redirects unauthenticated
-//   users to the login page.
 // - `resolveSetupAccess` — checks whether the app has been set up and redirects
 //   to the setup wizard if not.
 
-export { resolveRootLayout, resolveProtectedLayout, resolveSetupAccess } from '../kit/loads.js';
-export type { RootLayoutData, ProtectedLayoutData, SetupAccessData } from '../kit/loads.js';
+export { resolveRootLayout, resolveSetupAccess } from '../kit/loads.js';
+export type { RootLayoutData, SetupAccessData } from '../kit/loads.js';
 
 // =============================================================================
 //  Email Confirmation — Auth Callback Handling

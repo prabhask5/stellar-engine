@@ -560,6 +560,15 @@ export async function unlockSingleUser(gate) {
                 await writeConfig(config);
             }
             authState.setSupabaseAuth(session);
+            /* Clear lock flag now that the user has successfully authenticated */
+            try {
+                const db = getEngineConfig().db;
+                if (db)
+                    await db.table('singleUserConfig').delete('lock_state');
+            }
+            catch (e) {
+                debugWarn('[SingleUser] Failed to clear lock state:', e);
+            }
             debugLog('[SingleUser] Unlocked online, userId:', user.id);
             return { error: null };
         }
@@ -575,6 +584,15 @@ export async function unlockSingleUser(gate) {
             const cachedSession = await getSession();
             if (cachedSession) {
                 authState.setSupabaseAuth(cachedSession);
+                /* Clear lock flag */
+                try {
+                    const db = getEngineConfig().db;
+                    if (db)
+                        await db.table('singleUserConfig').delete('lock_state');
+                }
+                catch (e) {
+                    debugWarn('[SingleUser] Failed to clear lock state:', e);
+                }
                 debugLog('[SingleUser] Unlocked offline with cached Supabase session');
                 return { error: null };
             }
@@ -591,6 +609,15 @@ export async function unlockSingleUser(gate) {
                 cachedAt: new Date().toISOString()
             };
             authState.setOfflineAuth(offlineProfile);
+            /* Clear lock flag now that the user has successfully authenticated */
+            try {
+                const db = getEngineConfig().db;
+                if (db)
+                    await db.table('singleUserConfig').delete('lock_state');
+            }
+            catch (e2) {
+                debugWarn('[SingleUser] Failed to clear lock state:', e2);
+            }
             debugLog('[SingleUser] Unlocked offline with offline session');
             return { error: null };
         }
@@ -731,6 +758,17 @@ export async function lockSingleUser() {
     }
     syncStatusStore.reset();
     authState.setNoAuth();
+    /* Persist lock state to IndexedDB so it survives page refreshes and
+       new tab navigations (the Supabase session in localStorage would
+       otherwise let users bypass the lock). */
+    try {
+        const db = getEngineConfig().db;
+        if (db)
+            await db.table('singleUserConfig').put({ id: 'lock_state', locked: true });
+    }
+    catch (e) {
+        debugError('[SingleUser] Failed to write lock state:', e);
+    }
     debugLog('[SingleUser] Locked');
 }
 /**

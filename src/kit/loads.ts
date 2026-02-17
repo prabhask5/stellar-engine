@@ -7,7 +7,6 @@
  *
  *   - `resolveRootLayout`      — full app initialization sequence (config,
  *                                 auth, sync engine startup)
- *   - `resolveProtectedLayout` — auth guard for protected route groups
  *   - `resolveSetupAccess`     — access control for the `/setup` wizard
  *
  * By centralizing this logic in the engine, consuming apps avoid duplicating
@@ -52,23 +51,6 @@ export interface RootLayoutData extends AuthStateResult {
    * When `false` and no config exists, the app should redirect to `/setup`.
    */
   singleUserSetUp?: boolean;
-}
-
-/**
- * Data returned by `resolveProtectedLayout`.
- *
- * A narrowed subset of auth state fields needed by protected route groups
- * to render authenticated content.
- */
-export interface ProtectedLayoutData {
-  /** The Supabase session, or `null` if using offline/no auth. */
-  session: AuthStateResult['session'];
-
-  /** The active authentication mode discriminator. */
-  authMode: AuthStateResult['authMode'];
-
-  /** The offline profile credentials, if in offline mode. */
-  offlineProfile: AuthStateResult['offlineProfile'];
 }
 
 /**
@@ -137,13 +119,25 @@ export async function resolveRootLayout(
      We skip the redirect if already on /setup to avoid an infinite loop.
      Exception: demo mode works without runtime config (no Supabase needed). */
   if (!config && !isDemoMode() && url.pathname !== '/setup') {
-    return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    return {
+      session: null,
+      authMode: 'none',
+      offlineProfile: null,
+      singleUserSetUp: false,
+      serverConfigured: false
+    };
   }
 
   /* Still on setup page with no config — return blank state without
      redirecting, allowing the setup wizard to render normally. */
   if (!config && !isDemoMode()) {
-    return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    return {
+      session: null,
+      authMode: 'none',
+      offlineProfile: null,
+      singleUserSetUp: false,
+      serverConfigured: false
+    };
   }
 
   /* Resolve auth — determines Supabase / offline / demo / none based on the
@@ -153,7 +147,7 @@ export async function resolveRootLayout(
   /* Demo mode: seed mock data (idempotent per page load) and skip sync. */
   if (result.authMode === 'demo') {
     await seedDemoData();
-    return result;
+    return { ...result, serverConfigured: true };
   }
 
   /* Start sync engine only when the user is actually authenticated;
@@ -163,66 +157,7 @@ export async function resolveRootLayout(
     await startSyncEngine();
   }
 
-  return result;
-}
-
-// =============================================================================
-//  PROTECTED LAYOUT
-// =============================================================================
-
-/**
- * Auth guard for protected routes. Resolves auth state and, if the user
- * is unauthenticated, computes a redirect URL to the login page with a
- * `redirect` query parameter so the user can be sent back after login.
- *
- * The caller is responsible for performing the actual redirect (typically
- * via SvelteKit's `throw redirect(302, redirectUrl)`), since this helper
- * is framework-agnostic in its return value.
- *
- * @param url - The current page URL object with `pathname` and `search`
- *              properties, used to construct the post-login return URL.
- *
- * @returns An object containing:
- *   - `data` — the auth state payload for the layout
- *   - `redirectUrl` — a login URL string if unauthenticated, or `null`
- *     if the user is authenticated and should proceed normally.
- *     When non-null, the caller should `throw redirect(302, redirectUrl)`.
- *
- * @example
- * ```ts
- * // /(protected)/+layout.ts
- * import { redirect } from '@sveltejs/kit';
- * import { resolveProtectedLayout } from 'stellar-drive/kit/loads';
- *
- * export async function load({ url }) {
- *   const { data, redirectUrl } = await resolveProtectedLayout(url);
- *   if (redirectUrl) throw redirect(302, redirectUrl);
- *   return data;
- * }
- * ```
- *
- * @see {@link ProtectedLayoutData} for the return data shape
- * @see {@link resolveAuthState} for the underlying auth resolution
- */
-export async function resolveProtectedLayout(url: {
-  pathname: string;
-  search: string;
-}): Promise<{ data: ProtectedLayoutData; redirectUrl: string | null }> {
-  const result = await resolveAuthState();
-
-  if (result.authMode === 'none') {
-    /* Build a return URL so the login page can redirect back after
-       successful authentication. Skip the redirect param if the user
-       is at the root — there's no meaningful "return to" destination. */
-    const returnUrl = url.pathname + url.search;
-    const loginUrl =
-      returnUrl && returnUrl !== '/'
-        ? `/login?redirect=${encodeURIComponent(returnUrl)}`
-        : '/login';
-    return { data: result, redirectUrl: loginUrl };
-  }
-
-  return { data: result, redirectUrl: null };
+  return { ...result, serverConfigured: true };
 }
 
 // =============================================================================

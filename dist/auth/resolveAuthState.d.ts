@@ -53,6 +53,12 @@ export interface AuthStateResult {
      * `false` means the user needs to go through the initial setup flow.
      */
     singleUserSetUp?: boolean;
+    /**
+     * Whether the server has been configured (runtime config exists).
+     * Used to distinguish "first-time setup" (no env vars) from
+     * "new device / locked" (server configured but no local session).
+     */
+    serverConfigured?: boolean;
 }
 /**
  * Resolve the current authentication state.

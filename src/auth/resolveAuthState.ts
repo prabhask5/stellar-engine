@@ -69,6 +69,13 @@ export interface AuthStateResult {
    * `false` means the user needs to go through the initial setup flow.
    */
   singleUserSetUp?: boolean;
+
+  /**
+   * Whether the server has been configured (runtime config exists).
+   * Used to distinguish "first-time setup" (no env vars) from
+   * "new device / locked" (server configured but no local session).
+   */
+  serverConfigured?: boolean;
 }
 
 // =============================================================================
@@ -222,6 +229,13 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
         debugWarn('[Auth] Failed to clear local auth state:', e);
       }
       return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    }
+
+    /* Lock check: if the user explicitly locked the app, honour the lock
+       even if a valid Supabase session still exists in localStorage. */
+    const lockState = await db.table('singleUserConfig').get('lock_state');
+    if (lockState?.locked) {
+      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
     }
 
     // =========================================================================

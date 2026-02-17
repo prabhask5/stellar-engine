@@ -1867,10 +1867,7 @@ When debug mode is disabled, all `debugLog()`, `debugWarn()`, and `debugError()`
 4. Seed demo data (`seedDemoData`) -- if demo mode
 5. Return `RootLayoutData` with auth mode, session, and `singleUserSetUp` flag
 
-**`resolveProtectedLayout(parentData)`**: Auth guard for protected route groups:
-- Checks `data.authMode !== 'none'`
-- If not authenticated, throws `redirect(302, '/login')` (or configured path)
-- Returns narrowed auth data for child routes
+**Auth guarding**: Handled in the root layout via a `PUBLIC_ROUTES` list. Unauthenticated users on non-public routes are redirected to `/login?redirect=<returnUrl>` (for locked/new-device scenarios) or `/setup` (for first-time configuration when `serverConfigured === false`).
 
 **`resolveSetupAccess(parentData)`**: Access control for the `/setup` wizard:
 - Allows access only when `singleUserSetUp === false`

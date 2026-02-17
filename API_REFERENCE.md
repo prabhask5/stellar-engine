@@ -1305,8 +1305,7 @@ SvelteKit-specific utilities for server routes, layout load functions, and PWA l
 
 ### Layout Load Functions
 
-- **`resolveRootLayout(url)`** -- Top-level layout loader. Initializes config, resolves auth state, starts sync engine. Returns `RootLayoutData`.
-- **`resolveProtectedLayout(parentData, url)`** -- Auth guard for protected routes. Redirects unauthenticated users. Returns `ProtectedLayoutData`.
+- **`resolveRootLayout(url)`** -- Top-level layout loader. Initializes config, resolves auth state, starts sync engine. Returns `RootLayoutData` (includes `serverConfigured` flag for distinguishing first-time setup from locked/new-device scenarios).
 - **`resolveSetupAccess(parentData, url)`** -- Controls access to the `/setup` wizard. Returns `SetupAccessData`.
 
 ### Email Confirmation

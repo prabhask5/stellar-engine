@@ -1300,13 +1300,12 @@ function generateRootLayoutTs(opts) {
 import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { goto } from '$app/navigation';
-import { initEngine, startSyncEngine, supabase } from 'stellar-drive';
-import { initConfig } from 'stellar-drive/config';
-import { resolveAuthState, lockSingleUser } from 'stellar-drive/auth';
+import { initEngine, supabase } from 'stellar-drive';
+import { lockSingleUser } from 'stellar-drive/auth';
 import { resolveRootLayout } from 'stellar-drive/kit';
 import { schema } from '$lib/schema';
 import { demoConfig } from '$lib/demo/config';
-import type { AuthMode, OfflineCredentials, Session } from 'stellar-drive/types';
+import type { RootLayoutData } from 'stellar-drive/kit';
 import type { LayoutLoad } from './$types';
 
 // =============================================================================
@@ -1317,6 +1316,13 @@ import type { LayoutLoad } from './$types';
 export const ssr = true;
 /** Disable prerendering — pages depend on runtime auth state. */
 export const prerender = false;
+
+// =============================================================================
+//                             TYPE RE-EXPORTS
+// =============================================================================
+
+/** Re-export the root layout data type so \`+layout.svelte\` can import it. */
+export type { RootLayoutData as LayoutData };
 
 // =============================================================================
 //                          ENGINE BOOTSTRAP
@@ -1346,22 +1352,11 @@ if (browser) {
 }
 
 // =============================================================================
-//                           LAYOUT DATA TYPE
+//                         PUBLIC ROUTES
 // =============================================================================
 
-/**
- * Data returned by the root layout load function.
- */
-export interface LayoutData {
-  /** Active Supabase session, or \`null\` when offline / unauthenticated. */
-  session: Session | null;
-  /** Current authentication mode (\`'online'\`, \`'offline'\`, or \`'none'\`). */
-  authMode: AuthMode;
-  /** Cached offline credentials (display name, avatar) when auth is offline. */
-  offlineProfile: OfflineCredentials | null;
-  /** Whether the single-user account has completed initial setup. */
-  singleUserSetUp?: boolean;
-}
+/** Routes accessible without authentication. */
+const PUBLIC_ROUTES = ['/policy', '/login', '/demo', '/confirm', '/setup'];
 
 // =============================================================================
 //                            LOAD FUNCTION
@@ -1373,26 +1368,28 @@ export interface LayoutData {
  * @param params - SvelteKit load params (provides the current URL).
  * @returns Layout data with session and auth state.
  */
-export const load: LayoutLoad = async ({ url }): Promise<LayoutData> => {
+export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
   if (browser) {
-    /* Fetch runtime config from /api/config (cached after first call) */
-    const config = await initConfig();
-    if (!config && url.pathname !== '/setup') {
-      redirect(307, '/setup');
+    const result = await resolveRootLayout(url);
+
+    const isPublicRoute = PUBLIC_ROUTES.some(r => url.pathname.startsWith(r));
+    if (result.authMode === 'none' && !isPublicRoute) {
+      if (!result.singleUserSetUp && !result.serverConfigured) {
+        redirect(307, '/setup');
+      } else {
+        const returnUrl = url.pathname + url.search;
+        const loginUrl = returnUrl && returnUrl !== '/'
+          ? \`/login?redirect=\${encodeURIComponent(returnUrl)}\`
+          : '/login';
+        redirect(307, loginUrl);
+      }
     }
-    if (!config) {
-      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
-    }
-    /* Determine whether the user is online-authenticated, offline, or none */
-    const result = await resolveAuthState();
-    if (result.authMode !== 'none') {
-      /* Kick off background sync (Supabase realtime + IndexedDB) */
-      await startSyncEngine();
-    }
+
     return result;
   }
+
   /* SSR fallback — no auth info available on the server */
-  return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+  return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false, serverConfigured: false };
 };
 `;
 }
@@ -1678,10 +1675,6 @@ function generateHomePage(opts) {
   /* ── Stellar Engine — Auth & Stores ── */
   import { resolveFirstName } from 'stellar-drive/auth';
   import { onSyncComplete, authState } from 'stellar-drive/stores';
-  import { isDemoMode } from 'stellar-drive';
-
-  /* ── SvelteKit ── */
-  import { goto } from '$app/navigation';
 
   // ==========================================================================
   //                           COMPONENT STATE
@@ -1693,23 +1686,8 @@ function generateHomePage(opts) {
    */
   const firstName = $derived(resolveFirstName($authState.session, $authState.offlineProfile));
 
-  // =============================================================================
-  //  Reactive Effects
-  // =============================================================================
-
-  /**
-   * Effect: auth redirect guard.
-   *
-   * Once the auth store finishes loading and resolves to \`'none'\` (no session),
-   * redirect to \`/login\` with a \`redirect\` query param so the login page knows
-   * this was an automatic redirect rather than direct navigation.
-   */
-  $effect(() => {
-    if (!$authState.isLoading && $authState.mode === 'none' && !isDemoMode()) {
-      // Include redirect param so login page knows this was a redirect, not direct navigation
-      goto('/login?redirect=%2F', { replaceState: true });
-    }
-  });
+  /* Auth redirect is handled by the root layout (+layout.ts) via
+     PUBLIC_ROUTES — no inline guard needed here. */
 
   // TODO: Add home page state and logic
 </script>
@@ -3094,102 +3072,10 @@ export function load() {
 `;
 }
 /**
- * Generate the protected route group's `+layout.ts` with auth guards
- * that redirect unauthenticated users to `/login`.
- *
- * @returns The TypeScript source for `src/routes/(protected)/+layout.ts`.
- */
-function generateProtectedLayoutTs() {
-    return `/**
- * @fileoverview Protected Layout Load Function — Auth Guard
- *
- * Runs on every navigation into the \`(protected)\` route group.
- * Resolves the current authentication state via \`stellar-drive\` and
- * redirects unauthenticated users to \`/login\` (preserving the intended
- * destination as a \`?redirect=\` query parameter).
- *
- * On the server (SSR), returns a neutral "unauthenticated" payload so
- * that the actual auth check happens exclusively in the browser where
- * cookies / local storage are available.
- */
-
-import { redirect } from '@sveltejs/kit';
-import { browser } from '$app/environment';
-import { resolveProtectedLayout } from 'stellar-drive/kit';
-import type { ProtectedLayoutData } from 'stellar-drive/kit';
-import type { LayoutLoad } from './$types';
-
-export type { ProtectedLayoutData };
-
-/**
- * SvelteKit universal \`load\` function for the \`(protected)\` layout.
- *
- * - **Browser**: resolves the auth state; redirects to \`/login\` if \`authMode\` is \`'none'\`.
- * - **Server**: short-circuits with a neutral payload (auth is client-side only).
- *
- * @param url — The current page URL, used to build the redirect target.
- * @returns Resolved \`ProtectedLayoutData\` for downstream pages and layouts.
- */
-export const load: LayoutLoad = async ({ url }): Promise<ProtectedLayoutData> => {
-  if (browser) {
-    const { data, redirectUrl } = await resolveProtectedLayout(url);
-
-    if (redirectUrl) {
-      throw redirect(302, redirectUrl);
-    }
-
-    return data;
-  }
-
-  /* SSR fallback — no auth info available on the server */
-  return { session: null, authMode: 'none', offlineProfile: null };
-};
-`;
-}
-/**
- * Generate the protected route group's `+layout.svelte` pass-through component.
- *
- * @returns The Svelte component source for `src/routes/(protected)/+layout.svelte`.
- */
-function generateProtectedLayoutSvelte() {
-    return `<!--
-  @fileoverview Protected Layout Component — wraps the \`(protected)\` route group.
-
-  Every page inside \`src/routes/(protected)/\` inherits this layout. The auth
-  guard lives in \`+layout.ts\`; this component is a pass-through that renders
-  the child page and provides a hook for protected-area chrome (backgrounds,
-  breadcrumbs, etc.).
--->
-<script lang="ts">
-  // ==========================================================================
-  //                                IMPORTS
-  // ==========================================================================
-
-  // (no additional imports needed for the pass-through layout)
-
-  // ==========================================================================
-  //                                 PROPS
-  // ==========================================================================
-
-  interface Props {
-    /** Default slot content (the routed page component). */
-    children?: import('svelte').Snippet;
-  }
-
-  let { children }: Props = $props();
-
-  // TODO: Add conditional page backgrounds or other protected-area chrome
-</script>
-
-<!-- Render child route content -->
-{@render children?.()}
-`;
-}
-/**
  * Generate the profile page component with TODO stubs for user settings,
  * device management, and debug tools.
  *
- * @returns The Svelte component source for `src/routes/(protected)/profile/+page.svelte`.
+ * @returns The Svelte component source for `src/routes/profile/+page.svelte`.
  */
 function generateProfilePage(opts) {
     return `<!--
@@ -4710,9 +4596,7 @@ export async function run() {
                 ['src/routes/api/setup/deploy/+server.ts', generateDeployServer()],
                 ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
                 ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
-                ['src/routes/(protected)/+layout.ts', generateProtectedLayoutTs()],
-                ['src/routes/(protected)/+layout.svelte', generateProtectedLayoutSvelte()],
-                ['src/routes/(protected)/profile/+page.svelte', generateProfilePage(opts)],
+                ['src/routes/profile/+page.svelte', generateProfilePage(opts)],
                 ['src/routes/demo/+page.svelte', generateDemoPage(opts)]
             ]
         },

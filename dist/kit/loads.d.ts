@@ -7,7 +7,6 @@
  *
  *   - `resolveRootLayout`      — full app initialization sequence (config,
  *                                 auth, sync engine startup)
- *   - `resolveProtectedLayout` — auth guard for protected route groups
  *   - `resolveSetupAccess`     — access control for the `/setup` wizard
  *
  * By centralizing this logic in the engine, consuming apps avoid duplicating
@@ -41,20 +40,6 @@ export interface RootLayoutData extends AuthStateResult {
      * When `false` and no config exists, the app should redirect to `/setup`.
      */
     singleUserSetUp?: boolean;
-}
-/**
- * Data returned by `resolveProtectedLayout`.
- *
- * A narrowed subset of auth state fields needed by protected route groups
- * to render authenticated content.
- */
-export interface ProtectedLayoutData {
-    /** The Supabase session, or `null` if using offline/no auth. */
-    session: AuthStateResult['session'];
-    /** The active authentication mode discriminator. */
-    authMode: AuthStateResult['authMode'];
-    /** The offline profile credentials, if in offline mode. */
-    offlineProfile: AuthStateResult['offlineProfile'];
 }
 /**
  * Data returned by `resolveSetupAccess`.
@@ -109,47 +94,6 @@ export interface SetupAccessData {
 export declare function resolveRootLayout(url: {
     pathname: string;
 }, _initEngineFn?: () => void): Promise<RootLayoutData>;
-/**
- * Auth guard for protected routes. Resolves auth state and, if the user
- * is unauthenticated, computes a redirect URL to the login page with a
- * `redirect` query parameter so the user can be sent back after login.
- *
- * The caller is responsible for performing the actual redirect (typically
- * via SvelteKit's `throw redirect(302, redirectUrl)`), since this helper
- * is framework-agnostic in its return value.
- *
- * @param url - The current page URL object with `pathname` and `search`
- *              properties, used to construct the post-login return URL.
- *
- * @returns An object containing:
- *   - `data` — the auth state payload for the layout
- *   - `redirectUrl` — a login URL string if unauthenticated, or `null`
- *     if the user is authenticated and should proceed normally.
- *     When non-null, the caller should `throw redirect(302, redirectUrl)`.
- *
- * @example
- * ```ts
- * // /(protected)/+layout.ts
- * import { redirect } from '@sveltejs/kit';
- * import { resolveProtectedLayout } from 'stellar-drive/kit/loads';
- *
- * export async function load({ url }) {
- *   const { data, redirectUrl } = await resolveProtectedLayout(url);
- *   if (redirectUrl) throw redirect(302, redirectUrl);
- *   return data;
- * }
- * ```
- *
- * @see {@link ProtectedLayoutData} for the return data shape
- * @see {@link resolveAuthState} for the underlying auth resolution
- */
-export declare function resolveProtectedLayout(url: {
-    pathname: string;
-    search: string;
-}): Promise<{
-    data: ProtectedLayoutData;
-    redirectUrl: string | null;
-}>;
 /**
  * Setup page guard implementing a two-tier access model:
  *

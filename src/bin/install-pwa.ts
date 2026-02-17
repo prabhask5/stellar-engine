@@ -251,7 +251,7 @@ function generatePackageJson(opts: InstallOptions): string {
         },
         dependencies: {
           postgres: '^3.4.0',
-          'stellar-drive': '^1.0.8'
+          'stellar-drive': '^1.0.9'
         },
         type: 'module'
       },

@@ -242,7 +242,12 @@ export type InitEngineInput = Omit<SyncEngineConfig, 'tables' | 'auth'> & {
   auth?: AuthConfig | SyncEngineConfig['auth'];
 };
 
+let _engineInitialized = false;
+
 export function initEngine(config: InitEngineInput): void {
+  if (_engineInitialized) return;
+  _engineInitialized = true;
+
   /* Normalize `crdt: true` shorthand to `crdt: {}`. */
   if (config.crdt === true) {
     config.crdt = {};

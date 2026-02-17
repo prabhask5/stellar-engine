@@ -34,7 +34,11 @@ import { snakeToCamel } from './utils';
 let engineConfig = null;
 /** Promise that resolves when the database is fully opened and upgraded. */
 let _dbReady = null;
+let _engineInitialized = false;
 export function initEngine(config) {
+    if (_engineInitialized)
+        return;
+    _engineInitialized = true;
     /* Normalize `crdt: true` shorthand to `crdt: {}`. */
     if (config.crdt === true) {
         config.crdt = {};

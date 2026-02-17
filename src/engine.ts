@@ -2605,11 +2605,16 @@ let authStateUnsubscribe: { data: { subscription: { unsubscribe: () => void } } 
  * 12. Registers debug window utilities (Tombstones, Sync, Diagnostics)
  *
  * **Must be called after `initEngine()`** — requires configuration to be set.
- * Safe to call multiple times (previous listeners are cleaned up first).
+ * Idempotent — calling multiple times after the first is a no-op. Use
+ * `stopSyncEngine()` to reset and allow a fresh start.
  */
+let _syncEngineStarted = false;
+
 export async function startSyncEngine(): Promise<void> {
   if (typeof window === 'undefined') return;
   if (isDemoMode()) return;
+  if (_syncEngineStarted) return;
+  _syncEngineStarted = true;
 
   // Ensure DB is open and upgraded before any access
   await waitForDb();
@@ -3067,6 +3072,7 @@ export async function stopSyncEngine(): Promise<void> {
   releaseSyncLock();
   _hasHydrated = false;
   _schemaValidated = false;
+  _syncEngineStarted = false;
 
   // Clean up debug window utilities
   if (typeof window !== 'undefined') {

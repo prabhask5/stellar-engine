@@ -193,26 +193,6 @@ export declare function scheduleSyncPush(): void;
  * @param skipPull - If `true`, skip the pull phase (push-only mode)
  */
 export declare function runFullSync(quiet?: boolean, skipPull?: boolean): Promise<void>;
-/**
- * Start the sync engine: initialize all listeners, timers, and subscriptions.
- *
- * This is the main "boot" function for the sync engine. It:
- * 1. Ensures the Dexie DB is open and upgraded
- * 2. Cleans up any existing listeners (idempotent restart support)
- * 3. Subscribes to Supabase auth state changes (handles sign-out/token-refresh)
- * 4. Registers online/offline handlers with auth validation
- * 5. Registers visibility change handler for smart tab-return syncing
- * 6. Starts realtime WebSocket subscriptions
- * 7. Starts periodic background sync interval
- * 8. Validates Supabase schema (one-time)
- * 9. Runs initial hydration (if local DB is empty) or full sync
- * 10. Runs initial cleanup (tombstones, conflicts, failed items)
- * 11. Starts the watchdog timer
- * 12. Registers debug window utilities (Tombstones, Sync, Diagnostics)
- *
- * **Must be called after `initEngine()`** — requires configuration to be set.
- * Safe to call multiple times (previous listeners are cleaned up first).
- */
 export declare function startSyncEngine(): Promise<void>;
 /**
  * Stop the sync engine: tear down all listeners, timers, and subscriptions.

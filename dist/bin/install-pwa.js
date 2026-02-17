@@ -2140,6 +2140,9 @@ function generateLoginPage(opts) {
   /** Set to \`true\` after the component mounts — enables entrance animation */
   let mounted = $state(false);
 
+  /** \`true\` while the initial auth state is being resolved (prevents card flash) */
+  let resolving = $state(true);
+
   // =============================================================================
   //  Setup Mode State (step 1 → email/name, step 2 → PIN creation)
   // =============================================================================
@@ -2307,6 +2310,9 @@ function generateLoginPage(opts) {
         }
       }
     }
+
+    /* ── Initial resolution complete — show the appropriate card ──── */
+    resolving = false;
 
     /* ── Listen for auth confirmation from the \`/confirm\` page ──── */
     try {
@@ -2676,9 +2682,10 @@ function generateLoginPage(opts) {
         startResendCooldown();
         return;
       }
-      /* No confirmation needed → go straight to the app */
+      /* No confirmation needed → go straight to the app (keep loading=true to avoid flash) */
       await invalidateAll();
       goto('/');
+      return;
     } catch (err: unknown) {
       error = err instanceof Error ? err.message : 'Setup failed. Please try again.';
       shaking = true;
@@ -2688,9 +2695,8 @@ function generateLoginPage(opts) {
       codeDigits = ['', '', '', '', '', ''];
       confirmDigits = ['', '', '', '', '', ''];
       if (codeInputs[0]) codeInputs[0].focus();
-    } finally {
-      loading = false;
     }
+    loading = false;
   }
 
   // =============================================================================
@@ -2736,9 +2742,10 @@ function generateLoginPage(opts) {
         startVerificationPolling();
         return;
       }
-      /* Success → navigate to the redirect target */
+      /* Success → navigate to the redirect target (keep loading=true to avoid PIN flash) */
       await invalidateAll();
       goto(redirectUrl);
+      return;
     } catch (err: unknown) {
       error = err instanceof Error ? err.message : 'Incorrect code';
       shaking = true;
@@ -2746,12 +2753,11 @@ function generateLoginPage(opts) {
         shaking = false;
       }, 500);
       unlockDigits = ['', '', '', '', '', ''];
-    } finally {
-      loading = false;
-      if (error) {
-        await tick();
-        if (unlockInputs[0]) unlockInputs[0].focus();
-      }
+    }
+    loading = false;
+    if (error) {
+      await tick();
+      if (unlockInputs[0]) unlockInputs[0].focus();
     }
   }
 
@@ -2805,9 +2811,10 @@ function generateLoginPage(opts) {
         startVerificationPolling();
         return;
       }
-      /* Success → navigate to the redirect target */
+      /* Success → navigate to the redirect target (keep linkLoading=true to avoid flash) */
       await invalidateAll();
       goto(redirectUrl);
+      return;
     } catch (err: unknown) {
       error = err instanceof Error ? err.message : 'Incorrect code';
       shaking = true;
@@ -2815,12 +2822,11 @@ function generateLoginPage(opts) {
         shaking = false;
       }, 500);
       linkDigits = Array(remoteUser.codeLength).fill('');
-    } finally {
-      linkLoading = false;
-      if (error) {
-        await tick();
-        if (linkInputs[0]) linkInputs[0].focus();
-      }
+    }
+    linkLoading = false;
+    if (error) {
+      await tick();
+      if (linkInputs[0]) linkInputs[0].focus();
     }
   }
 </script>

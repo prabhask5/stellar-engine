@@ -471,10 +471,29 @@ function generateTableSQL(tableName, config, options) {
             }
         }
     }
-    const ine = options?.idempotent ? ' if not exists' : '';
-    lines.push(`create table${ine} ${tableName} (`);
+    lines.push(`create table if not exists ${tableName} (`);
     lines.push(columnDefs.join(',\n'));
     lines.push(');');
+    /* Ensure ALL columns exist on pre-existing tables. CREATE TABLE IF NOT
+       EXISTS silently skips if the table already exists, so any columns added
+       after the table was originally created would be missing. This makes the
+       schema fully convergent — no matter what state the database is in, after
+       running this SQL every table will have every column. */
+    for (const colDef of columnDefs) {
+        /* Each columnDef is e.g. "  id uuid default gen_random_uuid() primary key"
+           Extract the column name (first token after trimming) and the rest as the type.
+           Skip PRIMARY KEY columns — ADD COLUMN IF NOT EXISTS can't add a PK. */
+        const trimmed = colDef.trim();
+        if (trimmed.toLowerCase().includes('primary key'))
+            continue;
+        /* Split into name and type definition */
+        const firstSpace = trimmed.indexOf(' ');
+        if (firstSpace === -1)
+            continue;
+        const colName = trimmed.substring(0, firstSpace);
+        const colType = trimmed.substring(firstSpace + 1);
+        lines.push(`alter table ${tableName} add column if not exists ${colName} ${colType};`);
+    }
     lines.push('');
     /* ---- ROW LEVEL SECURITY ---- */
     lines.push(`alter table ${tableName} enable row level security;`);
@@ -501,18 +520,13 @@ function generateTableSQL(tableName, config, options) {
     lines.push('');
     /* ---- INDEXES ---- */
     if (!isChildTable) {
-        lines.push(`create index${ine} idx_${tableName}_user_id on ${tableName}(user_id);`);
+        lines.push(`create index if not exists idx_${tableName}_user_id on ${tableName}(user_id);`);
     }
-    lines.push(`create index${ine} idx_${tableName}_updated_at on ${tableName}(updated_at);`);
-    lines.push(`create index${ine} idx_${tableName}_deleted on ${tableName}(deleted) where deleted = false;`);
+    lines.push(`create index if not exists idx_${tableName}_updated_at on ${tableName}(updated_at);`);
+    lines.push(`create index if not exists idx_${tableName}_deleted on ${tableName}(deleted) where deleted = false;`);
     lines.push('');
     /* ---- REALTIME ---- */
-    if (options?.idempotent) {
-        lines.push(`do $$ begin alter publication supabase_realtime add table ${tableName}; exception when duplicate_object then null; end $$;`);
-    }
-    else {
-        lines.push(`alter publication supabase_realtime add table ${tableName};`);
-    }
+    lines.push(`do $$ begin alter publication supabase_realtime add table ${tableName}; exception when duplicate_object then null; end $$;`);
     return lines.join('\n');
 }
 // =============================================================================
@@ -555,7 +569,6 @@ export function generateSupabaseSQL(schema, options) {
     const includeHelpers = options?.includeHelperFunctions !== false;
     const includeDeviceVerification = options?.includeDeviceVerification !== false;
     const includeCRDT = options?.includeCRDT === true;
-    const idempotent = options?.idempotent === true;
     /* ---- Header ---- */
     parts.push(`-- ${appName} Database Schema for Supabase`);
     parts.push('-- Copy and paste this entire file into your Supabase SQL Editor');
@@ -605,12 +618,11 @@ export function generateSupabaseSQL(schema, options) {
     }
     /* ---- Trusted Devices ---- */
     if (includeDeviceVerification) {
-        const ine = idempotent ? ' if not exists' : '';
         parts.push('-- ============================================================');
         parts.push('-- TRUSTED DEVICES (required for device verification)');
         parts.push('-- ============================================================');
         parts.push('');
-        parts.push(`create table${ine} trusted_devices (`);
+        parts.push('create table if not exists trusted_devices (');
         parts.push('  id uuid default gen_random_uuid() primary key,');
         parts.push('  user_id uuid references auth.users(id) on delete cascade not null,');
         parts.push('  device_id text not null,');
@@ -628,19 +640,13 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('drop trigger if exists update_trusted_devices_updated_at on trusted_devices;');
         parts.push('create trigger update_trusted_devices_updated_at before update on trusted_devices for each row execute function update_updated_at_column();');
         parts.push('');
-        parts.push(`create index${ine} idx_trusted_devices_user_id on trusted_devices(user_id);`);
+        parts.push('create index if not exists idx_trusted_devices_user_id on trusted_devices(user_id);');
         parts.push('');
-        if (idempotent) {
-            parts.push('do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;');
-        }
-        else {
-            parts.push('alter publication supabase_realtime add table trusted_devices;');
-        }
+        parts.push('do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;');
         parts.push('');
     }
     /* ---- CRDT Documents ---- */
     if (includeCRDT) {
-        const ine = idempotent ? ' if not exists' : '';
         parts.push('-- ============================================================');
         parts.push('-- CRDT DOCUMENT STORAGE (optional — only needed for collaborative editing)');
         parts.push('-- ============================================================');
@@ -656,7 +662,7 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('--   state_size   — Byte size of state column, used for monitoring and compaction decisions');
         parts.push('--   device_id    — Identifies which device last persisted, used for echo suppression');
         parts.push('');
-        parts.push(`create table${ine} crdt_documents (`);
+        parts.push('create table if not exists crdt_documents (');
         parts.push('  id uuid primary key default gen_random_uuid(),');
         parts.push('  page_id uuid not null,');
         parts.push('  state text not null,');
@@ -684,11 +690,11 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('  before update on crdt_documents');
         parts.push('  for each row execute function update_updated_at_column();');
         parts.push('');
-        parts.push(`create index${ine} idx_crdt_documents_page_id on crdt_documents(page_id);`);
-        parts.push(`create index${ine} idx_crdt_documents_user_id on crdt_documents(user_id);`);
+        parts.push('create index if not exists idx_crdt_documents_page_id on crdt_documents(page_id);');
+        parts.push('create index if not exists idx_crdt_documents_user_id on crdt_documents(user_id);');
         parts.push('');
         parts.push('-- Unique constraint per page per user (upsert target for persistence)');
-        parts.push(`create unique index${ine} idx_crdt_documents_page_user on crdt_documents(page_id, user_id);`);
+        parts.push('create unique index if not exists idx_crdt_documents_page_user on crdt_documents(page_id, user_id);');
         parts.push('');
     }
     /* ---- Realtime Reminder ---- */

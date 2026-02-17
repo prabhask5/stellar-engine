@@ -45,18 +45,6 @@ export interface SQLGenerationOptions {
     includeDeviceVerification?: boolean;
     /** Include helper trigger functions (set_user_id, update_updated_at_column). @default true */
     includeHelperFunctions?: boolean;
-    /**
-     * Generate idempotent SQL that can safely run against an existing database.
-     * Uses `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`,
-     * `CREATE POLICY ... IF NOT EXISTS`, and `DROP TRIGGER IF EXISTS` before
-     * `CREATE TRIGGER`.
-     *
-     * Used by the Vite plugin on first run (no schema snapshot) to handle
-     * databases that already have tables from a previous setup.
-     *
-     * @default false
-     */
-    idempotent?: boolean;
 }
 /**
  * Options for controlling TypeScript interface generation.

@@ -369,7 +369,19 @@ async function processLoadedSchema(
       mkdirSync(typesDir, { recursive: true });
     }
     writeFileSync(typesAbsPath, tsContent, 'utf-8');
+
+    /* Log detailed diff of type changes. */
+    const oldLines = existingContent.split('\n');
+    const newLines = tsContent.split('\n');
+    const added = newLines.filter((l) => !oldLines.includes(l) && l.trim());
+    const removed = oldLines.filter((l) => !newLines.includes(l) && l.trim());
     console.log(`[stellar-drive] Types updated at ${relTypesPath}`);
+    if (removed.length)
+      console.log(
+        `[stellar-drive]   Removed:\n${removed.map((l) => `    - ${l.trim()}`).join('\n')}`
+      );
+    if (added.length)
+      console.log(`[stellar-drive]   Added:\n${added.map((l) => `    + ${l.trim()}`).join('\n')}`);
   } else {
     console.log(`[stellar-drive] Types unchanged at ${relTypesPath}`);
   }
@@ -397,6 +409,27 @@ async function processLoadedSchema(
     const newJson = JSON.stringify(cleanedSchema);
 
     if (oldJson !== newJson) {
+      /* Log detailed summary of what changed in the schema definition. */
+      const oldTables = Object.keys(snapshot as Record<string, unknown>);
+      const newTables = Object.keys(cleanedSchema);
+      const addedTables = newTables.filter((t) => !oldTables.includes(t));
+      const removedTables = oldTables.filter((t) => !newTables.includes(t));
+      const sharedTables = newTables.filter((t) => oldTables.includes(t));
+
+      console.log('[stellar-drive] Schema changes detected:');
+      if (addedTables.length)
+        console.log(`[stellar-drive]   New tables: ${addedTables.join(', ')}`);
+      if (removedTables.length)
+        console.log(`[stellar-drive]   Removed tables: ${removedTables.join(', ')}`);
+
+      for (const t of sharedTables) {
+        const oldDef = JSON.stringify((snapshot as Record<string, unknown>)[t]);
+        const newDef = JSON.stringify(cleanedSchema[t]);
+        if (oldDef !== newDef) {
+          console.log(`[stellar-drive]   Modified table: ${t}`);
+        }
+      }
+
       const migrationSQL = generateMigrationSQL(
         snapshot as import('../../types').SchemaDefinition,
         cleanedSchema as import('../../types').SchemaDefinition
@@ -423,10 +456,13 @@ async function processLoadedSchema(
     const hasAnyTables = Object.keys(cleanedSchema).length > 0;
 
     if (hasAnyTables) {
+      const tableNames = Object.keys(cleanedSchema);
+      console.log(
+        `[stellar-drive] No schema snapshot found — generating initial SQL for ${tableNames.length} tables: ${tableNames.join(', ')}`
+      );
       const fullSQL = generateSupabaseSQL(cleanedSchema as import('../../types').SchemaDefinition, {
         appName,
-        includeHelperFunctions: true,
-        idempotent: true
+        includeHelperFunctions: true
       });
       console.log(`[stellar-drive] Initial schema SQL:\n${fullSQL}`);
       const success = await pushMigration(fullSQL, schemaOpts, projectRoot);

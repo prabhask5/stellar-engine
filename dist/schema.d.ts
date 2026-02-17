@@ -115,36 +115,7 @@ export declare function generateTypeScript(schema: SchemaDefinition, options?: T
  * fs.writeFileSync('supabase-schema.sql', sql);
  *
  * @see {@link SchemaDefinition} for the schema format
- * @see {@link generateMigrationSQL} for incremental schema changes
+ * @see {@link generateTableSQL} which generates SQL for individual tables
  */
 export declare function generateSupabaseSQL(schema: SchemaDefinition, options?: SQLGenerationOptions): string;
-/**
- * Generate migration SQL by diffing two schema definitions.
- *
- * Compares the current (deployed) schema against the new (desired) schema
- * and produces `ALTER TABLE` statements for the differences:
- *   - **New tables** → full `CREATE TABLE` (via {@link generateTableSQL})
- *   - **Removed tables** → commented-out `DROP TABLE` (safety: requires manual review)
- *   - **New columns** → `ALTER TABLE ... ADD COLUMN`
- *   - **Removed columns** → commented-out `ALTER TABLE ... DROP COLUMN`
- *
- * This function intentionally does NOT handle column type changes — those
- * require careful manual migration (data conversion, backfill, etc.).
- *
- * @param currentSchema - The currently deployed schema definition.
- * @param newSchema - The desired (target) schema definition.
- * @returns The migration SQL string. Empty string if no changes detected.
- *
- * @example
- * const migration = generateMigrationSQL(
- *   { goals: 'goal_list_id, order' },
- *   {
- *     goals: 'goal_list_id, order, priority',  // added column
- *     tags: 'name',                              // new table
- *   }
- * );
- *
- * @see {@link generateSupabaseSQL} for generating the initial schema
- */
-export declare function generateMigrationSQL(currentSchema: SchemaDefinition, newSchema: SchemaDefinition): string;
 //# sourceMappingURL=schema.d.ts.map

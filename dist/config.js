@@ -298,80 +298,10 @@ function generateDatabaseFromSchema(schema, prefix, databaseName, crdtEnabled = 
     if (result.previousStores && result.previousVersion) {
         versions.push({ version: result.previousVersion, stores: result.previousStores });
     }
-    /*
-     * Generate an upgrade callback when any table declares `renamedFrom`.
-     * The callback copies data from the old Dexie table to the new one,
-     * applying any `renamedColumns` transformations along the way.
-     */
-    const upgradeCallback = buildRenameUpgradeCallback(schema);
-    if (upgradeCallback) {
-        versions.push({ version: result.version, stores, upgrade: upgradeCallback });
-    }
-    else {
-        versions.push({ version: result.version, stores });
-    }
+    versions.push({ version: result.version, stores });
     return {
         name: databaseName || `${prefix}DB`,
         versions
-    };
-}
-/**
- * Build a Dexie upgrade callback that handles table renames.
- *
- * When a table declares `renamedFrom`, the callback copies all rows from
- * the old table name to the new one, applying any `renamedColumns` field
- * name transformations. Dexie's schema diff handles creating the new table
- * and removing the old one — this callback only handles data migration.
- *
- * @param schema - The declarative schema definition.
- * @returns An upgrade function, or `null` if no renames are declared.
- * @internal
- */
-function buildRenameUpgradeCallback(schema) {
-    /* Collect all rename operations. */
-    const renames = [];
-    for (const [tableName, definition] of Object.entries(schema)) {
-        const config = typeof definition === 'string' ? { indexes: definition } : definition;
-        if (!config.renamedFrom)
-            continue;
-        const oldDexie = config.dexieName ? config.dexieName : snakeToCamel(config.renamedFrom);
-        const newDexie = config.dexieName || snakeToCamel(tableName);
-        /* Only generate a callback if the Dexie name actually changed. */
-        if (oldDexie !== newDexie) {
-            renames.push({
-                oldDexie,
-                newDexie,
-                columnMap: config.renamedColumns
-            });
-        }
-    }
-    if (renames.length === 0)
-        return null;
-    return async (tx) => {
-        for (const { oldDexie, newDexie, columnMap } of renames) {
-            try {
-                const oldTable = tx.table(oldDexie);
-                const newTable = tx.table(newDexie);
-                const rows = await oldTable.toArray();
-                for (const row of rows) {
-                    /* Apply column renames if specified. */
-                    if (columnMap) {
-                        for (const [newCol, oldCol] of Object.entries(columnMap)) {
-                            if (oldCol in row) {
-                                row[newCol] = row[oldCol];
-                                delete row[oldCol];
-                            }
-                        }
-                    }
-                    await newTable.put(row);
-                }
-                /* Clear the old table — Dexie's schema diff will remove it. */
-                await oldTable.clear();
-            }
-            catch {
-                /* Old table may not exist (e.g., fresh install) — skip silently. */
-            }
-        }
     };
 }
 /**

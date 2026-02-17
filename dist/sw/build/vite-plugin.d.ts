@@ -1,19 +1,18 @@
 /**
  * @fileoverview Vite plugin that generates the service worker, asset manifest,
- * and (optionally) auto-generates TypeScript types and pushes schema migrations
- * to Supabase.
+ * and (optionally) auto-generates TypeScript types and pushes the schema to
+ * Supabase.
  *
  * The plugin hooks into three Vite/Rollup lifecycle events:
  *   - **`buildStart`** — generates `static/sw.js` from the compiled SW template.
- *     When `schema` is enabled, also runs a one-shot schema processing pass
- *     (types generation + migration push via direct Postgres connection).
- *     This ensures CI builds that never run `npm run dev` still auto-migrate.
+ *     When `schema` is enabled, also generates TypeScript types and pushes the
+ *     full idempotent schema SQL to Supabase via direct Postgres connection.
  *   - **`closeBundle`** — after Rollup finishes writing chunks, scans the
  *     immutable output directory and writes `asset-manifest.json` listing
  *     all JS/CSS files for the service worker to precache.
  *   - **`configureServer`** (dev only) — watches the schema file and
- *     auto-generates TypeScript types + auto-pushes Supabase migrations
- *     on every save, with 500ms debounce to prevent migration spam.
+ *     auto-generates TypeScript types + pushes schema to Supabase
+ *     on every save, with 500ms debounce.
  *
  * @example
  * ```ts
@@ -38,7 +37,7 @@
  * Schema auto-generation configuration.
  *
  * Controls how the Vite plugin watches the schema file, generates TypeScript
- * types, and optionally pushes migrations to Supabase during development.
+ * types, and optionally pushes schema SQL to Supabase.
  *
  * Pass `true` as shorthand for `{}` (all defaults).
  *
@@ -69,8 +68,8 @@ export interface SchemaConfig {
      */
     typesOutput?: string;
     /**
-     * Whether to auto-push migration SQL to Supabase via direct Postgres connection.
-     * When `true`, requires `DATABASE_URL` in the environment and the `postgres`
+     * Whether to auto-push schema SQL to Supabase via direct Postgres connection.
+     * When `true`, requires `DATABASE_URL` in `.env` and the `postgres`
      * npm package installed. Falls back to a warning if either is missing.
      * @default true
      */
@@ -92,49 +91,19 @@ export interface SWConfig {
     name: string;
     /**
      * Enable schema-driven auto-generation of TypeScript types and Supabase
-     * migration SQL.
+     * schema SQL.
      *
      * Pass `true` for all defaults, or a {@link SchemaConfig} object for
      * full control over paths and behavior.
      *
      * When enabled, the plugin:
-     *   1. On every build (dev or production): generates types + pushes migrations
+     *   1. On every build (dev or production): generates types + pushes schema SQL
      *   2. During dev: also watches for changes with debounced re-processing
      *
      * @default undefined (disabled)
      */
     schema?: boolean | SchemaConfig;
 }
-/**
- * Vite plugin factory that generates `static/sw.js`, `asset-manifest.json`,
- * and optionally auto-generates types + auto-pushes schema migrations.
- *
- * **`buildStart` hook (dev + production builds):**
- *   - Generates `static/sw.js` from the compiled SW template.
- *   - When `schema` is enabled: loads the schema file via esbuild, generates
- *     TypeScript types, diffs against the snapshot, and pushes migration SQL
- *     to Supabase via direct Postgres connection (`DATABASE_URL`). This
- *     ensures CI/CD builds that skip `npm run dev` still auto-migrate.
- *
- * **`closeBundle` hook:**
- *   - Scans SvelteKit's immutable output directory for JS and CSS files.
- *   - Writes `asset-manifest.json` to both `static/` and the build output
- *     directory so the service worker can precache all app chunks.
- *
- * **`configureServer` hook (dev only, when `schema` is enabled):**
- *   - On server start, processes the schema file once via Vite's SSR loader.
- *   - Watches the schema file for changes with 500ms debounce.
- *   - Each change re-generates types and pushes migration SQL.
- *
- * @param config - The {@link SWConfig} with `prefix`, `name`, and optional `schema`.
- * @returns A Vite plugin object with `name`, `buildStart`, `closeBundle`, and
- *          optionally `configureServer` hooks.
- *
- * @example
- * ```ts
- * stellarPWA({ prefix: 'myapp', name: 'My App', schema: true })
- * ```
- */
 export declare function stellarPWA(config: SWConfig): {
     name: string;
     buildStart(): Promise<void>;

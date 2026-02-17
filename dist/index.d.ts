@@ -67,7 +67,7 @@ export { remoteChangeAnimation, trackEditing, triggerLocalAnimation } from './ac
 export { isDemoMode, setDemoMode, seedDemoData, cleanupDemoDatabase, getDemoConfig } from './demo';
 export type { DemoConfig } from './demo';
 export type { SyncOperationItem, OperationType, OfflineCredentials, OfflineSession, ConflictHistoryEntry, SyncStatus, AuthMode, SingleUserConfig, SingleUserGateType, TrustedDevice, SchemaDefinition, SchemaTableConfig, AuthConfig, FieldType } from './types';
-export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTypeScript } from './schema';
+export { generateSupabaseSQL, inferColumnType, generateTypeScript } from './schema';
 export type { SQLGenerationOptions, TypeScriptGenerationOptions } from './schema';
 export type { Session } from '@supabase/supabase-js';
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';

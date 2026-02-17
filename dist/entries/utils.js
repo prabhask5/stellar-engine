@@ -37,6 +37,5 @@ export { getDiagnostics, getSyncDiagnostics, getRealtimeDiagnostics, getQueueDia
 // Generate complete Supabase SQL from a declarative schema definition:
 // - `generateSupabaseSQL` — produces CREATE TABLE, RLS, triggers, indexes.
 // - `inferColumnType` — maps field names to SQL types via naming conventions.
-// - `generateMigrationSQL` — diffs two schemas and produces ALTER statements.
-export { generateSupabaseSQL, inferColumnType, generateMigrationSQL, generateTypeScript } from '../schema';
+export { generateSupabaseSQL, inferColumnType, generateTypeScript } from '../schema';
 //# sourceMappingURL=utils.js.map

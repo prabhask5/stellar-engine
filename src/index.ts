@@ -348,12 +348,7 @@ export type {
 // Generate complete Supabase SQL from a declarative schema definition.
 // These are also available via `stellar-drive/utils`.
 
-export {
-  generateSupabaseSQL,
-  inferColumnType,
-  generateMigrationSQL,
-  generateTypeScript
-} from './schema';
+export { generateSupabaseSQL, inferColumnType, generateTypeScript } from './schema';
 export type { SQLGenerationOptions, TypeScriptGenerationOptions } from './schema';
 
 // =============================================================================

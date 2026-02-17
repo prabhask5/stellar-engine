@@ -1,19 +1,18 @@
 /**
  * @fileoverview Vite plugin that generates the service worker, asset manifest,
- * and (optionally) auto-generates TypeScript types and pushes schema migrations
- * to Supabase.
+ * and (optionally) auto-generates TypeScript types and pushes the schema to
+ * Supabase.
  *
  * The plugin hooks into three Vite/Rollup lifecycle events:
  *   - **`buildStart`** — generates `static/sw.js` from the compiled SW template.
- *     When `schema` is enabled, also runs a one-shot schema processing pass
- *     (types generation + migration push via direct Postgres connection).
- *     This ensures CI builds that never run `npm run dev` still auto-migrate.
+ *     When `schema` is enabled, also generates TypeScript types and pushes the
+ *     full idempotent schema SQL to Supabase via direct Postgres connection.
  *   - **`closeBundle`** — after Rollup finishes writing chunks, scans the
  *     immutable output directory and writes `asset-manifest.json` listing
  *     all JS/CSS files for the service worker to precache.
  *   - **`configureServer`** (dev only) — watches the schema file and
- *     auto-generates TypeScript types + auto-pushes Supabase migrations
- *     on every save, with 500ms debounce to prevent migration spam.
+ *     auto-generates TypeScript types + pushes schema to Supabase
+ *     on every save, with 500ms debounce.
  *
  * @example
  * ```ts
@@ -49,15 +48,6 @@ import { createRequire } from 'module';
  * processing.
  */
 const SCHEMA_DEBOUNCE_MS = 500;
-/**
- * Directory name for storing schema snapshots (relative to project root).
- * The snapshot file tracks the last-known schema state for migration diffing.
- */
-const SNAPSHOT_DIR = '.stellar';
-/**
- * Filename for the schema snapshot within {@link SNAPSHOT_DIR}.
- */
-const SNAPSHOT_FILE = 'schema-snapshot.json';
 // =============================================================================
 //                            FILESYSTEM HELPERS
 // =============================================================================
@@ -143,64 +133,6 @@ function resolveSchemaOpts(schema) {
     };
 }
 /**
- * Strip non-serializable values (functions) from a schema object before
- * saving it as a JSON snapshot.
- *
- * Function values (e.g., `onRemoteChange` callbacks) cannot be serialized
- * and would cause JSON.stringify to drop them silently. This function
- * recursively strips them to produce a clean, deterministic snapshot.
- *
- * @param obj - The schema object to clean.
- * @returns A new object with all function values removed.
- */
-function stripFunctions(obj) {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-        if (typeof value === 'function')
-            continue;
-        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-            result[key] = stripFunctions(value);
-        }
-        else {
-            result[key] = value;
-        }
-    }
-    return result;
-}
-/**
- * Load the schema snapshot from disk.
- *
- * @param projectRoot - The project root directory.
- * @returns The parsed snapshot, or `null` if no snapshot exists.
- */
-function loadSnapshot(projectRoot) {
-    const snapshotPath = join(projectRoot, SNAPSHOT_DIR, SNAPSHOT_FILE);
-    if (!existsSync(snapshotPath))
-        return null;
-    try {
-        return JSON.parse(readFileSync(snapshotPath, 'utf-8'));
-    }
-    catch {
-        return null;
-    }
-}
-/**
- * Save a schema snapshot to disk.
- *
- * Creates the `.stellar/` directory if it doesn't exist.
- *
- * @param projectRoot - The project root directory.
- * @param schema - The schema object to snapshot (functions will be stripped).
- */
-function saveSnapshot(projectRoot, schema) {
-    const dir = join(projectRoot, SNAPSHOT_DIR);
-    if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-    }
-    const cleaned = stripFunctions(schema);
-    writeFileSync(join(dir, SNAPSHOT_FILE), JSON.stringify(cleaned, null, 2) + '\n', 'utf-8');
-}
-/**
  * Load a TypeScript schema file by transpiling it with esbuild and
  * dynamically importing the result.
  *
@@ -236,7 +168,7 @@ async function loadSchemaFromFile(schemaPath) {
     }
 }
 /**
- * Core schema processing: generate types, diff against snapshot, push migration.
+ * Core schema processing: generate types and push idempotent SQL to Supabase.
  *
  * Shared by both `buildStart` (one-shot during builds) and `configureServer`
  * (on each schema file change during dev). The only difference is how the
@@ -277,108 +209,39 @@ async function processLoadedSchema(schema, appName, schemaOpts, projectRoot) {
     else {
         console.log(`[stellar-drive] Types unchanged at ${relTypesPath}`);
     }
-    /* 2. Load the previous schema snapshot for migration diffing. */
-    const snapshot = loadSnapshot(projectRoot);
-    /*
-     * Track whether to save the snapshot. Only save when:
-     *   - Migration was pushed successfully, OR
-     *   - No migration was needed (schema unchanged, no tables, auto-migrate off)
-     *
-     * If a migration push FAILS, we intentionally skip saving so that the next
-     * build retries the same migration instead of silently losing it.
-     */
-    let shouldSaveSnapshot = true;
-    if (snapshot && schemaOpts.autoMigrate) {
-        /* Diff the old and new schemas. */
-        const { generateMigrationSQL } = await import('../../schema.js');
-        const cleanedSchema = stripFunctions(schema);
-        /* Only diff if the schema actually changed. */
-        const oldJson = JSON.stringify(snapshot);
-        const newJson = JSON.stringify(cleanedSchema);
-        if (oldJson !== newJson) {
-            /* Log detailed summary of what changed in the schema definition. */
-            const oldTables = Object.keys(snapshot);
-            const newTables = Object.keys(cleanedSchema);
-            const addedTables = newTables.filter((t) => !oldTables.includes(t));
-            const removedTables = oldTables.filter((t) => !newTables.includes(t));
-            const sharedTables = newTables.filter((t) => oldTables.includes(t));
-            console.log('[stellar-drive] Schema changes detected:');
-            if (addedTables.length)
-                console.log(`[stellar-drive]   New tables: ${addedTables.join(', ')}`);
-            if (removedTables.length)
-                console.log(`[stellar-drive]   Removed tables: ${removedTables.join(', ')}`);
-            for (const t of sharedTables) {
-                const oldDef = JSON.stringify(snapshot[t]);
-                const newDef = JSON.stringify(cleanedSchema[t]);
-                if (oldDef !== newDef) {
-                    console.log(`[stellar-drive]   Modified table: ${t}`);
-                }
-            }
-            const migrationSQL = generateMigrationSQL(snapshot, cleanedSchema);
-            if (migrationSQL) {
-                console.log(`[stellar-drive] Migration SQL:\n${migrationSQL}`);
-                const success = await pushMigration(migrationSQL, schemaOpts, projectRoot);
-                shouldSaveSnapshot = success;
-            }
-            else {
-                console.log('[stellar-drive] Schema changed but no migration SQL needed');
-            }
-        }
-        else {
-            console.log('[stellar-drive] Schema unchanged, no migration needed');
-        }
-    }
-    else if (!snapshot && schemaOpts.autoMigrate) {
-        /*
-         * First run with no snapshot — generate the FULL initial SQL
-         * and push it to Supabase. This replaces the old `stellar-drive setup`
-         * command entirely.
-         */
-        const { generateSupabaseSQL } = await import('../../schema.js');
-        const cleanedSchema = stripFunctions(schema);
-        const hasAnyTables = Object.keys(cleanedSchema).length > 0;
-        if (hasAnyTables) {
-            const tableNames = Object.keys(cleanedSchema);
-            console.log(`[stellar-drive] No schema snapshot found — generating initial SQL for ${tableNames.length} tables: ${tableNames.join(', ')}`);
-            const fullSQL = generateSupabaseSQL(cleanedSchema, {
-                appName,
-                includeHelperFunctions: true
-            });
-            console.log(`[stellar-drive] Initial schema SQL:\n${fullSQL}`);
-            const success = await pushMigration(fullSQL, schemaOpts, projectRoot);
-            shouldSaveSnapshot = success;
-        }
-        else {
-            console.log('[stellar-drive] No tables in schema, skipping initial SQL generation');
-        }
-    }
-    else if (!schemaOpts.autoMigrate) {
+    /* 2. Generate and push idempotent SQL to Supabase.
+     *    The SQL uses IF NOT EXISTS / ADD COLUMN IF NOT EXISTS everywhere,
+     *    so it's safe to reapply the full schema on every build. */
+    if (!schemaOpts.autoMigrate) {
         console.log('[stellar-drive] Auto-migrate disabled, skipping schema sync');
+        return;
     }
-    /* 3. Save the new snapshot (strip functions before serialization).
-     *    Only save if migration succeeded or no migration was needed — this
-     *    ensures failed migrations are retried on the next build/save. */
-    if (shouldSaveSnapshot) {
-        saveSnapshot(projectRoot, schema);
+    const { generateSupabaseSQL } = await import('../../schema.js');
+    const tableNames = Object.keys(schema);
+    if (tableNames.length === 0) {
+        console.log('[stellar-drive] No tables in schema, skipping SQL generation');
+        return;
     }
-    else {
-        console.warn('[stellar-drive] Snapshot NOT updated — migration failed. ' +
-            'The migration will be retried on the next build or save.');
-    }
+    console.log(`[stellar-drive] Syncing ${tableNames.length} tables: ${tableNames.join(', ')}`);
+    const fullSQL = generateSupabaseSQL(schema, {
+        appName,
+        includeHelperFunctions: true
+    });
+    await pushSchema(fullSQL, schemaOpts, projectRoot);
 }
 /**
- * Push migration SQL to Supabase via a direct Postgres connection.
+ * Push schema SQL to Supabase via a direct Postgres connection.
  *
- * Uses the `DATABASE_URL` environment variable to connect directly to the
- * Supabase Postgres database and execute migration SQL. This eliminates the
- * need for a bootstrap RPC function and works on fresh databases.
+ * Reads `DATABASE_URL` from `process.env` first, then falls back to `.env`
+ * files in the project root (since Vite plugins don't get `.env` loaded
+ * into `process.env` automatically).
  *
- * @param sql - The migration SQL to execute.
+ * @param sql - The idempotent schema SQL to execute.
  * @param opts - The resolved schema options.
  * @param root - The project root directory.
- * @returns `true` if the migration was pushed successfully, `false` otherwise.
+ * @returns `true` if the push succeeded, `false` otherwise.
  */
-async function pushMigration(sql, opts, root) {
+async function pushSchema(sql, opts, root) {
     let databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
         for (const envFile of ['.env.local', '.env']) {
@@ -394,9 +257,8 @@ async function pushMigration(sql, opts, root) {
     }
     if (!databaseUrl) {
         const relTypes = relative(root, resolve(opts.typesOutput));
-        console.warn(`[stellar-drive] \u26a0 Supabase auto-migration skipped \u2014 missing env var:\n` +
-            `  DATABASE_URL\n` +
-            `  Set this in .env to enable automatic schema sync.\n` +
+        console.warn(`[stellar-drive] \u26a0 Schema push skipped \u2014 DATABASE_URL not found.\n` +
+            `  Set it in .env to enable automatic schema sync.\n` +
             `  Find it: Supabase Dashboard \u2192 Settings \u2192 Database \u2192 Connection string (URI)\n` +
             `  Types were still generated at ${relTypes}`);
         return false;
@@ -414,18 +276,22 @@ async function pushMigration(sql, opts, root) {
     catch {
         console.error('[stellar-drive] \u274c Missing dependency: `postgres`\n' +
             '  Install it with: npm install postgres\n' +
-            '  This package is required for automatic schema migrations.');
+            '  This package is required for automatic schema sync.');
         return false;
     }
+    /* Force IPv4 DNS resolution — some CI environments (e.g., Vercel) cannot
+       reach Supabase Postgres over IPv6, causing ENETUNREACH errors. */
+    const dns = await import('dns');
+    dns.setDefaultResultOrder('ipv4first');
     const sql_client = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
     try {
         await sql_client.unsafe(sql);
-        console.log('[stellar-drive] \u2705 Schema migrated successfully');
+        console.log('[stellar-drive] \u2705 Schema pushed successfully');
         return true;
     }
     catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[stellar-drive] \u274c Migration failed: ${message}`);
+        console.error(`[stellar-drive] \u274c Schema push failed: ${message}`);
         return false;
     }
     finally {
@@ -437,14 +303,13 @@ async function pushMigration(sql, opts, root) {
 // =============================================================================
 /**
  * Vite plugin factory that generates `static/sw.js`, `asset-manifest.json`,
- * and optionally auto-generates types + auto-pushes schema migrations.
+ * and optionally auto-generates types + pushes schema SQL to Supabase.
  *
  * **`buildStart` hook (dev + production builds):**
  *   - Generates `static/sw.js` from the compiled SW template.
  *   - When `schema` is enabled: loads the schema file via esbuild, generates
- *     TypeScript types, diffs against the snapshot, and pushes migration SQL
- *     to Supabase via direct Postgres connection (`DATABASE_URL`). This
- *     ensures CI/CD builds that skip `npm run dev` still auto-migrate.
+ *     TypeScript types, and pushes the full idempotent schema SQL to Supabase
+ *     via direct Postgres connection (`DATABASE_URL`).
  *
  * **`closeBundle` hook:**
  *   - Scans SvelteKit's immutable output directory for JS and CSS files.
@@ -454,7 +319,7 @@ async function pushMigration(sql, opts, root) {
  * **`configureServer` hook (dev only, when `schema` is enabled):**
  *   - On server start, processes the schema file once via Vite's SSR loader.
  *   - Watches the schema file for changes with 500ms debounce.
- *   - Each change re-generates types and pushes migration SQL.
+ *   - Each change re-generates types and pushes schema SQL.
  *
  * @param config - The {@link SWConfig} with `prefix`, `name`, and optional `schema`.
  * @returns A Vite plugin object with `name`, `buildStart`, `closeBundle`, and
@@ -465,6 +330,13 @@ async function pushMigration(sql, opts, root) {
  * stellarPWA({ prefix: 'myapp', name: 'My App', schema: true })
  * ```
  */
+/*
+ * SvelteKit's `vite build` evaluates the config twice (SSR + client passes),
+ * so the plugin factory runs twice. Module-level flags ensure SW generation,
+ * schema processing, and asset manifest generation only happen once per build.
+ */
+let buildStartRan = false;
+let closeBundleRan = false;
 export function stellarPWA(config) {
     /*
      * Track whether `configureServer` has run. If it has, skip the schema
@@ -477,6 +349,9 @@ export function stellarPWA(config) {
         name: 'stellar-pwa',
         /* ── buildStart — generate sw.js + one-shot schema processing ── */
         async buildStart() {
+            if (buildStartRan)
+                return;
+            buildStartRan = true;
             console.log(`[stellar-drive] buildStart — ${config.name} (prefix: ${config.prefix})`);
             /* ---- Service Worker Generation ---- */
             /* Generate a unique version stamp using base-36 timestamp */
@@ -529,6 +404,9 @@ export function stellarPWA(config) {
         },
         /* ── closeBundle — generate asset manifest ───────────────────── */
         closeBundle() {
+            if (closeBundleRan)
+                return;
+            closeBundleRan = true;
             console.log('[stellar-drive] closeBundle — generating asset manifest');
             const buildDir = resolve('.svelte-kit/output/client/_app/immutable');
             if (!existsSync(buildDir)) {
@@ -563,7 +441,7 @@ export function stellarPWA(config) {
                 console.warn('[stellar-drive] Could not generate asset manifest:', e);
             }
         },
-        /* ── configureServer — schema watching + auto-migration ──────── */
+        /* ── configureServer — schema watching + auto-sync ──────────── */
         configureServer(server) {
             /* Mark as dev server so buildStart skips schema processing. */
             isDevServer = true;
@@ -578,7 +456,7 @@ export function stellarPWA(config) {
             /*
              * Mutex flag to prevent concurrent processSchema executions.
              * Without this, the initial call + a rapid file change could overlap,
-             * causing duplicate migration pushes or snapshot race conditions.
+             * causing duplicate schema pushes.
              */
             let processing = false;
             let pendingReprocess = false;

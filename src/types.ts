@@ -319,29 +319,6 @@ export interface SchemaTableConfig {
   fields?: Record<string, FieldType>;
   /** Override the auto-generated PascalCase interface name (e.g., `'LongTermTask'`). */
   typeName?: string;
-  /**
-   * Previous table name, used as a one-time rename hint.
-   *
-   * When set, the migration generator produces `ALTER TABLE <renamedFrom> RENAME TO <newName>`
-   * instead of DROP + CREATE. The Dexie upgrade callback copies data from the old table
-   * to the new one. Remove this field after the migration has been applied.
-   *
-   * @example
-   * // Rename "todos" to "tasks":
-   * tasks: { indexes: 'project_id, order', renamedFrom: 'todos' }
-   */
-  renamedFrom?: string;
-  /**
-   * Column renames as `{ newName: oldName }`, used as one-time rename hints.
-   *
-   * Generates `ALTER TABLE ... RENAME COLUMN <oldName> TO <newName>` in the migration SQL.
-   * Remove these entries after the migration has been applied.
-   *
-   * @example
-   * // Rename the "name" column to "title":
-   * tasks: { indexes: 'project_id, order', renamedColumns: { title: 'name' } }
-   */
-  renamedColumns?: Record<string, string>;
 }
 
 /**

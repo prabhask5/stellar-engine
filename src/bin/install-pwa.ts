@@ -23,7 +23,7 @@
  * @see {@link writeIfMissing} for the non-destructive file write strategy
  */
 
-import { writeFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, existsSync, mkdirSync, rmSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import * as p from '@clack/prompts';
@@ -1363,7 +1363,8 @@ function generateKnipJson(): string {
         ignore: ['src/app.d.ts', '**/*.test.ts', '**/*.spec.ts'],
         sveltekit: {
           config: 'svelte.config.js'
-        }
+        },
+        ignoreDependencies: ['stellar-drive', 'postgres']
       },
       null,
       2
@@ -3300,6 +3301,17 @@ function generateProfilePage(opts: InstallOptions): string {
   let debugMode = $state(isDebugMode());
   let resetting = $state(false);
 
+  /* ── Demo mode toast ──── */
+  let demoToast = $state('');
+  let demoToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Show a temporary toast for blocked demo operations. */
+  function showDemoToast(msg: string) {
+    demoToast = msg;
+    if (demoToastTimer) clearTimeout(demoToastTimer);
+    demoToastTimer = setTimeout(() => (demoToast = ''), 3000);
+  }
+
   /* ── Debug tools loading flags ──── */
   let forceSyncing = $state(false);
   let triggeringSyncManual = $state(false);
@@ -3436,19 +3448,27 @@ function generateProfilePage(opts: InstallOptions): string {
    */
   async function handleProfileSubmit(e: Event) {
     e.preventDefault();
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     profileLoading = true;
     profileError = null;
     profileSuccess = null;
 
     try {
-      await updateSingleUserProfile({
+      const result = await updateSingleUserProfile({
         firstName: firstName.trim(),
         lastName: lastName.trim()
       });
-      // Update auth state to immediately reflect changes in navbar
-      authState.updateUserProfile({ first_name: firstName.trim(), last_name: lastName.trim() });
-      profileSuccess = 'Profile updated successfully';
-      setTimeout(() => (profileSuccess = null), 3000);
+      if (result.error) {
+        profileError = result.error;
+      } else {
+        // Update auth state to immediately reflect changes in navbar
+        authState.updateUserProfile({ first_name: firstName.trim(), last_name: lastName.trim() });
+        profileSuccess = 'Profile updated successfully';
+        setTimeout(() => (profileSuccess = null), 3000);
+      }
     } catch (err: unknown) {
       profileError = err instanceof Error ? err.message : 'Failed to update profile';
     }
@@ -3463,6 +3483,10 @@ function generateProfilePage(opts: InstallOptions): string {
    */
   async function handleCodeSubmit(e: Event) {
     e.preventDefault();
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
 
     if (oldCode.length !== 6) {
       codeError = 'Please enter your current 6-digit code';
@@ -3484,12 +3508,16 @@ function generateProfilePage(opts: InstallOptions): string {
     codeSuccess = null;
 
     try {
-      await changeSingleUserGate(oldCode, newCode);
-      codeSuccess = 'Code changed successfully';
-      oldCodeDigits = ['', '', '', '', '', ''];
-      newCodeDigits = ['', '', '', '', '', ''];
-      confirmCodeDigits = ['', '', '', '', '', ''];
-      setTimeout(() => (codeSuccess = null), 3000);
+      const result = await changeSingleUserGate(oldCode, newCode);
+      if (result.error) {
+        codeError = result.error;
+      } else {
+        codeSuccess = 'Code changed successfully';
+        oldCodeDigits = ['', '', '', '', '', ''];
+        newCodeDigits = ['', '', '', '', '', ''];
+        confirmCodeDigits = ['', '', '', '', '', ''];
+        setTimeout(() => (codeSuccess = null), 3000);
+      }
     } catch (err: unknown) {
       codeError = err instanceof Error ? err.message : 'Failed to change code';
     }
@@ -3509,6 +3537,10 @@ function generateProfilePage(opts: InstallOptions): string {
    */
   async function handleEmailSubmit(e: Event) {
     e.preventDefault();
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     emailError = null;
     emailSuccess = null;
 
@@ -3605,9 +3637,9 @@ function generateProfilePage(opts: InstallOptions): string {
     setDebugMode(debugMode);
   }
 
-  /** Navigate back to the main tasks view. */
+  /** Navigate back to the home view. */
   function goBack() {
-    goto('/tasks');
+    goto('/');
   }
 
   /**
@@ -3615,6 +3647,10 @@ function generateProfilePage(opts: InstallOptions): string {
    * Session is preserved in localStorage so the app will re-hydrate.
    */
   async function handleResetDatabase() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     if (
       !confirm(
         'This will delete all local data and reload. Your data will be re-synced from the server. Continue?'
@@ -3639,6 +3675,10 @@ function generateProfilePage(opts: InstallOptions): string {
    * @param id - Database ID of the trusted device row
    */
   async function handleRemoveDevice(id: string) {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     removingDeviceId = id;
     try {
       await removeTrustedDevice(id);
@@ -3664,6 +3704,10 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /** Resets the sync cursor and re-downloads all data from Supabase. */
   async function handleForceFullSync() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     if (
       !confirm(
         'This will reset the sync cursor and re-download all data from the server. Continue?'
@@ -3687,6 +3731,10 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /** Manually trigger a single push/pull sync cycle. */
   async function handleTriggerSync() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     triggeringSyncManual = true;
     try {
       const fn = getDebugWindow().__${opts.prefix}Sync as { sync: () => Promise<void> } | undefined;
@@ -3704,6 +3752,10 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /** Reset the sync cursor so the next cycle pulls all remote data. */
   async function handleResetSyncCursor() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     resettingCursor = true;
     try {
       const fn = getDebugWindow().__${opts.prefix}Sync as { resetSyncCursor: () => Promise<void> } | undefined;
@@ -3721,6 +3773,10 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /** Log soft-deleted record counts per table to the browser console. */
   async function handleViewTombstones() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     viewingTombstones = true;
     try {
       const fn = getDebugWindow().__${opts.prefix}Tombstones as
@@ -3740,6 +3796,10 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /** Permanently remove old soft-deleted records from local + remote DBs. */
   async function handleCleanupTombstones() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     if (
       !confirm(
         'This will permanently remove old soft-deleted records from local and server databases. Continue?'
@@ -3765,6 +3825,10 @@ function generateProfilePage(opts: InstallOptions): string {
 
   /** Dispatch a custom event that the app shell listens for to sign out on mobile. */
   function handleMobileSignOut() {
+    if (inDemoMode) {
+      showDemoToast('Not available in demo mode');
+      return;
+    }
     window.dispatchEvent(new CustomEvent('${opts.prefix}:signout'));
   }
 </script>
@@ -4697,6 +4761,21 @@ export async function run(): Promise<void> {
   s.stop('Installing dependencies (npm output below)');
   execSync('npm install', { stdio: 'inherit', cwd });
   p.log.success('Dependencies installed');
+
+  // 2b. Symlink stellar-drive to local package for development
+  const stellarDrivePkg = join(cwd, 'node_modules', 'stellar-drive');
+  const stellarDriveLocal = join(cwd, '..', 'stellar-drive');
+  try {
+    if (existsSync(stellarDriveLocal)) {
+      if (existsSync(stellarDrivePkg)) {
+        rmSync(stellarDrivePkg, { recursive: true });
+      }
+      symlinkSync(stellarDriveLocal, stellarDrivePkg);
+      p.log.success('Symlinked stellar-drive to local package');
+    }
+  } catch {
+    /* Non-fatal — user can symlink manually */
+  }
 
   // 3. Write all template files by category
   const firstLetter = opts.shortName.charAt(0).toUpperCase();

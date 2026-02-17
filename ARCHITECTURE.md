@@ -1974,7 +1974,7 @@ The scaffolded project is fully wired for the schema auto-generation workflow:
 
 - `vite.config.ts` includes `stellarPWA({ ..., schema: true })`
 - `src/lib/schema.ts` is the single source of truth, imported by both the Vite plugin and the app's `+layout.ts`
-- `.env.example` documents all required env vars (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `DATABASE_URL`)
+- `.env.example` documents all required env vars (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, `DATABASE_URL`)
 - `.gitignore` excludes `src/lib/types.generated.ts` (`.stellar/schema-snapshot.json` is committed for CI/CD migration diffing)
 - `src/lib/types.ts` imports from `types.generated.ts` with guidance on `Omit` + extend narrowing
 

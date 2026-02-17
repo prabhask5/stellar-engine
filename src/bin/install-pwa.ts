@@ -829,7 +829,7 @@ Copy \`.env.example\` to \`.env\` and fill in:
 | Variable | Where to find it | Required for |
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data access |
-| \`PUBLIC_SUPABASE_ANON_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data access |
+| \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data access |
 | \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto-migration (dev/build) |
 
 > **Note:** \`DATABASE_URL\` is optional for local development. Without it, types still auto-generate but Supabase schema migrations are skipped.
@@ -853,14 +853,14 @@ The schema migration runs automatically during every \`vite build\`. To enable i
    | Variable | Type | Required |
    |----------|------|----------|
    | \`PUBLIC_SUPABASE_URL\` | Plain | Yes |
-   | \`PUBLIC_SUPABASE_ANON_KEY\` | Plain | Yes |
+   | \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Plain | Yes |
    | \`DATABASE_URL\` | Secret | Yes — auto-migration |
 
 2. **Commit \`.stellar/schema-snapshot.json\`** — this file tracks your last-known schema. Without it, every build treats the schema as brand new. It updates automatically when you run \`dev\` or \`build\`; commit it alongside schema changes.
 
 3. **First deploy**: The very first build (with no snapshot) generates idempotent initial SQL (\`CREATE TABLE IF NOT EXISTS\`) and pushes it directly to Postgres. Works on fresh databases and databases with existing tables.
 
-> **Security:** \`DATABASE_URL\` is only used server-side during the build. It is never bundled into client code. \`PUBLIC_SUPABASE_URL\` and \`PUBLIC_SUPABASE_ANON_KEY\` are served at runtime from \`/api/config\` — these are public keys protected by Supabase RLS.
+> **Security:** \`DATABASE_URL\` is only used server-side during the build. It is never bundled into client code. \`PUBLIC_SUPABASE_URL\` and \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` are served at runtime from \`/api/config\` — these are public keys protected by Supabase RLS.
 
 > **Failed migrations:** If a migration fails, the snapshot is NOT updated. The next build will retry the same migration automatically.
 
@@ -955,7 +955,7 @@ static/
 | Variable | Where to find it | Required for |
 |----------|-----------------|--------------|
 | \`PUBLIC_SUPABASE_URL\` | Supabase Dashboard → Settings → API → Project URL | Client auth + data |
-| \`PUBLIC_SUPABASE_ANON_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data |
+| \`PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY\` | Supabase Dashboard → Settings → API → \`anon\` \`public\` key | Client auth + data |
 | \`DATABASE_URL\` | Supabase Dashboard → Settings → Database → Connection string (URI) | Auto-migration |
 
 > \`DATABASE_URL\` is only used server-side during builds. It is never bundled into client code. Without it, types still auto-generate but Supabase migrations are skipped.
@@ -4673,7 +4673,7 @@ PUBLIC_SUPABASE_URL=
 # The anonymous (public) API key — used for client-side auth and data access.
 # This key is safe to include in client bundles; RLS policies protect data.
 # Find it: Supabase Dashboard → Settings → API → Project API keys → anon public
-PUBLIC_SUPABASE_ANON_KEY=
+PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=
 
 # -----------------------------------------------------------------------------
 # Database — Migrations (secret, never expose to the client)

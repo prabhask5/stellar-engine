@@ -316,7 +316,7 @@ const diagnostics = await getDiagnostics();
 | Variable | Required | Description |
 |---|---|---|
 | `PUBLIC_SUPABASE_URL` | Yes | Supabase project URL. Find it: Dashboard > Settings > API > Project URL. |
-| `PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key. Find it: Dashboard > Settings > API > Project API keys > anon public. |
+| `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase anon/public key. Find it: Dashboard > Settings > API > Project API keys > anon public. |
 | `DATABASE_URL` | For auto-migration | Postgres connection string. Used by the Vite plugin to push schema migrations directly to Postgres. If not set, migrations are skipped and types are still generated. Find it: Dashboard > Settings > Database > Connection string (URI). |
 
 ## Schema workflow
@@ -365,7 +365,7 @@ The schema migration runs automatically during every `vite build`. To enable it 
    | Variable | Type | Required |
    |---|---|---|
    | `PUBLIC_SUPABASE_URL` | Plain | Yes -- client auth + data access |
-   | `PUBLIC_SUPABASE_ANON_KEY` | Plain | Yes -- client auth + data access |
+   | `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Plain | Yes -- client auth + data access |
    | `DATABASE_URL` | Secret | Yes -- auto-migration during build |
 
 2. **Commit `.stellar/schema-snapshot.json`** to git. This file tracks the last-known schema state. Without it, every build is treated as a first run (full idempotent SQL). The snapshot is updated locally when you run `dev` or `build` and should be committed alongside schema changes.
@@ -377,7 +377,7 @@ The schema migration runs automatically during every `vite build`. To enable it 
 - If the migration fails, the snapshot is **not updated**, so the next build retries the same migration.
 - IndexedDB migrations happen client-side at runtime (no build step needed).
 
-**Security:** `DATABASE_URL` is only used server-side during the Vite build process. It is never bundled into client code or exposed to users. `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are served at runtime from your `/api/config` endpoint -- these are public keys by design, protected by Supabase Row Level Security.
+**Security:** `DATABASE_URL` is only used server-side during the Vite build process. It is never bundled into client code or exposed to users. `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` are served at runtime from your `/api/config` endpoint -- these are public keys by design, protected by Supabase Row Level Security.
 
 See [API Reference -- Vite Plugin](./API_REFERENCE.md#vite-plugin-stellarpwa) for full configuration options.
 

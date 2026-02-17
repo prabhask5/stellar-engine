@@ -107,7 +107,7 @@ export interface DeployResult {
  * present in the server's runtime environment.
  */
 export interface ServerConfig {
-  /** `true` when both `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are set. */
+  /** `true` when both `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` are set. */
   configured: boolean;
 
   /** The Supabase project URL, if configured. */
@@ -228,7 +228,7 @@ async function setEnvVar(
  * Reads Supabase configuration from `process.env` at runtime.
  *
  * Checks for the presence of both `PUBLIC_SUPABASE_URL` and
- * `PUBLIC_SUPABASE_ANON_KEY` environment variables.
+ * `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` environment variables.
  * Returns `{ configured: true }` with the values when both exist,
  * or `{ configured: false }` otherwise.
  *
@@ -252,7 +252,7 @@ async function setEnvVar(
  */
 export function getServerConfig(): ServerConfig {
   const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.PUBLIC_SUPABASE_ANON_KEY || '';
+  const supabaseAnonKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
 
   if (supabaseUrl && supabaseAnonKey) {
     return { configured: true, supabaseUrl, supabaseAnonKey };
@@ -309,7 +309,7 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
     await setEnvVar(
       config.projectId,
       config.vercelToken,
-      'PUBLIC_SUPABASE_ANON_KEY',
+      'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY',
       config.supabaseAnonKey
     );
 

@@ -112,8 +112,13 @@ export async function validateSupabaseCredentials(
       }
       /* Table doesn't exist but the API responded — this means the URL and
          anon key are correct; the schema just hasn't been set up yet. We
-         treat this as a successful credential validation. */
-      if (error.message?.includes('relation') && error.message?.includes('does not exist')) {
+         treat this as a successful credential validation.
+         PostgREST may phrase this as "relation does not exist" or
+         "Could not find the table ... in the schema cache". */
+      if (
+        (error.message?.includes('relation') && error.message?.includes('does not exist')) ||
+        error.message?.includes('schema cache')
+      ) {
         return { valid: true };
       }
       // Any other error
@@ -195,7 +200,10 @@ export async function validateSchema(): Promise<{
          without fetching any actual data rows. */
       const { error } = await supabase.from(tableName).select('id').limit(0);
       if (error) {
-        if (error.message?.includes('relation') && error.message?.includes('does not exist')) {
+        if (
+          (error.message?.includes('relation') && error.message?.includes('does not exist')) ||
+          error.message?.includes('schema cache')
+        ) {
           missingTables.push(tableName);
           errors.push(`Table "${tableName}" does not exist`);
         } else if (error.message?.includes('permission denied') || error.code === '42501') {

@@ -123,7 +123,7 @@ async function setEnvVar(projectId, token, key, value) {
  * Reads Supabase configuration from `process.env` at runtime.
  *
  * Checks for the presence of both `PUBLIC_SUPABASE_URL` and
- * `PUBLIC_SUPABASE_ANON_KEY` environment variables.
+ * `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` environment variables.
  * Returns `{ configured: true }` with the values when both exist,
  * or `{ configured: false }` otherwise.
  *
@@ -147,7 +147,7 @@ async function setEnvVar(projectId, token, key, value) {
  */
 export function getServerConfig() {
     const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
-    const supabaseAnonKey = process.env.PUBLIC_SUPABASE_ANON_KEY || '';
+    const supabaseAnonKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
     if (supabaseUrl && supabaseAnonKey) {
         return { configured: true, supabaseUrl, supabaseAnonKey };
     }
@@ -194,7 +194,7 @@ export async function deployToVercel(config) {
         //  Phase 1 — Upsert environment variables
         // -------------------------------------------------------------------------
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_URL', config.supabaseUrl);
-        await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_ANON_KEY', config.supabaseAnonKey);
+        await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY', config.supabaseAnonKey);
         // -------------------------------------------------------------------------
         //  Phase 2 — Trigger production redeployment
         // -------------------------------------------------------------------------

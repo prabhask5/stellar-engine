@@ -1705,7 +1705,7 @@ The Vite plugin and SvelteKit server helpers read these environment variables:
 | Variable | Required For | Description |
 |---|---|---|
 | `PUBLIC_SUPABASE_URL` | Runtime | Your Supabase project URL (e.g., `https://abc.supabase.co`). Find it: Supabase Dashboard > Settings > API > Project URL. |
-| `PUBLIC_SUPABASE_ANON_KEY` | Runtime | The anonymous/public API key for client-side auth and data access. Find it: Supabase Dashboard > Settings > API > Project API keys > anon public. |
+| `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Runtime | The anonymous/public API key for client-side auth and data access. Find it: Supabase Dashboard > Settings > API > Project API keys > anon public. |
 | `DATABASE_URL` | Auto-migration only | Postgres connection string for direct SQL execution. Used by the Vite plugin to push schema migrations. If not set, migrations are skipped. Find it: Supabase Dashboard > Settings > Database > Connection string (URI). **Never expose this to the client.** |
 
 ### Generated Files
@@ -1759,7 +1759,7 @@ npx stellar-drive install pwa
 
 After running `install pwa`:
 
-1. Copy `.env.example` to `.env` and fill in your Supabase credentials (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `DATABASE_URL`).
+1. Copy `.env.example` to `.env` and fill in your Supabase credentials (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, `DATABASE_URL`).
 2. Run `npm install` to install dependencies (includes the `postgres` package for direct database access).
 3. Run `npm run dev` -- the Vite plugin will:
    - Generate TypeScript types at `src/lib/types.generated.ts`

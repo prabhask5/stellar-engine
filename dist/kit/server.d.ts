@@ -72,7 +72,7 @@ export interface DeployResult {
  * present in the server's runtime environment.
  */
 export interface ServerConfig {
-    /** `true` when both `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` are set. */
+    /** `true` when both `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` are set. */
     configured: boolean;
     /** The Supabase project URL, if configured. */
     supabaseUrl?: string;
@@ -83,7 +83,7 @@ export interface ServerConfig {
  * Reads Supabase configuration from `process.env` at runtime.
  *
  * Checks for the presence of both `PUBLIC_SUPABASE_URL` and
- * `PUBLIC_SUPABASE_ANON_KEY` environment variables.
+ * `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` environment variables.
  * Returns `{ configured: true }` with the values when both exist,
  * or `{ configured: false }` otherwise.
  *

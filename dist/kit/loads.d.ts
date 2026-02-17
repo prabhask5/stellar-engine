@@ -18,8 +18,8 @@
  * ```ts
  * // In +layout.ts (root)
  * import { resolveRootLayout } from 'stellar-drive/kit/loads';
- * export async function load({ url }) {
- *   return resolveRootLayout(url);
+ * export async function load() {
+ *   return resolveRootLayout();
  * }
  * ```
  *
@@ -31,16 +31,10 @@ import type { AuthStateResult } from '../auth/resolveAuthState.js';
 /**
  * Data returned by `resolveRootLayout`.
  *
- * Extends the base auth state with an optional `singleUserSetUp` flag
- * indicating whether the app has completed initial configuration.
+ * Includes auth state plus the `serverConfigured` flag for distinguishing
+ * first-time setup (no env vars) from locked/new-device scenarios.
  */
-export interface RootLayoutData extends AuthStateResult {
-    /**
-     * Indicates whether the single-user setup wizard has been completed.
-     * When `false` and no config exists, the app should redirect to `/setup`.
-     */
-    singleUserSetUp?: boolean;
-}
+export type RootLayoutData = AuthStateResult;
 /**
  * Data returned by `resolveSetupAccess`.
  *
@@ -67,23 +61,16 @@ export interface SetupAccessData {
  *   4. Starts the sync engine if the user is authenticated, enabling
  *      offline-first data synchronization
  *
- * @param url          - The current page URL object. Only `pathname` is
- *                       inspected, to detect whether the user is already
- *                       on the `/setup` page.
- * @param _initEngineFn - (Optional) The app's `initEngine()` call, executed
- *                        before config init. Typically already called at
- *                        module scope in the browser; this parameter exists
- *                        for explicit invocation in SSR contexts.
- *
  * @returns Layout data containing session, auth mode, offline profile,
- *          and setup status. The consuming layout uses these to hydrate
- *          the auth store and conditionally render the app shell.
+ *          and server configuration status. The consuming layout uses
+ *          these to hydrate the auth store and conditionally render the
+ *          app shell.
  *
  * @example
  * ```ts
  * // +layout.ts
- * export async function load({ url }) {
- *   return resolveRootLayout(url);
+ * export async function load() {
+ *   return resolveRootLayout();
  * }
  * ```
  *
@@ -91,9 +78,7 @@ export interface SetupAccessData {
  * @see {@link initConfig} for config bootstrapping details
  * @see {@link resolveAuthState} for auth resolution logic
  */
-export declare function resolveRootLayout(url: {
-    pathname: string;
-}, _initEngineFn?: () => void): Promise<RootLayoutData>;
+export declare function resolveRootLayout(): Promise<RootLayoutData>;
 /**
  * Setup page guard implementing a two-tier access model:
  *

@@ -64,13 +64,6 @@ export interface AuthStateResult {
   offlineProfile: OfflineCredentials | null;
 
   /**
-   * Whether single-user mode has been set up on this device.
-   * Only present when the engine is configured with `auth.singleUser`.
-   * `false` means the user needs to go through the initial setup flow.
-   */
-  singleUserSetUp?: boolean;
-
-  /**
    * Whether the server has been configured (runtime config exists).
    * Used to distinguish "first-time setup" (no env vars) from
    * "new device / locked" (server configured but no local session).
@@ -97,7 +90,7 @@ export interface AuthStateResult {
  *
  * @example
  * ```ts
- * const { authMode, session, singleUserSetUp } = await resolveAuthState();
+ * const { authMode, session } = await resolveAuthState();
  * if (authMode === 'supabase') {
  *   startSyncEngine(session);
  * } else if (authMode === 'offline') {
@@ -112,7 +105,7 @@ export interface AuthStateResult {
 export async function resolveAuthState(): Promise<AuthStateResult> {
   /* Demo mode short-circuit: skip all real auth resolution. */
   if (isDemoMode()) {
-    return { session: null, authMode: 'demo', offlineProfile: null, singleUserSetUp: true };
+    return { session: null, authMode: 'demo', offlineProfile: null };
   }
 
   try {
@@ -154,38 +147,37 @@ export async function resolveAuthState(): Promise<AuthStateResult> {
  * Handles the following scenarios in order:
  *
  * 1. **No local config**: User has not set up on this device.
- *    Returns `authMode: 'none'`, `singleUserSetUp: false`.
+ *    Returns `authMode: 'none'`.
  *
  * 2. **Legacy config without email**: Config from the anonymous auth era.
- *    Nukes all local auth artifacts and returns `singleUserSetUp: false`.
+ *    Nukes all local auth artifacts and returns `authMode: 'none'`.
  *
  * 3. **Code-length migration**: The engine config specifies a different PIN
  *    length than what is stored locally. Resets remote and local state, forcing
  *    re-setup with the new PIN length.
  *
- * 4. **Valid Supabase session**: Returns `authMode: 'supabase'`, `singleUserSetUp: true`.
+ * 4. **Valid Supabase session**: Returns `authMode: 'supabase'`.
  *
  * 5. **Expired session with valid refresh token**: Attempts token refresh.
  *    On success, returns `authMode: 'supabase'`. On failure, falls through.
  *
  * 6. **Offline with cached session**: Even an expired Supabase session is usable
  *    offline (RLS is not enforced client-side).
- *    Returns `authMode: 'supabase'`, `singleUserSetUp: true`.
+ *    Returns `authMode: 'supabase'`.
  *
  * 7. **Offline with offline session**: Falls back to offline credentials.
- *    Returns `authMode: 'offline'`, `singleUserSetUp: true`.
+ *    Returns `authMode: 'offline'`.
  *
  * 8. **No valid session (locked)**: User must re-enter their PIN.
- *    Returns `authMode: 'none'`, `singleUserSetUp: true`.
+ *    Returns `authMode: 'none'`.
  *
- * @returns A promise resolving to an {@link AuthStateResult} with the
- *          `singleUserSetUp` field populated.
+ * @returns A promise resolving to an {@link AuthStateResult}.
  */
 async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
   try {
     const db = getEngineConfig().db;
     if (!db) {
-      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+      return { session: null, authMode: 'none', offlineProfile: null };
     }
 
     const config = (await db.table('singleUserConfig').get('config')) as SingleUserConfig | null;
@@ -194,12 +186,12 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       /* No local config -- user has not set up on this device.
          With real email/password auth, new devices go through the login flow
          (email + PIN) which creates the local config after signInWithPassword. */
-      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+      return { session: null, authMode: 'none', offlineProfile: null };
     }
 
     if (!config.email) {
       /* Config without email is invalid — user needs to go through setup. */
-      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+      return { session: null, authMode: 'none', offlineProfile: null };
     }
 
     /* codeLength migration: if the engine config specifies a different PIN length
@@ -228,14 +220,14 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       } catch (e) {
         debugWarn('[Auth] Failed to clear local auth state:', e);
       }
-      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+      return { session: null, authMode: 'none', offlineProfile: null };
     }
 
     /* Lock check: if the user explicitly locked the app, honour the lock
        even if a valid Supabase session still exists in localStorage. */
     const lockState = await db.table('singleUserConfig').get('lock_state');
     if (lockState?.locked) {
-      return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
+      return { session: null, authMode: 'none', offlineProfile: null };
     }
 
     // =========================================================================
@@ -266,7 +258,7 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
     const hasValidSession = session && !isSessionExpired(session);
 
     if (hasValidSession) {
-      return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
+      return { session, authMode: 'supabase', offlineProfile: null };
     }
 
     // =========================================================================
@@ -277,7 +269,7 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       /* Even an expired cached Supabase session is usable offline because RLS
          is not enforced on the client side -- it only matters when syncing. */
       if (session) {
-        return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
+        return { session, authMode: 'supabase', offlineProfile: null };
       }
 
       const offlineSession = await getValidOfflineSession();
@@ -292,15 +284,15 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
           profile: config.profile,
           cachedAt: new Date().toISOString()
         };
-        return { session: null, authMode: 'offline', offlineProfile, singleUserSetUp: true };
+        return { session: null, authMode: 'offline', offlineProfile };
       }
     }
 
     /* No valid session -- the single-user app is "locked" and the user must
        re-enter their PIN to unlock. */
-    return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
+    return { session: null, authMode: 'none', offlineProfile: null };
   } catch (e) {
     debugError('[Auth] Failed to resolve single-user auth state:', e);
-    return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+    return { session: null, authMode: 'none', offlineProfile: null };
   }
 }

@@ -1370,11 +1370,11 @@ const PUBLIC_ROUTES = ['/policy', '/login', '/demo', '/confirm', '/setup'];
  */
 export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
   if (browser) {
-    const result = await resolveRootLayout(url);
+    const result = await resolveRootLayout();
 
     const isPublicRoute = PUBLIC_ROUTES.some(r => url.pathname.startsWith(r));
     if (result.authMode === 'none' && !isPublicRoute) {
-      if (!result.singleUserSetUp && !result.serverConfigured) {
+      if (!result.serverConfigured) {
         redirect(307, '/setup');
       } else {
         const returnUrl = url.pathname + url.search;
@@ -1389,7 +1389,7 @@ export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
   }
 
   /* SSR fallback — no auth info available on the server */
-  return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false, serverConfigured: false };
+  return { session: null, authMode: 'none', offlineProfile: null, serverConfigured: false };
 };
 `;
 }
@@ -2118,8 +2118,8 @@ function generateLoginPage(opts) {
   //                        LAYOUT / PAGE DATA
   // ==========================================================================
 
-  /** Whether the single-user account has already been set up on this device */
-  const singleUserSetUp = $derived($page.data.singleUserSetUp);
+  /** Whether this device has a linked single-user account (derived from IndexedDB, not layout data) */
+  let deviceLinked = $state(false);
 
   /** Post-login redirect URL extracted from \`?redirect=\` query param */
   const redirectUrl = $derived($page.url.searchParams.get('redirect') || '/');
@@ -2282,15 +2282,14 @@ function generateLoginPage(opts) {
       return;
     }
 
-    /* ── Existing local account → fetch user info for the welcome card ──── */
-    if (singleUserSetUp) {
-      const info = await getSingleUserInfo();
-      if (info) {
-        userInfo = {
-          firstName: (info.profile.firstName as string) || '',
-          lastName: (info.profile.lastName as string) || ''
-        };
-      }
+    /* ── Check if this device has a local account ──── */
+    const info = await getSingleUserInfo();
+    if (info) {
+      userInfo = {
+        firstName: (info.profile.firstName as string) || '',
+        lastName: (info.profile.lastName as string) || ''
+      };
+      deviceLinked = true;
     } else {
       /* ── No local setup → check for a remote user to link to ──── */
       const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;

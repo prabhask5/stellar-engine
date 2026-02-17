@@ -18,8 +18,8 @@
  * ```ts
  * // In +layout.ts (root)
  * import { resolveRootLayout } from 'stellar-drive/kit/loads';
- * export async function load({ url }) {
- *   return resolveRootLayout(url);
+ * export async function load() {
+ *   return resolveRootLayout();
  * }
  * ```
  *
@@ -48,23 +48,16 @@ import { isDemoMode, seedDemoData } from '../demo.js';
  *   4. Starts the sync engine if the user is authenticated, enabling
  *      offline-first data synchronization
  *
- * @param url          - The current page URL object. Only `pathname` is
- *                       inspected, to detect whether the user is already
- *                       on the `/setup` page.
- * @param _initEngineFn - (Optional) The app's `initEngine()` call, executed
- *                        before config init. Typically already called at
- *                        module scope in the browser; this parameter exists
- *                        for explicit invocation in SSR contexts.
- *
  * @returns Layout data containing session, auth mode, offline profile,
- *          and setup status. The consuming layout uses these to hydrate
- *          the auth store and conditionally render the app shell.
+ *          and server configuration status. The consuming layout uses
+ *          these to hydrate the auth store and conditionally render the
+ *          app shell.
  *
  * @example
  * ```ts
  * // +layout.ts
- * export async function load({ url }) {
- *   return resolveRootLayout(url);
+ * export async function load() {
+ *   return resolveRootLayout();
  * }
  * ```
  *
@@ -72,29 +65,16 @@ import { isDemoMode, seedDemoData } from '../demo.js';
  * @see {@link initConfig} for config bootstrapping details
  * @see {@link resolveAuthState} for auth resolution logic
  */
-export async function resolveRootLayout(url, _initEngineFn) {
+export async function resolveRootLayout() {
     const config = await initConfig();
-    /* No config yet — this is a first-time user. Return blank state so the
-       layout can detect `singleUserSetUp === false` and redirect to /setup.
-       We skip the redirect if already on /setup to avoid an infinite loop.
-       Exception: demo mode works without runtime config (no Supabase needed). */
-    if (!config && !isDemoMode() && url.pathname !== '/setup') {
-        return {
-            session: null,
-            authMode: 'none',
-            offlineProfile: null,
-            singleUserSetUp: false,
-            serverConfigured: false
-        };
-    }
-    /* Still on setup page with no config — return blank state without
-       redirecting, allowing the setup wizard to render normally. */
+    /* No config yet — this is a first-time user or the server hasn't been
+       configured. Return blank state so the layout can redirect based on
+       `serverConfigured`. Demo mode works without runtime config. */
     if (!config && !isDemoMode()) {
         return {
             session: null,
             authMode: 'none',
             offlineProfile: null,
-            singleUserSetUp: false,
             serverConfigured: false
         };
     }

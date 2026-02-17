@@ -54,7 +54,7 @@ import { isDemoMode } from '../demo';
  *
  * @example
  * ```ts
- * const { authMode, session, singleUserSetUp } = await resolveAuthState();
+ * const { authMode, session } = await resolveAuthState();
  * if (authMode === 'supabase') {
  *   startSyncEngine(session);
  * } else if (authMode === 'offline') {
@@ -69,7 +69,7 @@ import { isDemoMode } from '../demo';
 export async function resolveAuthState() {
     /* Demo mode short-circuit: skip all real auth resolution. */
     if (isDemoMode()) {
-        return { session: null, authMode: 'demo', offlineProfile: null, singleUserSetUp: true };
+        return { session: null, authMode: 'demo', offlineProfile: null };
     }
     try {
         /* Ensure DB is open and upgraded before any IndexedDB access.
@@ -108,49 +108,48 @@ export async function resolveAuthState() {
  * Handles the following scenarios in order:
  *
  * 1. **No local config**: User has not set up on this device.
- *    Returns `authMode: 'none'`, `singleUserSetUp: false`.
+ *    Returns `authMode: 'none'`.
  *
  * 2. **Legacy config without email**: Config from the anonymous auth era.
- *    Nukes all local auth artifacts and returns `singleUserSetUp: false`.
+ *    Nukes all local auth artifacts and returns `authMode: 'none'`.
  *
  * 3. **Code-length migration**: The engine config specifies a different PIN
  *    length than what is stored locally. Resets remote and local state, forcing
  *    re-setup with the new PIN length.
  *
- * 4. **Valid Supabase session**: Returns `authMode: 'supabase'`, `singleUserSetUp: true`.
+ * 4. **Valid Supabase session**: Returns `authMode: 'supabase'`.
  *
  * 5. **Expired session with valid refresh token**: Attempts token refresh.
  *    On success, returns `authMode: 'supabase'`. On failure, falls through.
  *
  * 6. **Offline with cached session**: Even an expired Supabase session is usable
  *    offline (RLS is not enforced client-side).
- *    Returns `authMode: 'supabase'`, `singleUserSetUp: true`.
+ *    Returns `authMode: 'supabase'`.
  *
  * 7. **Offline with offline session**: Falls back to offline credentials.
- *    Returns `authMode: 'offline'`, `singleUserSetUp: true`.
+ *    Returns `authMode: 'offline'`.
  *
  * 8. **No valid session (locked)**: User must re-enter their PIN.
- *    Returns `authMode: 'none'`, `singleUserSetUp: true`.
+ *    Returns `authMode: 'none'`.
  *
- * @returns A promise resolving to an {@link AuthStateResult} with the
- *          `singleUserSetUp` field populated.
+ * @returns A promise resolving to an {@link AuthStateResult}.
  */
 async function resolveSingleUserAuthState() {
     try {
         const db = getEngineConfig().db;
         if (!db) {
-            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+            return { session: null, authMode: 'none', offlineProfile: null };
         }
         const config = (await db.table('singleUserConfig').get('config'));
         if (!config) {
             /* No local config -- user has not set up on this device.
                With real email/password auth, new devices go through the login flow
                (email + PIN) which creates the local config after signInWithPassword. */
-            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+            return { session: null, authMode: 'none', offlineProfile: null };
         }
         if (!config.email) {
             /* Config without email is invalid — user needs to go through setup. */
-            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+            return { session: null, authMode: 'none', offlineProfile: null };
         }
         /* codeLength migration: if the engine config specifies a different PIN length
            than what is stored locally, the user must re-setup. This handles the case
@@ -181,13 +180,13 @@ async function resolveSingleUserAuthState() {
             catch (e) {
                 debugWarn('[Auth] Failed to clear local auth state:', e);
             }
-            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+            return { session: null, authMode: 'none', offlineProfile: null };
         }
         /* Lock check: if the user explicitly locked the app, honour the lock
            even if a valid Supabase session still exists in localStorage. */
         const lockState = await db.table('singleUserConfig').get('lock_state');
         if (lockState?.locked) {
-            return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
+            return { session: null, authMode: 'none', offlineProfile: null };
         }
         // =========================================================================
         // Config exists -- check for an active session
@@ -216,7 +215,7 @@ async function resolveSingleUserAuthState() {
         }
         const hasValidSession = session && !isSessionExpired(session);
         if (hasValidSession) {
-            return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
+            return { session, authMode: 'supabase', offlineProfile: null };
         }
         // =========================================================================
         // No valid online session -- check offline fallbacks
@@ -226,7 +225,7 @@ async function resolveSingleUserAuthState() {
             /* Even an expired cached Supabase session is usable offline because RLS
                is not enforced on the client side -- it only matters when syncing. */
             if (session) {
-                return { session, authMode: 'supabase', offlineProfile: null, singleUserSetUp: true };
+                return { session, authMode: 'supabase', offlineProfile: null };
             }
             const offlineSession = await getValidOfflineSession();
             if (offlineSession) {
@@ -240,16 +239,16 @@ async function resolveSingleUserAuthState() {
                     profile: config.profile,
                     cachedAt: new Date().toISOString()
                 };
-                return { session: null, authMode: 'offline', offlineProfile, singleUserSetUp: true };
+                return { session: null, authMode: 'offline', offlineProfile };
             }
         }
         /* No valid session -- the single-user app is "locked" and the user must
            re-enter their PIN to unlock. */
-        return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: true };
+        return { session: null, authMode: 'none', offlineProfile: null };
     }
     catch (e) {
         debugError('[Auth] Failed to resolve single-user auth state:', e);
-        return { session: null, authMode: 'none', offlineProfile: null, singleUserSetUp: false };
+        return { session: null, authMode: 'none', offlineProfile: null };
     }
 }
 //# sourceMappingURL=resolveAuthState.js.map

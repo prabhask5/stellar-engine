@@ -1172,15 +1172,15 @@ Determines the initial auth state at app startup:
 4. If no session, check offline credentials + session -> return `authMode: 'offline'`
 5. Return `authMode: 'none'`
 
-For single-user mode, the resolution includes `singleUserSetUp` boolean:
+For single-user mode, the resolution determines the auth mode based on local config and session state:
 
 | Config Exists | Session State | Result |
 |---------------|---------------|--------|
-| No (or without email) | -- | `authMode: 'none'`, `singleUserSetUp: false` |
-| Yes | Valid Supabase session | `authMode: 'supabase'`, `singleUserSetUp: true` |
-| Yes | Expired but offline | `authMode: 'supabase'`, `singleUserSetUp: true` |
-| Yes | Offline session only | `authMode: 'offline'`, `singleUserSetUp: true` |
-| Yes | No session | `authMode: 'none'`, `singleUserSetUp: true` (locked) |
+| No (or without email) | -- | `authMode: 'none'` |
+| Yes | Valid Supabase session | `authMode: 'supabase'` |
+| Yes | Expired but offline | `authMode: 'supabase'` |
+| Yes | Offline session only | `authMode: 'offline'` |
+| Yes | No session | `authMode: 'none'` (locked) |
 
 ### 9.6 Login Guard
 
@@ -1860,18 +1860,18 @@ When debug mode is disabled, all `debugLog()`, `debugWarn()`, and `debugError()`
 
 ### 17.1 Load Function Helpers (`kit/loads.ts`)
 
-**`resolveRootLayout(url)`**: Full app initialization sequence for the root `+layout.ts`:
+**`resolveRootLayout()`**: Full app initialization sequence for the root `+layout.ts`:
 1. Initialize runtime config (`initConfig`) -- fetches Supabase credentials from `/api/config`
 2. Resolve auth state (`resolveAuthState`) -- determines supabase/offline/demo/none
 3. Start sync engine (`startSyncEngine`) -- if authenticated
 4. Seed demo data (`seedDemoData`) -- if demo mode
-5. Return `RootLayoutData` with auth mode, session, and `singleUserSetUp` flag
+5. Return `RootLayoutData` with auth mode, session, and `serverConfigured` flag
 
 **Auth guarding**: Handled in the root layout via a `PUBLIC_ROUTES` list. Unauthenticated users on non-public routes are redirected to `/login?redirect=<returnUrl>` (for locked/new-device scenarios) or `/setup` (for first-time configuration when `serverConfigured === false`).
 
-**`resolveSetupAccess(parentData)`**: Access control for the `/setup` wizard:
-- Allows access only when `singleUserSetUp === false`
-- Redirects to home if already set up
+**`resolveSetupAccess()`**: Access control for the `/setup` wizard:
+- Allows access when no config exists (first-time setup)
+- Requires authentication for reconfiguration
 
 ### 17.2 Server Handlers (`kit/server.ts`)
 

@@ -48,12 +48,6 @@ export interface AuthStateResult {
     /** Offline credentials profile data, populated only when `authMode === 'offline'`. */
     offlineProfile: OfflineCredentials | null;
     /**
-     * Whether single-user mode has been set up on this device.
-     * Only present when the engine is configured with `auth.singleUser`.
-     * `false` means the user needs to go through the initial setup flow.
-     */
-    singleUserSetUp?: boolean;
-    /**
      * Whether the server has been configured (runtime config exists).
      * Used to distinguish "first-time setup" (no env vars) from
      * "new device / locked" (server configured but no local session).
@@ -75,7 +69,7 @@ export interface AuthStateResult {
  *
  * @example
  * ```ts
- * const { authMode, session, singleUserSetUp } = await resolveAuthState();
+ * const { authMode, session } = await resolveAuthState();
  * if (authMode === 'supabase') {
  *   startSyncEngine(session);
  * } else if (authMode === 'offline') {

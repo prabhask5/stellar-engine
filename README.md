@@ -111,12 +111,10 @@ initEngine({
 await initConfig();
 const auth = await resolveAuthState();
 
-if (!auth.singleUserSetUp) {
-  // First-time setup flow
-  // -> call setupSingleUser(code, profile, email) from your UI
-} else if (auth.authMode === 'none') {
-  // Locked -- show unlock screen
-  // -> call unlockSingleUser(code) from your UI
+if (auth.authMode === 'none') {
+  // Not authenticated -- show login/setup screen
+  // -> call setupSingleUser(code, profile, email) for first-time setup
+  // -> call unlockSingleUser(code) for returning users
 } else {
   // Authenticated -- start syncing
   await startSyncEngine();

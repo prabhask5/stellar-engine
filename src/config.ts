@@ -284,9 +284,15 @@ export function initEngine(config: InitEngineInput): void {
     );
   }
 
-  /* Validate that tables are configured (either manually or via schema). */
-  if (!config.tables || config.tables.length === 0) {
+  /* Validate that tables are configured (either manually or via schema).
+   * Schema-driven mode may have 0 entity tables (app uses only auth/system features),
+   * so we only throw when neither `schema` nor `tables` was provided. */
+  if (!config.schema && (!config.tables || config.tables.length === 0)) {
     throw new Error('initEngine: No tables configured. Provide `schema` or `tables` + `database`.');
+  }
+  /* Default to empty array when schema is provided but has no entity tables. */
+  if (!config.tables) {
+    config.tables = [];
   }
 
   /* At this point tables is guaranteed to be populated — safe to cast. */

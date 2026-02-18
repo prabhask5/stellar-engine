@@ -73,9 +73,9 @@ export interface SyncEngineConfig {
   /** Application prefix — used for localStorage keys, debug logging, etc. */
   prefix: string;
   /** Human-readable app name (e.g., "Stellar Planner"). Included in Supabase user_metadata for email templates. */
-  name?: string;
+  name: string;
   /** Production domain with protocol (e.g., "https://stellar.example.com"). Included in Supabase user_metadata for email templates. */
-  domain?: string;
+  domain: string;
 
   /**
    * Declarative schema definition — replaces both `tables` and `database`.

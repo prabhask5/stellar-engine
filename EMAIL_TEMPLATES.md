@@ -9,14 +9,14 @@ Multiple stellar-drive apps can share a **single Supabase project** (same Auth, 
 - **`{{ .Data.app_name }}`** -- the app's human-readable name (set via `initEngine({ name: '...' })`)
 - **`{{ .Data.app_domain }}`** -- the app's production URL (set via `initEngine({ domain: '...' })`)
 
-Both values are written to Supabase `user_metadata` during signup, login, device link, and profile update. The templates use fallback syntax for backwards compatibility with existing users who don't have these fields yet:
+Both values are written to Supabase `user_metadata` during signup, login, device link, and profile update. The templates reference these directly:
 
 ```
-{{ if .Data.app_name }}{{ .Data.app_name }}{{ else }}Your App{{ end }}
-{{ if .Data.app_domain }}{{ .Data.app_domain }}{{ else }}{{ .SiteURL }}{{ end }}
+{{ .Data.app_name }}
+{{ .Data.app_domain }}
 ```
 
-**Why not just use `{{ .SiteURL }}`?** Supabase's `SiteURL` is a project-level setting -- it can only point to one domain. If two apps (e.g., Stellar Planner and Infinite Notes) share one Supabase project, `SiteURL` can only be set to one of them. By storing `app_domain` in `user_metadata`, each user's confirmation emails link to the correct app.
+**Why not just use `{{ .SiteURL }}`?** Supabase's `SiteURL` is a project-level setting -- it can only point to one domain. If two apps (e.g., Stellar Planner and Infinite Notes) share one Supabase project, `SiteURL` can only be set to one of them. By storing `app_domain` in `user_metadata`, each user's confirmation emails link to the correct app. Both `name` and `domain` are required fields on `initEngine()` -- there are no fallbacks.
 
 ## Templates
 

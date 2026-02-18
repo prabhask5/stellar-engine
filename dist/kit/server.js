@@ -149,12 +149,12 @@ export function getServerConfig() {
     const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
     const supabasePublishableKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
     const appDomain = process.env.PUBLIC_APP_DOMAIN || '';
-    if (supabaseUrl && supabasePublishableKey) {
+    if (supabaseUrl && supabasePublishableKey && appDomain) {
         return {
             configured: true,
             supabaseUrl,
             supabasePublishableKey,
-            ...(appDomain ? { appDomain } : {})
+            appDomain
         };
     }
     return { configured: false };
@@ -201,9 +201,7 @@ export async function deployToVercel(config) {
         // -------------------------------------------------------------------------
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_URL', config.supabaseUrl);
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY', config.supabasePublishableKey);
-        if (config.appDomain) {
-            await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_DOMAIN', config.appDomain);
-        }
+        await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_DOMAIN', config.appDomain);
         // -------------------------------------------------------------------------
         //  Phase 2 — Trigger production redeployment
         // -------------------------------------------------------------------------

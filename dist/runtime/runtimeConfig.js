@@ -85,7 +85,10 @@ function loadFromCache() {
         if (!stored)
             return null;
         const parsed = JSON.parse(stored);
-        if (parsed.configured && parsed.supabaseUrl && parsed.supabasePublishableKey) {
+        if (parsed.configured &&
+            parsed.supabaseUrl &&
+            parsed.supabasePublishableKey &&
+            parsed.appDomain) {
             return parsed;
         }
         return null;
@@ -156,8 +159,8 @@ export async function initConfig() {
                     const config = {
                         supabaseUrl: serverConfig.supabaseUrl,
                         supabasePublishableKey: serverConfig.supabasePublishableKey,
-                        configured: true,
-                        ...(serverConfig.appDomain ? { appDomain: serverConfig.appDomain } : {})
+                        appDomain: serverConfig.appDomain,
+                        configured: true
                     };
                     configCache = config;
                     saveToCache(config);

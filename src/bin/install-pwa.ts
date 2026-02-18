@@ -2102,8 +2102,8 @@ function generateSetupPageSvelte(opts: InstallOptions): string {
         setConfig({
           supabaseUrl,
           supabasePublishableKey,
+          appDomain,
           configured: true,
-          ...(appDomain ? { appDomain } : {})
         });
       } else {
         validateError = data.error || 'Validation failed';
@@ -3158,8 +3158,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
   /* ── Delegate to engine ── */
   const result = await deployToVercel({
-    vercelToken, projectId, supabaseUrl, supabasePublishableKey,
-    ...(appDomain ? { appDomain } : {})
+    vercelToken, projectId, supabaseUrl, supabasePublishableKey, appDomain
   });
   return json(result);
 };

@@ -256,8 +256,8 @@ export async function setupSingleUser(gate, profile, email) {
         const metadata = {
             ...(profileToMetadata ? profileToMetadata(profile) : profile),
             code_length: codeLength ?? 6,
-            app_name: engineConfig.name || engineConfig.prefix,
-            app_domain: engineConfig.domain || ''
+            app_name: engineConfig.name,
+            app_domain: engineConfig.domain
         };
         if (!isOffline) {
             // --- ONLINE SETUP ---
@@ -1232,8 +1232,8 @@ export async function linkSingleUserDevice(email, pin) {
         const profileToMetadata = engineConfig.auth?.profileToMetadata;
         const linkMetadata = {
             ...(profileToMetadata ? profileToMetadata(profile) : profile),
-            app_name: engineConfig.name || engineConfig.prefix,
-            app_domain: engineConfig.domain || ''
+            app_name: engineConfig.name,
+            app_domain: engineConfig.domain
         };
         await supabase.auth.updateUser({ data: linkMetadata }).catch((e) => {
             debugWarn('[SingleUser] Failed to update user_metadata on link:', e);

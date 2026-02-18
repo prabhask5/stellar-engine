@@ -34,7 +34,7 @@ export interface AppConfig {
      */
     configured: boolean;
     /** Production domain (e.g., `https://stellar.example.com`). Set during setup wizard. */
-    appDomain?: string;
+    appDomain: string;
 }
 /**
  * Override the localStorage key prefix used for caching config.

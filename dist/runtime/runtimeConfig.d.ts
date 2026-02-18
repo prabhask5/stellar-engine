@@ -33,8 +33,6 @@ export interface AppConfig {
      * `false` when `/api/config` returns a "not yet configured" response.
      */
     configured: boolean;
-    /** Production domain (e.g., `https://stellar.example.com`). Set during setup wizard. */
-    appDomain: string;
 }
 /**
  * Override the localStorage key prefix used for caching config.

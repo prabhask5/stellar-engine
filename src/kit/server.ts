@@ -75,9 +75,6 @@ export interface DeployConfig {
 
   /** The Supabase publishable key for client-side access. */
   supabasePublishableKey: string;
-
-  /** Production domain (e.g., `https://stellar.example.com`). Set as `PUBLIC_APP_DOMAIN` env var. */
-  appDomain: string;
 }
 
 /**
@@ -110,7 +107,7 @@ export interface DeployResult {
  * present in the server's runtime environment.
  */
 export interface ServerConfig {
-  /** `true` when `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, and `PUBLIC_APP_DOMAIN` are all set. */
+  /** `true` when `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` are both set. */
   configured: boolean;
 
   /** The Supabase project URL, if configured. */
@@ -118,9 +115,6 @@ export interface ServerConfig {
 
   /** The Supabase publishable key, if configured. */
   supabasePublishableKey?: string;
-
-  /** Production domain (e.g., `https://stellar.example.com`). */
-  appDomain?: string;
 }
 
 // =============================================================================
@@ -259,14 +253,12 @@ async function setEnvVar(
 export function getServerConfig(): ServerConfig {
   const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
   const supabasePublishableKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
-  const appDomain = process.env.PUBLIC_APP_DOMAIN || '';
 
-  if (supabaseUrl && supabasePublishableKey && appDomain) {
+  if (supabaseUrl && supabasePublishableKey) {
     return {
       configured: true,
       supabaseUrl,
-      supabasePublishableKey,
-      appDomain
+      supabasePublishableKey
     };
   }
   return { configured: false };
@@ -324,8 +316,6 @@ export async function deployToVercel(config: DeployConfig): Promise<DeployResult
       'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY',
       config.supabasePublishableKey
     );
-
-    await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_DOMAIN', config.appDomain);
 
     // -------------------------------------------------------------------------
     //  Phase 2 — Trigger production redeployment

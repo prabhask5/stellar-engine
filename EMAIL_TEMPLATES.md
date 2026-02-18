@@ -56,10 +56,6 @@ These values are automatically included in `user_metadata` during:
 - `linkSingleUserDevice()` -- device linking (before device verification email)
 - `updateSingleUserProfile()` -- profile updates
 
-### Environment Variable
-
-Set `PUBLIC_APP_DOMAIN` in your Vercel project settings (or `.env` for local dev) to persist the domain in the server config. This is used by the setup wizard's deploy flow to set the env var on Vercel. At runtime, `initEngine({ domain: window.location.origin })` reads the actual browser origin directly.
-
 ## Confirmation Link Format
 
 All templates construct confirmation links as:
@@ -68,11 +64,7 @@ All templates construct confirmation links as:
 {{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=<type>
 ```
 
-With fallback when `app_domain` is not set:
-
-```
-{{ .SiteURL }}/confirm?token_hash={{ .TokenHash }}&type=<type>
-```
+The `domain` is always `window.location.origin` at runtime, so no environment variable is needed -- the correct domain is always written to `user_metadata` automatically.
 
 The `type` parameter matches what the `/confirm` page and engine expect:
 - Signup: `type=signup`

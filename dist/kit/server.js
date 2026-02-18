@@ -148,13 +148,11 @@ async function setEnvVar(projectId, token, key, value) {
 export function getServerConfig() {
     const supabaseUrl = process.env.PUBLIC_SUPABASE_URL || '';
     const supabasePublishableKey = process.env.PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY || '';
-    const appDomain = process.env.PUBLIC_APP_DOMAIN || '';
-    if (supabaseUrl && supabasePublishableKey && appDomain) {
+    if (supabaseUrl && supabasePublishableKey) {
         return {
             configured: true,
             supabaseUrl,
-            supabasePublishableKey,
-            appDomain
+            supabasePublishableKey
         };
     }
     return { configured: false };
@@ -201,7 +199,6 @@ export async function deployToVercel(config) {
         // -------------------------------------------------------------------------
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_URL', config.supabaseUrl);
         await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY', config.supabasePublishableKey);
-        await setEnvVar(config.projectId, config.vercelToken, 'PUBLIC_APP_DOMAIN', config.appDomain);
         // -------------------------------------------------------------------------
         //  Phase 2 — Trigger production redeployment
         // -------------------------------------------------------------------------

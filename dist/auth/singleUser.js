@@ -518,8 +518,8 @@ export async function unlockSingleUser(gate) {
             const profileToMetadata = engineConfig.auth?.profileToMetadata;
             const metadata = {
                 ...(profileToMetadata ? profileToMetadata(config.profile) : config.profile),
-                app_name: engineConfig.name || engineConfig.prefix,
-                app_domain: engineConfig.domain || ''
+                app_name: engineConfig.name,
+                app_domain: engineConfig.domain
             };
             await supabase.auth.updateUser({ data: metadata }).catch((e) => {
                 debugWarn('[SingleUser] Failed to update user_metadata on unlock:', e);
@@ -921,8 +921,8 @@ export async function updateSingleUserProfile(profile) {
             const profileToMetadata = engineConfig.auth?.profileToMetadata;
             const metadata = {
                 ...(profileToMetadata ? profileToMetadata(profile) : profile),
-                app_name: engineConfig.name || engineConfig.prefix,
-                app_domain: engineConfig.domain || ''
+                app_name: engineConfig.name,
+                app_domain: engineConfig.domain
             };
             const { error } = await supabase.auth.updateUser({ data: metadata });
             if (error) {

@@ -40,9 +40,6 @@ export interface AppConfig {
    * `false` when `/api/config` returns a "not yet configured" response.
    */
   configured: boolean;
-
-  /** Production domain (e.g., `https://stellar.example.com`). Set during setup wizard. */
-  appDomain: string;
 }
 
 // =============================================================================
@@ -119,12 +116,7 @@ function loadFromCache(): AppConfig | null {
     const stored = localStorage.getItem(getCacheKey());
     if (!stored) return null;
     const parsed = JSON.parse(stored) as AppConfig;
-    if (
-      parsed.configured &&
-      parsed.supabaseUrl &&
-      parsed.supabasePublishableKey &&
-      parsed.appDomain
-    ) {
+    if (parsed.configured && parsed.supabaseUrl && parsed.supabasePublishableKey) {
       return parsed;
     }
     return null;
@@ -196,7 +188,6 @@ export async function initConfig(): Promise<AppConfig | null> {
           const config: AppConfig = {
             supabaseUrl: serverConfig.supabaseUrl,
             supabasePublishableKey: serverConfig.supabasePublishableKey,
-            appDomain: serverConfig.appDomain,
             configured: true
           };
           configCache = config;

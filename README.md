@@ -318,7 +318,6 @@ const diagnostics = await getDiagnostics();
 |---|---|---|
 | `PUBLIC_SUPABASE_URL` | Yes | Supabase project URL. Find it: Dashboard > Settings > API > Project URL. |
 | `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase publishable key. Find it: Dashboard > Settings > API > Project API keys > publishable. |
-| `PUBLIC_APP_DOMAIN` | Yes | Production domain (e.g. `https://myapp.example.com`). Used in Supabase email templates so confirmation links point to the correct app. |
 | `DATABASE_URL` | For auto-migration | Postgres connection string. Used by the Vite plugin to push schema migrations directly to Postgres. If not set, migrations are skipped and types are still generated. Find it: Dashboard > Settings > Database > Connection string (URI). |
 
 ## Schema workflow
@@ -368,7 +367,6 @@ The schema migration runs automatically during every `vite build`. To enable it 
    |---|---|---|
    | `PUBLIC_SUPABASE_URL` | Plain | Yes -- client auth + data access |
    | `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Plain | Yes -- client auth + data access |
-   | `PUBLIC_APP_DOMAIN` | Plain | Yes -- email template links |
    | `DATABASE_URL` | Secret | Yes -- auto-migration during build |
 
 2. **Commit `.stellar/schema-snapshot.json`** to git. This file tracks the last-known schema state. Without it, every build is treated as a first run (full idempotent SQL). The snapshot is updated locally when you run `dev` or `build` and should be committed alongside schema changes.

@@ -732,6 +732,31 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('create unique index if not exists idx_crdt_documents_page_user on crdt_documents(page_id, user_id);');
         parts.push('');
     }
+    /* ---- Storage Buckets ---- */
+    if (options?.storage?.buckets && options.storage.buckets.length > 0) {
+        parts.push('-- ============================================================');
+        parts.push('-- STORAGE BUCKETS');
+        parts.push('-- ============================================================');
+        parts.push('-- Supabase Storage buckets for file uploads (images, attachments, etc.).');
+        parts.push("-- RLS policies scope access to the authenticated user's own files.");
+        parts.push('');
+        for (const bucket of options.storage.buckets) {
+            const isPublic = bucket.public ?? false;
+            const bucketName = bucket.name;
+            parts.push(`-- Bucket: ${bucketName}`);
+            parts.push(`insert into storage.buckets (id, name, public) values ('${bucketName}', '${bucketName}', ${isPublic}) on conflict (id) do nothing;`);
+            parts.push('');
+            // RLS: authenticated users can upload to their own folder
+            parts.push(`do $$ begin create policy "Users can upload to ${bucketName}" on storage.objects for insert to authenticated with check (bucket_id = '${bucketName}' and (storage.foldername(name))[1] = auth.uid()::text); exception when duplicate_object then null; end $$;`);
+            // RLS: authenticated users can read their own files
+            parts.push(`do $$ begin create policy "Users can read own ${bucketName}" on storage.objects for select to authenticated using (bucket_id = '${bucketName}' and (storage.foldername(name))[1] = auth.uid()::text); exception when duplicate_object then null; end $$;`);
+            // RLS: authenticated users can delete their own files
+            parts.push(`do $$ begin create policy "Users can delete own ${bucketName}" on storage.objects for delete to authenticated using (bucket_id = '${bucketName}' and (storage.foldername(name))[1] = auth.uid()::text); exception when duplicate_object then null; end $$;`);
+            // RLS: authenticated users can update their own files
+            parts.push(`do $$ begin create policy "Users can update own ${bucketName}" on storage.objects for update to authenticated using (bucket_id = '${bucketName}' and (storage.foldername(name))[1] = auth.uid()::text); exception when duplicate_object then null; end $$;`);
+            parts.push('');
+        }
+    }
     /* ---- Realtime Reminder ---- */
     parts.push('-- ============================================================');
     parts.push('-- REALTIME: All tables above have been added to supabase_realtime');

@@ -115,4 +115,8 @@ export type { CRDTConfig, UserPresenceState } from '../crdt/types';
 // =============================================================================
 // - `SQLGenerationOptions` — options for controlling `generateSupabaseSQL()` output.
 
-export type { SQLGenerationOptions, TypeScriptGenerationOptions } from '../schema';
+export type {
+  SQLGenerationOptions,
+  TypeScriptGenerationOptions,
+  StorageBucketConfig
+} from '../schema';

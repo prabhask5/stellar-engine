@@ -36,6 +36,22 @@ import type { SchemaDefinition } from './types';
  *   includeDeviceVerification: true,
  * });
  */
+/**
+ * Configuration for a Supabase Storage bucket to create via SQL.
+ *
+ * Used by {@link generateSupabaseSQL} to generate `INSERT INTO storage.buckets`
+ * and RLS policy statements for file storage (e.g., note images).
+ */
+export interface StorageBucketConfig {
+    /** Bucket name (e.g., `'note-images'`). */
+    name: string;
+    /** Whether the bucket is publicly accessible. @default false */
+    public?: boolean;
+    /** Max file size in bytes. @default 5242880 (5 MB) */
+    maxFileSize?: number;
+    /** Allowed MIME types (e.g., `['image/png', 'image/jpeg']`). Null = all types. @default null */
+    allowedMimeTypes?: string[] | null;
+}
 export interface SQLGenerationOptions {
     /** Application name for SQL comments. */
     appName?: string;
@@ -51,6 +67,15 @@ export interface SQLGenerationOptions {
     includeDeviceVerification?: boolean;
     /** Include helper trigger functions (set_user_id, update_updated_at_column). @default true */
     includeHelperFunctions?: boolean;
+    /**
+     * Storage buckets to create in Supabase Storage.
+     *
+     * Generates SQL to create buckets and apply RLS policies for
+     * user-scoped file access (upload, read, delete own files).
+     */
+    storage?: {
+        buckets: StorageBucketConfig[];
+    };
 }
 /**
  * Options for controlling TypeScript interface generation.

@@ -19,5 +19,5 @@ export type { RemoteActionType } from '../stores/remoteChanges';
 export type { DiagnosticsSnapshot } from '../diagnostics';
 export type { Session } from '@supabase/supabase-js';
 export type { CRDTConfig, UserPresenceState } from '../crdt/types';
-export type { SQLGenerationOptions, TypeScriptGenerationOptions } from '../schema';
+export type { SQLGenerationOptions, TypeScriptGenerationOptions, StorageBucketConfig } from '../schema';
 //# sourceMappingURL=types.d.ts.map

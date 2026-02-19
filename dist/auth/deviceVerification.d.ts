@@ -19,12 +19,12 @@
  *   to send a magic link email. The confirm page verifies the token and trusts
  *   both the originating device and the confirming device.
  * - **Cross-device verification**: The originating device's ID is stored in
- *   `user_metadata` as `pending_device_id` so the confirm page can trust it
+ *   `user_metadata` as `pending_{prefix}_device_id` so the confirm page can trust it
  *   even when opened on a different device (e.g., phone).
  *
  * ## Database Schema
  *
- * The `trusted_devices` table has a unique constraint on `(user_id, device_id)`:
+ * The `trusted_devices` table has a unique constraint on `(user_id, device_id, app_prefix)`:
  *
  * | Column       | Type      | Description                           |
  * |-------------|-----------|---------------------------------------|
@@ -32,6 +32,7 @@
  * | user_id     | uuid      | FK to auth.users                      |
  * | device_id   | text      | Persistent browser/device identifier  |
  * | device_label| text      | Human-readable label (e.g., "Chrome on macOS") |
+ * | app_prefix  | text      | App prefix for multi-tenant isolation  |
  * | trusted_at  | timestamp | When the device was first trusted     |
  * | last_used_at| timestamp | Last successful login from this device |
  *
@@ -219,13 +220,13 @@ export declare function sendDeviceVerification(email: string): Promise<{
  * ## Cross-Device Flow
  *
  * 1. Device A enters the PIN -> untrusted -> OTP sent, device A's ID stored
- *    in `user_metadata.pending_device_id`.
+ *    in `user_metadata.pending_{prefix}_device_id`.
  * 2. User opens the OTP link on Device B (or Device A).
- * 3. This function reads `pending_device_id` from metadata and trusts Device A.
+ * 3. This function reads `pending_{prefix}_device_id` from metadata and trusts Device A.
  * 4. Device A polls via {@link pollDeviceVerification} and discovers it's now trusted.
  * 5. Both Device A and the confirming device (B) are trusted.
  *
- * If no `pending_device_id` is found in metadata (same-browser case where the
+ * If no `pending_{prefix}_device_id` is found in metadata (same-browser case where the
  * link was opened in the same browser), falls back to trusting the current
  * device only.
  *

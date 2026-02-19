@@ -832,16 +832,17 @@ export function generateSupabaseSQL(
     parts.push('  device_label text,');
     parts.push("  app_prefix text not null default 'stellar',");
     parts.push('  trusted_at timestamptz default now() not null,');
-    parts.push('  last_used_at timestamptz default now() not null,');
-    parts.push('  unique(user_id, device_id, app_prefix)');
+    parts.push('  last_used_at timestamptz default now() not null');
     parts.push(');');
     parts.push('');
     parts.push('-- Convergent migration: add app_prefix column to existing tables');
     parts.push(
       "alter table trusted_devices add column if not exists app_prefix text not null default 'stellar';"
     );
-    parts.push('-- Replace old unique constraint with new one including app_prefix');
-    parts.push('drop index if exists trusted_devices_user_id_device_id_key;');
+    parts.push('-- Drop legacy 2-column unique constraint (if present) and create 3-column one');
+    parts.push(
+      'alter table trusted_devices drop constraint if exists trusted_devices_user_id_device_id_key;'
+    );
     parts.push(
       'create unique index if not exists trusted_devices_user_device_app on trusted_devices(user_id, device_id, app_prefix);'
     );

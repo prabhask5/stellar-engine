@@ -1,5 +1,7 @@
 # Supabase Email Templates
 
+Plug and play examples can be found in the email-templates directory on the main project page. Refer to the Setup section for integration information.
+
 stellar-drive uses three Supabase email templates. Configure these in your Supabase dashboard under **Authentication > Email Templates**.
 
 ## Multi-App Support

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <title>Confirm Your New Email</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <style>
+    body, table, td { font-family: Arial, sans-serif !important; }
+  </style>
+  <![endif]-->
+  <style>
+    body { margin: 0; padding: 0; width: 100%; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+    .btn-td a { color: #ffffff !important; text-decoration: none !important; }
+    u + .body-wrapper { /* Gmail specificity fix */ }
+  </style>
+</head>
+<body class="body-wrapper" style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #111116; color: #f0f0f5;">
+  <!-- Outer wrapper -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #111116;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <!-- Container 520px -->
+        <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width: 520px; width: 100%;">
+
+          <!-- Logo / App Name -->
+          <tr>
+            <td align="center" style="padding-bottom: 32px; font-size: 28px; font-weight: 800; color: #D4A853; letter-spacing: -0.5px;">
+              {{ .Data.app_name }}
+            </td>
+          </tr>
+
+          <!-- Main Card -->
+          <tr>
+            <td>
+              <!--[if mso]>
+              <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="true" style="width:520px;">
+              <v:fill type="gradient" color="#1a1a22" color2="#1e1e28" angle="165"/>
+              <v:stroke color="#3a3530" weight="1px"/>
+              <v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0">
+              <![endif]-->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #1a1a22; border: 1px solid #2e2a24; border-radius: 24px; overflow: hidden;">
+
+                <!-- Top accent bar -->
+                <tr>
+                  <td style="height: 3px; background-color: #D4A853; font-size: 1px; line-height: 1px;">&nbsp;</td>
+                </tr>
+
+                <!-- Card content -->
+                <tr>
+                  <td style="padding: 48px 40px;">
+
+                    <!-- Icon -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td align="center" style="padding-bottom: 24px;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td width="64" height="64" align="center" valign="middle" style="width: 64px; height: 64px; background-color: #252520; border-radius: 50%; font-size: 28px; text-align: center; line-height: 64px;">&#9993;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Heading -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td align="center" style="padding-bottom: 16px;">
+                          <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #f0f0f5; letter-spacing: -0.3px;">Confirm Your New Email</h1>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Description -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td align="center" style="padding-bottom: 32px;">
+                          <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #b0b0c0;">You requested to change your email address. Click the button below to confirm this new email for your {{ .Data.app_name }} account.</p>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- CTA Button -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td align="center" style="padding-bottom: 32px;">
+                          <!--[if mso]>
+                          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email_change" style="height:52px;v-text-anchor:middle;width:260px;" arcsize="23%" fillcolor="#D4A853" strokecolor="#D4A853">
+                          <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;">Confirm New Email</center>
+                          </v:roundrect>
+                          <![endif]-->
+                          <!--[if !mso]><!-->
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td class="btn-td" align="center" valign="middle" style="border-radius: 12px; background-color: #D4A853;">
+                                <a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email_change" target="_blank" style="display: inline-block; padding: 16px 40px; font-size: 16px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 12px; mso-hide: all;">Confirm New Email</a>
+                              </td>
+                            </tr>
+                          </table>
+                          <!--<![endif]-->
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Divider -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding-bottom: 24px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                              <td style="height: 1px; background-color: #2a2a32; font-size: 1px; line-height: 1px;">&nbsp;</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Fallback link -->
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td align="center">
+                          <p style="margin: 0 0 12px 0; font-size: 13px; color: #7878a0;">Or copy and paste this link into your browser:</p>
+                          <p style="margin: 0; font-size: 12px; word-break: break-all;"><a href="{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&type=email_change" style="color: #D4A853; text-decoration: underline;">{{ .Data.app_domain }}/confirm?token_hash={{ .TokenHash }}&amp;type=email_change</a></p>
+                        </td>
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+              </table>
+              <!--[if mso]></v:textbox></v:rect><![endif]-->
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding-top: 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center">
+                    <p style="margin: 0 0 8px 0; font-size: 13px; color: #7878a0;">This link will expire in 24 hours.</p>
+                    <p style="margin: 0 0 16px 0; font-size: 13px; color: #7878a0;">If you didn't request this change, you can safely ignore this email.</p>
+                    <p style="margin: 0; font-size: 12px; color: #5a5a80;">&copy; {{ .Data.app_name }}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -426,8 +426,12 @@ let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 /** Timer handle for the periodic background sync interval */
 let syncInterval: ReturnType<typeof setInterval> | null = null;
 
-/** Whether initial hydration (empty-DB pull) has been attempted this session */
+/** Whether initial hydration (empty-DB pull) has completed successfully this session */
 let _hasHydrated = false;
+
+/** Whether hydration has been attempted this session (regardless of success/failure).
+ *  Used by the loading overlay to dismiss even when hydration fails with an error. */
+let _hydrationAttempted = false;
 
 /**
  * Check whether the engine has completed initial hydration this session.
@@ -441,6 +445,17 @@ let _hasHydrated = false;
  */
 export function hasHydrated(): boolean {
   return _hasHydrated;
+}
+
+/**
+ * Check whether the engine has attempted initial hydration this session,
+ * regardless of whether it succeeded or failed. Used by loading overlays
+ * to dismiss even when hydration encounters an error.
+ *
+ * @returns `true` if hydration has been attempted (success or failure).
+ */
+export function hydrationAttempted(): boolean {
+  return _hydrationAttempted;
 }
 
 // --- EGRESS OPTIMIZATION: Cached user validation ---
@@ -2164,11 +2179,17 @@ async function fullReconciliation(): Promise<number> {
  * @see {@link reconcileLocalWithRemote} - Re-queues orphaned local changes
  */
 async function hydrateFromRemote(): Promise<void> {
-  if (typeof navigator === 'undefined' || !navigator.onLine) return;
+  if (typeof navigator === 'undefined' || !navigator.onLine) {
+    _hydrationAttempted = true;
+    return;
+  }
 
   // Atomically acquire sync lock to prevent concurrent syncs/hydrations
   const acquired = await acquireSyncLock();
-  if (!acquired) return;
+  if (!acquired) {
+    _hydrationAttempted = true;
+    return;
+  }
 
   const config = getEngineConfig();
   const db = config.db!;
@@ -2180,6 +2201,7 @@ async function hydrateFromRemote(): Promise<void> {
   // Abort if no authenticated user (can't hydrate without auth)
   if (!userId) {
     debugLog('[SYNC] Hydration skipped: no authenticated user');
+    _hydrationAttempted = true;
     releaseSyncLock();
     return;
   }
@@ -2188,6 +2210,7 @@ async function hydrateFromRemote(): Promise<void> {
 
   // Mark that we've attempted hydration (even if local has data)
   _hasHydrated = true;
+  _hydrationAttempted = true;
   clearDbResetFlag();
 
   // Check if local DB has any data
@@ -3079,6 +3102,7 @@ export async function stopSyncEngine(): Promise<void> {
   }
   releaseSyncLock();
   _hasHydrated = false;
+  _hydrationAttempted = false;
   _schemaValidated = false;
   _syncEngineStarted = false;
 
@@ -3149,4 +3173,5 @@ export async function clearLocalCache(): Promise<void> {
     }
   }
   _hasHydrated = false;
+  _hydrationAttempted = false;
 }

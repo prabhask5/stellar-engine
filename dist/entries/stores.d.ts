@@ -19,6 +19,6 @@ export { onSyncComplete } from '../engine';
 export { onRealtimeDataUpdate } from '../realtime';
 export { createCollectionStore, createDetailStore, createCrudCollectionStore } from '../stores/factories';
 export type { CollectionStore, CollectionStoreConfig, DetailStore, DetailStoreConfig, CrudCollectionStore, CrudCollectionStoreConfig } from '../stores/factories';
-export { hasHydrated } from '../engine';
+export { hasHydrated, hydrationAttempted } from '../engine';
 export { wasDbReset } from '../database';
 //# sourceMappingURL=stores.d.ts.map

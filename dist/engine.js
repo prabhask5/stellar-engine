@@ -331,8 +331,11 @@ function logSyncCycle(stats) {
 let syncTimeout = null;
 /** Timer handle for the periodic background sync interval */
 let syncInterval = null;
-/** Whether initial hydration (empty-DB pull) has been attempted this session */
+/** Whether initial hydration (empty-DB pull) has completed successfully this session */
 let _hasHydrated = false;
+/** Whether hydration has been attempted this session (regardless of success/failure).
+ *  Used by the loading overlay to dismiss even when hydration fails with an error. */
+let _hydrationAttempted = false;
 /**
  * Check whether the engine has completed initial hydration this session.
  *
@@ -345,6 +348,16 @@ let _hasHydrated = false;
  */
 export function hasHydrated() {
     return _hasHydrated;
+}
+/**
+ * Check whether the engine has attempted initial hydration this session,
+ * regardless of whether it succeeded or failed. Used by loading overlays
+ * to dismiss even when hydration encounters an error.
+ *
+ * @returns `true` if hydration has been attempted (success or failure).
+ */
+export function hydrationAttempted() {
+    return _hydrationAttempted;
 }
 // --- EGRESS OPTIMIZATION: Cached user validation ---
 // `getUser()` makes a network round-trip to Supabase. Calling it every sync cycle
@@ -1821,12 +1834,16 @@ async function fullReconciliation() {
  * @see {@link reconcileLocalWithRemote} - Re-queues orphaned local changes
  */
 async function hydrateFromRemote() {
-    if (typeof navigator === 'undefined' || !navigator.onLine)
+    if (typeof navigator === 'undefined' || !navigator.onLine) {
+        _hydrationAttempted = true;
         return;
+    }
     // Atomically acquire sync lock to prevent concurrent syncs/hydrations
     const acquired = await acquireSyncLock();
-    if (!acquired)
+    if (!acquired) {
+        _hydrationAttempted = true;
         return;
+    }
     const config = getEngineConfig();
     const db = config.db;
     const supabase = config.supabase;
@@ -1835,12 +1852,14 @@ async function hydrateFromRemote() {
     // Abort if no authenticated user (can't hydrate without auth)
     if (!userId) {
         debugLog('[SYNC] Hydration skipped: no authenticated user');
+        _hydrationAttempted = true;
         releaseSyncLock();
         return;
     }
     debugLog('[SYNC] Hydration starting...');
     // Mark that we've attempted hydration (even if local has data)
     _hasHydrated = true;
+    _hydrationAttempted = true;
     clearDbResetFlag();
     // Check if local DB has any data
     let hasLocalData = false;
@@ -2599,6 +2618,7 @@ export async function stopSyncEngine() {
     }
     releaseSyncLock();
     _hasHydrated = false;
+    _hydrationAttempted = false;
     _schemaValidated = false;
     _syncEngineStarted = false;
     // Clean up debug window utilities
@@ -2661,5 +2681,6 @@ export async function clearLocalCache() {
         }
     }
     _hasHydrated = false;
+    _hydrationAttempted = false;
 }
 //# sourceMappingURL=engine.js.map

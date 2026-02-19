@@ -59,7 +59,8 @@ export { createCollectionStore, createDetailStore, createCrudCollectionStore } f
 // =============================================================================
 // Functions for checking engine hydration state and database reset status:
 // - `hasHydrated` — whether initial hydration has completed this session.
+// - `hydrationAttempted` — whether hydration was attempted (success or failure).
 // - `wasDbReset` — whether the DB was nuked and needs full re-hydration.
-export { hasHydrated } from '../engine';
+export { hasHydrated, hydrationAttempted } from '../engine';
 export { wasDbReset } from '../database';
 //# sourceMappingURL=stores.js.map

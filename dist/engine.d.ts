@@ -95,6 +95,14 @@ interface SyncCycleStats {
  */
 export declare function hasHydrated(): boolean;
 /**
+ * Check whether the engine has attempted initial hydration this session,
+ * regardless of whether it succeeded or failed. Used by loading overlays
+ * to dismiss even when hydration encounters an error.
+ *
+ * @returns `true` if hydration has been attempted (success or failure).
+ */
+export declare function hydrationAttempted(): boolean;
+/**
  * Mark an entity as recently modified to protect it from being overwritten by pull.
  *
  * Called by repository functions after every local write. The protection expires

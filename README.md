@@ -478,7 +478,8 @@ Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
 | `changeSingleUserEmail(newEmail)` | Request email change |
 | `completeSingleUserEmailChange()` | Finalize email change after confirmation |
 | `resetSingleUser()` | Full reset: clear config, sign out, wipe local data |
-| `padPin(pin)` | Pad a PIN to meet Supabase's minimum password length |
+| `padPin(pin)` | Pad a PIN to meet Supabase's minimum password length (uses fixed `_app` suffix — same PIN produces same password across all apps on one Supabase project) |
+| `padPinLegacy(pin, prefix)` | Reproduce the pre-migration padded format (per-app prefix suffix); used internally for transparent password migration |
 
 ### Authentication -- Device Verification
 
@@ -681,15 +682,18 @@ Multiple stellar-drive apps can share a **single Supabase instance** — same Po
 
 Given `prefix: 'stellar'` and schema key `goals`, the Supabase table becomes `stellar_goals`. This is automatic — consumers still write `goals` in their schema and API calls.
 
-**Shared across apps (unprefixed):**
-- `auth.users` (Supabase Auth)
-- `trusted_devices` (device verification)
+**Shared across apps (unprefixed table, per-app rows):**
+- `auth.users` (Supabase Auth) — same user account works in every app
+- `trusted_devices` — single table, but each row carries an `app_prefix` column (default `'stellar'`). The unique constraint is `(user_id, device_id, app_prefix)`, so trusting a device in one app does not grant trust in another. All device verification queries filter by prefix automatically.
 - `crdt_documents` (CRDT collaborative editing)
 - Helper functions: `set_user_id()`, `update_updated_at_column()`
 
-**Isolated per app (prefixed):**
+**Isolated per app (prefixed tables):**
 - All app-defined tables: `stellar_goals`, `infinite_notes`, etc.
 - RLS policies, triggers, and indexes
+
+**PIN/password isolation:**
+- `padPin()` uses a fixed `_app` suffix, so the same email + same PIN produces the same Supabase password in every app. Users set up in one app can authenticate in another without re-registering. A `padPinLegacy()` helper handles migration from the old per-app-prefix format.
 
 **What does NOT change:**
 - IndexedDB (Dexie) — already namespaced by `${prefix}DB`

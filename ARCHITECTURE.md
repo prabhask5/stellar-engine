@@ -1073,6 +1073,8 @@ auth: {
 
 The PIN is padded to meet Supabase's minimum password length and used as a real Supabase password via `supabase.auth.signUp()`. This gives the same `auth.uid()` as a regular email/password user, enabling proper RLS enforcement.
 
+`padPin(gate)` appends a fixed suffix `_app` to the PIN before padding. This means the same email + same PIN produces the same Supabase password across every app sharing a Supabase project — users carry one credential set regardless of which app registered them. A `padPinLegacy(gate, prefix)` helper reproduces the old per-app-prefix format used before this change; it is used internally for transparent password migration.
+
 **Setup Flow:**
 ```
 User enters email + PIN + profile on first visit
@@ -1108,7 +1110,9 @@ unlockSingleUser(gate)
   |
   +---> ONLINE:
   |       signInWithPassword({ email: config.email, password: padPin(gate) })
-  |         FAILED -> return { error: 'Incorrect code' }
+  |         FAILED -> try padPinLegacy(gate, prefix) as fallback
+  |           FAILED -> return { error: 'Incorrect code' }
+  |           SUCCESS -> silently migrate: updateUser({ password: padPin(gate) })
   |         SUCCESS -> check deviceVerification enabled?
   |           NO  -> touchTrustedDevice, set authState, start sync
   |           YES -> isDeviceTrusted(userId)?
@@ -1141,6 +1145,9 @@ lockSingleUser()
 changeSingleUserGate(oldGate, newGate)
   |
   +---> signInWithPassword(email, padPin(oldGate))  -- verify old gate
+  |       FAILED -> try padPinLegacy(oldGate, prefix) as fallback
+  |         FAILED -> return { error: 'Incorrect code' }
+  |         SUCCESS -> silently migrate: updateUser({ password: padPin(newGate) })
   +---> updateUser({ password: padPin(newGate) })    -- set new password
   +---> Update local config hash in IndexedDB
   +---> Update offline credentials cache
@@ -1156,12 +1163,17 @@ Trusted device registry stored in Supabase `trusted_devices` table.
 |--------|------|---------|
 | `user_id` | uuid | The user this device belongs to |
 | `device_id` | text | The device's unique identifier |
+| `app_prefix` | text | App that registered the trust (default `'stellar'`); isolates device trust per app |
 | `trusted_at` | timestamptz | When the device was first trusted |
 | `last_seen_at` | timestamptz | Last access (updated on each use) |
 
+The unique constraint is `(user_id, device_id, app_prefix)`. A device trusted in one app is not automatically trusted in another app sharing the same Supabase project. All device verification queries filter by `app_prefix` via an internal `getAppPrefix()` helper that returns the current engine prefix.
+
+Pending device metadata in Supabase `user_metadata` is also namespaced per app: `pending_{prefix}_device_id` and `pending_{prefix}_device_label` (previously the flat keys `pending_device_id` / `pending_device_label`).
+
 Trust duration: 90 days (configurable via `trustDurationDays` in the flat auth config).
 
-Flow: Login on untrusted device -> OTP email sent via Supabase -> user enters OTP -> device added to `trusted_devices` table -> trust established for 90 days.
+Flow: Login on untrusted device -> OTP email sent via Supabase -> user enters OTP -> device added to `trusted_devices` table with current `app_prefix` -> trust established for 90 days.
 
 ### 9.5 Auth State Resolution (`resolveAuthState`)
 

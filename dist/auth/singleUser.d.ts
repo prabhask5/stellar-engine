@@ -53,23 +53,20 @@ import type { SingleUserConfig } from '../types';
  * Pad a PIN to meet Supabase's minimum password length.
  *
  * Supabase requires passwords of at least 6 characters. Since PINs can be as
- * short as 4 digits, this function appends an app-specific prefix as a suffix
- * to reach a safe length.
+ * short as 4 digits, this function appends a fixed suffix to reach a safe
+ * length. The suffix is intentionally app-independent so that multiple apps
+ * sharing the same Supabase project produce the same password for the same PIN.
  *
  * @param pin - The raw PIN/password entered by the user.
  * @returns The padded string suitable for use as a Supabase password.
  *
  * @example
  * ```ts
- * // With default prefix 'app':
  * padPin('1234'); // => '1234_app'
- *
- * // With custom prefix 'stellar':
- * padPin('1234'); // => '1234_stellar'
  * ```
  *
  * @security The padding increases character length but does NOT increase
- *   entropy. The suffix is deterministic and app-wide.
+ *   entropy. The suffix is deterministic and universal.
  */
 export declare function padPin(pin: string): string;
 /**

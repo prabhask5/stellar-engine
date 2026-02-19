@@ -348,6 +348,8 @@ export interface TrustedDevice {
     deviceId: string;
     /** Human-readable device label (e.g., browser + OS). */
     deviceLabel?: string;
+    /** App prefix for multi-tenant isolation (e.g., 'stellar', 'infinite'). */
+    appPrefix: string;
     /** ISO 8601 timestamp of when the device was first trusted. */
     trustedAt: string;
     /** ISO 8601 timestamp of the device's most recent use. */

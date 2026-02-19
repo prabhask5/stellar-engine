@@ -889,7 +889,8 @@ Full lifecycle for single-user (kiosk/personal device) PIN/password gate authent
 
 ### Utility
 
-- **`padPin(pin, targetLength)`** -- Pad a short PIN to meet Supabase minimum password length.
+- **`padPin(pin, targetLength?)`** -- Pad a short PIN to meet Supabase minimum password length. Appends the fixed suffix `_app` before padding, so the same email + PIN produces the same Supabase password in every app sharing a Supabase project.
+- **`padPinLegacy(pin, prefix, targetLength?)`** -- Reproduces the pre-migration padded format that used the per-app `prefix` as the suffix. Used internally by `unlockSingleUser`, `linkSingleUserDevice`, and `changeSingleUserGate` as a fallback when the current password format fails, followed by a silent migration to the new format.
 
 ---
 
@@ -897,11 +898,13 @@ Full lifecycle for single-user (kiosk/personal device) PIN/password gate authent
 
 Trust management for multi-device single-user setups. Import from the root or `stellar-drive`.
 
-- **`isDeviceTrusted()`** -- Check if the current device is trusted.
-- **`trustCurrentDevice()`** -- Mark the current device as trusted.
-- **`trustPendingDevice(deviceId, deviceLabel)`** -- Trust a pending device.
-- **`getTrustedDevices()`** -- List all trusted devices.
-- **`removeTrustedDevice(deviceId)`** -- Revoke trust for a device.
+All queries against `trusted_devices` automatically filter by the current app's prefix (via the internal `getAppPrefix()` helper), so trust records are isolated per app even when multiple apps share a Supabase project. Pending device metadata in Supabase `user_metadata` is stored as `pending_{prefix}_device_id` and `pending_{prefix}_device_label`.
+
+- **`isDeviceTrusted()`** -- Check if the current device is trusted for this app.
+- **`trustCurrentDevice()`** -- Mark the current device as trusted for this app.
+- **`trustPendingDevice(deviceId, deviceLabel)`** -- Trust a pending device for this app.
+- **`getTrustedDevices()`** -- List all trusted devices for this app (filtered by `app_prefix`).
+- **`removeTrustedDevice(deviceId)`** -- Revoke trust for a device in this app.
 - **`maskEmail(email)`** -- Partially mask an email for display during verification.
 - **`sendDeviceVerification(email)`** -- Initiate the device verification email flow.
 - **`getCurrentDeviceId()`** -- Get the current device's stable identifier.
@@ -1592,6 +1595,7 @@ interface TrustedDevice {
   id: string;
   userId: string;
   deviceId: string;
+  appPrefix: string;   // The app that registered this trust record (e.g. 'stellar', 'infinite')
   deviceLabel?: string;
   trustedAt: string;
   lastUsedAt: string;

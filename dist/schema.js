@@ -655,10 +655,17 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('  user_id uuid references auth.users(id) on delete cascade not null,');
         parts.push('  device_id text not null,');
         parts.push('  device_label text,');
+        parts.push("  app_prefix text not null default 'stellar',");
         parts.push('  trusted_at timestamptz default now() not null,');
         parts.push('  last_used_at timestamptz default now() not null,');
-        parts.push('  unique(user_id, device_id)');
+        parts.push('  unique(user_id, device_id, app_prefix)');
         parts.push(');');
+        parts.push('');
+        parts.push('-- Convergent migration: add app_prefix column to existing tables');
+        parts.push("alter table trusted_devices add column if not exists app_prefix text not null default 'stellar';");
+        parts.push('-- Replace old unique constraint with new one including app_prefix');
+        parts.push('drop index if exists trusted_devices_user_id_device_id_key;');
+        parts.push('create unique index if not exists trusted_devices_user_device_app on trusted_devices(user_id, device_id, app_prefix);');
         parts.push('');
         parts.push('alter table trusted_devices enable row level security;');
         parts.push('do $$ begin create policy "Users can manage own devices" on trusted_devices for all using (auth.uid() = user_id); exception when duplicate_object then null; end $$;');
@@ -669,6 +676,7 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('create trigger update_trusted_devices_updated_at before update on trusted_devices for each row execute function update_updated_at_column();');
         parts.push('');
         parts.push('create index if not exists idx_trusted_devices_user_id on trusted_devices(user_id);');
+        parts.push('create index if not exists idx_trusted_devices_app_prefix on trusted_devices(app_prefix);');
         parts.push('');
         parts.push('do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;');
         parts.push('');

@@ -80,6 +80,18 @@ function getTrustDurationDays(): number {
 }
 
 /**
+ * Get the app prefix for multi-tenant device trust isolation.
+ *
+ * Each app in a shared Supabase project uses a different prefix so that
+ * trusting a device on one app does not automatically trust it on another.
+ *
+ * @returns The configured app prefix, or `'default'` if none is set.
+ */
+function getAppPrefix(): string {
+  return getEngineConfig().prefix || 'default';
+}
+
+/**
  * Convert a snake_case database row into a camelCase {@link TrustedDevice} object.
  *
  * Supabase returns rows with snake_case column names, but the TypeScript
@@ -98,6 +110,8 @@ function snakeToCamelDevice(row: Record<string, unknown>): TrustedDevice {
     deviceId: row.device_id as string,
     /** Human-readable label (e.g., "Chrome on macOS"). */
     deviceLabel: row.device_label as string | undefined,
+    /** App prefix for multi-tenant isolation. */
+    appPrefix: row.app_prefix as string,
     /** ISO timestamp of when the device was first trusted. */
     trustedAt: row.trusted_at as string,
     /** ISO timestamp of the most recent successful login from this device. */
@@ -230,6 +244,7 @@ export async function isDeviceTrusted(userId: string): Promise<boolean> {
       .select('id, last_used_at')
       .eq('user_id', userId)
       .eq('device_id', deviceId)
+      .eq('app_prefix', getAppPrefix())
       .gte('last_used_at', cutoff.toISOString())
       .limit(1);
 
@@ -274,10 +289,11 @@ export async function trustCurrentDevice(userId: string): Promise<void> {
         user_id: userId,
         device_id: deviceId,
         device_label: label,
+        app_prefix: getAppPrefix(),
         trusted_at: now,
         last_used_at: now
       },
-      { onConflict: 'user_id,device_id' }
+      { onConflict: 'user_id,device_id,app_prefix' }
     );
 
     if (error) {
@@ -309,7 +325,8 @@ export async function touchTrustedDevice(userId: string): Promise<void> {
       .from('trusted_devices')
       .update({ last_used_at: new Date().toISOString(), device_label: getDeviceLabel() })
       .eq('user_id', userId)
-      .eq('device_id', deviceId);
+      .eq('device_id', deviceId)
+      .eq('app_prefix', getAppPrefix());
 
     if (error) {
       debugWarn('[DeviceVerification] Touch device failed:', error.message);
@@ -343,8 +360,9 @@ export async function getTrustedDevices(userId: string): Promise<TrustedDevice[]
   try {
     const { data, error } = await supabase
       .from('trusted_devices')
-      .select('id, user_id, device_id, device_label, trusted_at, last_used_at')
+      .select('id, user_id, device_id, device_label, app_prefix, trusted_at, last_used_at')
       .eq('user_id', userId)
+      .eq('app_prefix', getAppPrefix())
       .order('last_used_at', { ascending: false });
 
     if (error) {
@@ -428,8 +446,12 @@ export async function sendDeviceVerification(email: string): Promise<{ error: st
        This enables the cross-device verification pattern. */
     const deviceId = getDeviceId();
     const deviceLabel = getDeviceLabel();
+    const prefix = getEngineConfig().prefix;
     await supabase.auth.updateUser({
-      data: { pending_device_id: deviceId, pending_device_label: deviceLabel }
+      data: {
+        [`pending_${prefix}_device_id`]: deviceId,
+        [`pending_${prefix}_device_label`]: deviceLabel
+      }
     });
 
     const { error } = await supabase.auth.signInWithOtp({
@@ -490,8 +512,9 @@ export async function trustPendingDevice(): Promise<void> {
       return;
     }
 
-    const pendingDeviceId = user.user_metadata?.pending_device_id;
-    const pendingDeviceLabel = user.user_metadata?.pending_device_label;
+    const prefix = getEngineConfig().prefix;
+    const pendingDeviceId = user.user_metadata?.[`pending_${prefix}_device_id`];
+    const pendingDeviceLabel = user.user_metadata?.[`pending_${prefix}_device_label`];
 
     if (!pendingDeviceId) {
       /* No pending device — fall back to trusting the current device.
@@ -510,10 +533,11 @@ export async function trustPendingDevice(): Promise<void> {
         user_id: user.id,
         device_id: pendingDeviceId,
         device_label: pendingDeviceLabel || 'Unknown device',
+        app_prefix: getAppPrefix(),
         trusted_at: now,
         last_used_at: now
       },
-      { onConflict: 'user_id,device_id' }
+      { onConflict: 'user_id,device_id,app_prefix' }
     );
 
     if (upsertError) {
@@ -529,7 +553,10 @@ export async function trustPendingDevice(): Promise<void> {
     /* Clear pending device from metadata to prevent stale references.
        Setting to null removes the keys from user_metadata. */
     await supabase.auth.updateUser({
-      data: { pending_device_id: null, pending_device_label: null }
+      data: {
+        [`pending_${prefix}_device_id`]: null,
+        [`pending_${prefix}_device_label`]: null
+      }
     });
   } catch (e) {
     debugError('[DeviceVerification] trustPendingDevice error:', e);

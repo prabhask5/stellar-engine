@@ -72,6 +72,17 @@ function getTrustDurationDays() {
     return (getEngineConfig().auth?.deviceVerification?.trustDurationDays ?? DEFAULT_TRUST_DURATION_DAYS);
 }
 /**
+ * Get the app prefix for multi-tenant device trust isolation.
+ *
+ * Each app in a shared Supabase project uses a different prefix so that
+ * trusting a device on one app does not automatically trust it on another.
+ *
+ * @returns The configured app prefix, or `'default'` if none is set.
+ */
+function getAppPrefix() {
+    return getEngineConfig().prefix || 'default';
+}
+/**
  * Convert a snake_case database row into a camelCase {@link TrustedDevice} object.
  *
  * Supabase returns rows with snake_case column names, but the TypeScript
@@ -90,6 +101,8 @@ function snakeToCamelDevice(row) {
         deviceId: row.device_id,
         /** Human-readable label (e.g., "Chrome on macOS"). */
         deviceLabel: row.device_label,
+        /** App prefix for multi-tenant isolation. */
+        appPrefix: row.app_prefix,
         /** ISO timestamp of when the device was first trusted. */
         trustedAt: row.trusted_at,
         /** ISO timestamp of the most recent successful login from this device. */
@@ -222,6 +235,7 @@ export async function isDeviceTrusted(userId) {
             .select('id, last_used_at')
             .eq('user_id', userId)
             .eq('device_id', deviceId)
+            .eq('app_prefix', getAppPrefix())
             .gte('last_used_at', cutoff.toISOString())
             .limit(1);
         if (error) {
@@ -263,9 +277,10 @@ export async function trustCurrentDevice(userId) {
             user_id: userId,
             device_id: deviceId,
             device_label: label,
+            app_prefix: getAppPrefix(),
             trusted_at: now,
             last_used_at: now
-        }, { onConflict: 'user_id,device_id' });
+        }, { onConflict: 'user_id,device_id,app_prefix' });
         if (error) {
             debugError('[DeviceVerification] Trust device failed:', error.message);
         }
@@ -296,7 +311,8 @@ export async function touchTrustedDevice(userId) {
             .from('trusted_devices')
             .update({ last_used_at: new Date().toISOString(), device_label: getDeviceLabel() })
             .eq('user_id', userId)
-            .eq('device_id', deviceId);
+            .eq('device_id', deviceId)
+            .eq('app_prefix', getAppPrefix());
         if (error) {
             debugWarn('[DeviceVerification] Touch device failed:', error.message);
         }
@@ -330,8 +346,9 @@ export async function getTrustedDevices(userId) {
     try {
         const { data, error } = await supabase
             .from('trusted_devices')
-            .select('id, user_id, device_id, device_label, trusted_at, last_used_at')
+            .select('id, user_id, device_id, device_label, app_prefix, trusted_at, last_used_at')
             .eq('user_id', userId)
+            .eq('app_prefix', getAppPrefix())
             .order('last_used_at', { ascending: false });
         if (error) {
             debugError('[DeviceVerification] Get devices failed:', error.message);
@@ -414,8 +431,12 @@ export async function sendDeviceVerification(email) {
            This enables the cross-device verification pattern. */
         const deviceId = getDeviceId();
         const deviceLabel = getDeviceLabel();
+        const prefix = getEngineConfig().prefix;
         await supabase.auth.updateUser({
-            data: { pending_device_id: deviceId, pending_device_label: deviceLabel }
+            data: {
+                [`pending_${prefix}_device_id`]: deviceId,
+                [`pending_${prefix}_device_label`]: deviceLabel
+            }
         });
         const { error } = await supabase.auth.signInWithOtp({
             email,
@@ -470,8 +491,9 @@ export async function trustPendingDevice() {
             debugWarn('[DeviceVerification] trustPendingDevice: no user');
             return;
         }
-        const pendingDeviceId = user.user_metadata?.pending_device_id;
-        const pendingDeviceLabel = user.user_metadata?.pending_device_label;
+        const prefix = getEngineConfig().prefix;
+        const pendingDeviceId = user.user_metadata?.[`pending_${prefix}_device_id`];
+        const pendingDeviceLabel = user.user_metadata?.[`pending_${prefix}_device_label`];
         if (!pendingDeviceId) {
             /* No pending device — fall back to trusting the current device.
                This handles the same-browser case where the OTP link is opened
@@ -486,9 +508,10 @@ export async function trustPendingDevice() {
             user_id: user.id,
             device_id: pendingDeviceId,
             device_label: pendingDeviceLabel || 'Unknown device',
+            app_prefix: getAppPrefix(),
             trusted_at: now,
             last_used_at: now
-        }, { onConflict: 'user_id,device_id' });
+        }, { onConflict: 'user_id,device_id,app_prefix' });
         if (upsertError) {
             debugError('[DeviceVerification] trustPendingDevice upsert failed:', upsertError.message);
         }
@@ -501,7 +524,10 @@ export async function trustPendingDevice() {
         /* Clear pending device from metadata to prevent stale references.
            Setting to null removes the keys from user_metadata. */
         await supabase.auth.updateUser({
-            data: { pending_device_id: null, pending_device_label: null }
+            data: {
+                [`pending_${prefix}_device_id`]: null,
+                [`pending_${prefix}_device_label`]: null
+            }
         });
     }
     catch (e) {

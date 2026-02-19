@@ -93,25 +93,36 @@ function getDb() {
  * Pad a PIN to meet Supabase's minimum password length.
  *
  * Supabase requires passwords of at least 6 characters. Since PINs can be as
- * short as 4 digits, this function appends an app-specific prefix as a suffix
- * to reach a safe length.
+ * short as 4 digits, this function appends a fixed suffix to reach a safe
+ * length. The suffix is intentionally app-independent so that multiple apps
+ * sharing the same Supabase project produce the same password for the same PIN.
  *
  * @param pin - The raw PIN/password entered by the user.
  * @returns The padded string suitable for use as a Supabase password.
  *
  * @example
  * ```ts
- * // With default prefix 'app':
  * padPin('1234'); // => '1234_app'
- *
- * // With custom prefix 'stellar':
- * padPin('1234'); // => '1234_stellar'
  * ```
  *
  * @security The padding increases character length but does NOT increase
- *   entropy. The suffix is deterministic and app-wide.
+ *   entropy. The suffix is deterministic and universal.
  */
 export function padPin(pin: string): string {
+  return `${pin}_app`;
+}
+
+/**
+ * Legacy PIN padding that used the per-app prefix as a suffix.
+ *
+ * Used only during password migration: if the user's Supabase password was
+ * created with the old app-specific suffix (e.g., `1234_stellar`), the
+ * migration path tries this legacy format as a fallback before giving up.
+ *
+ * @param pin - The raw PIN/password entered by the user.
+ * @returns The legacy padded string with the app-specific suffix.
+ */
+function padPinLegacy(pin: string): string {
   const prefix = getEngineConfig().prefix || 'app';
   return `${pin}_${prefix}`;
 }
@@ -548,10 +559,29 @@ export async function unlockSingleUser(gate: string): Promise<{
       const strategy: PreCheckStrategy = preCheck.strategy;
       const paddedPassword = padPin(gate);
 
-      const { data, error } = await supabase.auth.signInWithPassword({
+      let { data, error } = await supabase.auth.signInWithPassword({
         email: config.email,
         password: paddedPassword
       });
+
+      /* Migration: try legacy app-specific password if universal one fails */
+      if (error) {
+        const legacyPassword = padPinLegacy(gate);
+        if (legacyPassword !== paddedPassword) {
+          const legacy = await supabase.auth.signInWithPassword({
+            email: config.email,
+            password: legacyPassword
+          });
+          if (!legacy.error) {
+            data = legacy.data;
+            error = null;
+            /* Silently migrate password to universal format */
+            await supabase.auth.updateUser({ password: paddedPassword }).catch((e) => {
+              debugWarn('[SingleUser] Password migration failed:', e);
+            });
+          }
+        }
+      }
 
       if (error) {
         await onLoginFailure(strategy);
@@ -916,10 +946,29 @@ export async function changeSingleUserGate(
       } else {
         /* No local hash — fall back to Supabase verification.
            This can happen after a migration from an older schema. */
-        const { error: verifyError } = await supabase.auth.signInWithPassword({
+        const paddedOld = padPin(oldGate);
+        let { error: verifyError } = await supabase.auth.signInWithPassword({
           email: config.email,
-          password: padPin(oldGate)
+          password: paddedOld
         });
+
+        /* Migration: try legacy app-specific password */
+        if (verifyError) {
+          const legacyOld = padPinLegacy(oldGate);
+          if (legacyOld !== paddedOld) {
+            const legacy = await supabase.auth.signInWithPassword({
+              email: config.email,
+              password: legacyOld
+            });
+            if (!legacy.error) {
+              verifyError = null;
+              /* Silently migrate password to universal format */
+              await supabase.auth.updateUser({ password: paddedOld }).catch((e) => {
+                debugWarn('[SingleUser] Password migration failed:', e);
+              });
+            }
+          }
+        }
 
         if (verifyError) {
           return { error: 'Current code is incorrect' };
@@ -1319,10 +1368,29 @@ export async function linkSingleUserDevice(
 
     const paddedPassword = padPin(pin);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    let { data, error } = await supabase.auth.signInWithPassword({
       email,
       password: paddedPassword
     });
+
+    /* Migration: try legacy app-specific password if universal one fails */
+    if (error) {
+      const legacyPassword = padPinLegacy(pin);
+      if (legacyPassword !== paddedPassword) {
+        const legacy = await supabase.auth.signInWithPassword({
+          email,
+          password: legacyPassword
+        });
+        if (!legacy.error) {
+          data = legacy.data;
+          error = null;
+          /* Silently migrate password to universal format */
+          await supabase.auth.updateUser({ password: paddedPassword }).catch((e) => {
+            debugWarn('[SingleUser] Password migration failed:', e);
+          });
+        }
+      }
+    }
 
     if (error) {
       await onLoginFailure('no-cache');

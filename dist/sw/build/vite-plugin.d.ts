@@ -74,6 +74,12 @@ export interface SchemaConfig {
      * @default true
      */
     autoMigrate?: boolean;
+    /**
+     * Whether to include the `crdt_documents` table in auto-generated SQL.
+     * Set to `true` if the app uses CRDT collaborative editing.
+     * @default false
+     */
+    includeCRDT?: boolean;
 }
 /**
  * Configuration options for the stellarPWA Vite plugin.

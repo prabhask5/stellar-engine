@@ -123,13 +123,15 @@ function resolveSchemaOpts(schema) {
         return {
             path: schema.path || 'src/lib/schema.ts',
             typesOutput: schema.typesOutput || 'src/lib/types.generated.ts',
-            autoMigrate: schema.autoMigrate !== false
+            autoMigrate: schema.autoMigrate !== false,
+            includeCRDT: schema.includeCRDT === true
         };
     }
     return {
         path: 'src/lib/schema.ts',
         typesOutput: 'src/lib/types.generated.ts',
-        autoMigrate: true
+        autoMigrate: true,
+        includeCRDT: false
     };
 }
 /**
@@ -226,7 +228,8 @@ async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectR
     const fullSQL = generateSupabaseSQL(schema, {
         appName,
         prefix,
-        includeHelperFunctions: true
+        includeHelperFunctions: true,
+        includeCRDT: schemaOpts.includeCRDT
     });
     await pushSchema(fullSQL, schemaOpts, projectRoot);
 }

@@ -94,6 +94,13 @@ export interface SchemaConfig {
    * @default true
    */
   autoMigrate?: boolean;
+
+  /**
+   * Whether to include the `crdt_documents` table in auto-generated SQL.
+   * Set to `true` if the app uses CRDT collaborative editing.
+   * @default false
+   */
+  includeCRDT?: boolean;
 }
 
 /**
@@ -218,13 +225,15 @@ function resolveSchemaOpts(schema: boolean | SchemaConfig): Required<SchemaConfi
     return {
       path: schema.path || 'src/lib/schema.ts',
       typesOutput: schema.typesOutput || 'src/lib/types.generated.ts',
-      autoMigrate: schema.autoMigrate !== false
+      autoMigrate: schema.autoMigrate !== false,
+      includeCRDT: schema.includeCRDT === true
     };
   }
   return {
     path: 'src/lib/schema.ts',
     typesOutput: 'src/lib/types.generated.ts',
-    autoMigrate: true
+    autoMigrate: true,
+    includeCRDT: false
   };
 }
 
@@ -338,7 +347,8 @@ async function processLoadedSchema(
   const fullSQL = generateSupabaseSQL(schema as import('../../types').SchemaDefinition, {
     appName,
     prefix,
-    includeHelperFunctions: true
+    includeHelperFunctions: true,
+    includeCRDT: schemaOpts.includeCRDT
   });
   await pushSchema(fullSQL, schemaOpts, projectRoot);
 }

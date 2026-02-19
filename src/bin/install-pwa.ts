@@ -2335,7 +2335,7 @@ function generateSetupPageSvelte(opts: InstallOptions): string {
   <div class="setup-container">
     <!-- Header -->
     <h1>Set Up ${opts.name}</h1>
-    <p class="subtitle">Connect your own Supabase backend in four quick steps.</p>
+    <p class="subtitle">Configure ${opts.name} to connect to your own Supabase backend</p>
 
     <!-- Step indicator -->
     <div class="step-indicator">
@@ -2432,61 +2432,54 @@ function generateSetupPageSvelte(opts: InstallOptions): string {
 
       {:else if currentStep === 4}
         <h2>Step 4: Deploy to Vercel</h2>
-        {#if isFirstSetup}
-          <p>
-            Provide a one-time Vercel API token so ${opts.name} can set the environment
-            variables on your project and trigger a redeployment.
-          </p>
-          <div class="form-group">
-            <label for="vercel-token">Vercel API Token</label>
-            <input
-              id="vercel-token"
-              type="password"
-              placeholder="Paste your Vercel token"
-              bind:value={vercelToken}
-            />
+        <p>
+          Provide a one-time Vercel API token so ${opts.name} can set the environment
+          variables on your project and trigger a redeployment.
+        </p>
+        <div class="form-group">
+          <label for="vercel-token">Vercel API Token</label>
+          <input
+            id="vercel-token"
+            type="password"
+            placeholder="Paste your Vercel token"
+            bind:value={vercelToken}
+          />
+        </div>
+
+        <button
+          class="btn btn-primary"
+          onclick={handleDeploy}
+          disabled={deploying || !vercelToken}
+        >
+          {#if deploying}Deploying...{:else}Deploy{/if}
+        </button>
+
+        {#if deployError}
+          <div class="message message-error">{deployError}</div>
+        {/if}
+
+        <!-- Deployment pipeline stages -->
+        {#if deployStage !== 'idle'}
+          <div class="deploy-stages">
+            <div class="deploy-stage" class:active={deployStage === 'setting-env'} class:done={deployStage === 'deploying' || deployStage === 'ready'}>
+              <span class="stage-icon">{#if deployStage === 'setting-env'}&#9675;{:else}&#10003;{/if}</span>
+              Setting environment variables
+            </div>
+            <div class="deploy-stage" class:active={deployStage === 'deploying'} class:done={deployStage === 'ready'}>
+              <span class="stage-icon">{#if deployStage === 'deploying'}&#9675;{:else if deployStage === 'ready'}&#10003;{:else}&#8226;{/if}</span>
+              Deploying to Vercel
+            </div>
+            <div class="deploy-stage" class:active={deployStage === 'ready'}>
+              <span class="stage-icon">{#if deployStage === 'ready'}&#10003;{:else}&#8226;{/if}</span>
+              Ready
+            </div>
           </div>
+        {/if}
 
-          <button
-            class="btn btn-primary"
-            onclick={handleDeploy}
-            disabled={deploying || !vercelToken}
-          >
-            {#if deploying}Deploying...{:else}Deploy{/if}
-          </button>
-
-          {#if deployError}
-            <div class="message message-error">{deployError}</div>
-          {/if}
-
-          <!-- Deployment pipeline stages -->
-          {#if deployStage !== 'idle'}
-            <div class="deploy-stages">
-              <div class="deploy-stage" class:active={deployStage === 'setting-env'} class:done={deployStage === 'deploying' || deployStage === 'ready'}>
-                <span class="stage-icon">{#if deployStage === 'setting-env'}&#9675;{:else}&#10003;{/if}</span>
-                Setting environment variables
-              </div>
-              <div class="deploy-stage" class:active={deployStage === 'deploying'} class:done={deployStage === 'ready'}>
-                <span class="stage-icon">{#if deployStage === 'deploying'}&#9675;{:else if deployStage === 'ready'}&#10003;{:else}&#8226;{/if}</span>
-                Deploying to Vercel
-              </div>
-              <div class="deploy-stage" class:active={deployStage === 'ready'}>
-                <span class="stage-icon">{#if deployStage === 'ready'}&#10003;{:else}&#8226;{/if}</span>
-                Ready
-              </div>
-            </div>
-          {/if}
-
-          {#if deployStage === 'ready'}
-            <div class="message message-success">
-              Deployment complete! <a href="/">Refresh to start using ${opts.name}</a>.
-            </div>
-          {/if}
-        {:else}
-          <p>
-            You are reconfiguring an existing deployment. Update the environment variables
-            directly in your Vercel project settings, then trigger a redeployment.
-          </p>
+        {#if deployStage === 'ready'}
+          <div class="message message-success">
+            Deployment complete! <a href="/">Refresh to start using ${opts.name}</a>.
+          </div>
         {/if}
       {/if}
     </div>

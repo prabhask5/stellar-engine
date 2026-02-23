@@ -80,7 +80,7 @@ export {
 //  Persistence (Advanced)
 // =============================================================================
 
-export { persistDocument, persistAllDirty } from '../crdt/persistence';
+export { persistDocument, persistAllDirty, deleteRemoteDocument } from '../crdt/persistence';
 
 // =============================================================================
 //  Diagnostics

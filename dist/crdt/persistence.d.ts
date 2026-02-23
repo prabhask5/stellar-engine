@@ -52,6 +52,15 @@ export declare function persistDocument(documentId: string, doc: Y.Doc): Promise
  */
 export declare function persistAllDirty(): Promise<void>;
 /**
+ * Delete a CRDT document from Supabase by page ID.
+ *
+ * Removes the row from the `crdt_documents` table. RLS scopes the delete
+ * to the current user's row. No-op if the row doesn't exist.
+ *
+ * @param pageId - The page/entity ID whose CRDT document should be deleted.
+ */
+export declare function deleteRemoteDocument(pageId: string): Promise<void>;
+/**
  * Fetch the latest CRDT document state from Supabase by page ID.
  *
  * Used during `openDocument` when no local state exists and the device is

@@ -171,6 +171,31 @@ export async function persistAllDirty(): Promise<void> {
 }
 
 // =============================================================================
+//  Supabase Delete
+// =============================================================================
+
+/**
+ * Delete a CRDT document from Supabase by page ID.
+ *
+ * Removes the row from the `crdt_documents` table. RLS scopes the delete
+ * to the current user's row. No-op if the row doesn't exist.
+ *
+ * @param pageId - The page/entity ID whose CRDT document should be deleted.
+ */
+export async function deleteRemoteDocument(pageId: string): Promise<void> {
+  const config = getCRDTConfig();
+
+  const { error } = await supabase.from(config.supabaseTable).delete().eq('page_id', pageId);
+
+  if (error) {
+    debugWarn(`[CRDT] Failed to delete remote document for page ${pageId}: ${error.message}`);
+    return;
+  }
+
+  debugLog(`[CRDT] Deleted remote document for page ${pageId}`);
+}
+
+// =============================================================================
 //  Supabase Fetch
 // =============================================================================
 

@@ -26,7 +26,7 @@ export type { Text as YText, XmlFragment as YXmlFragment, Array as YArray, Map a
 export { updateCursor, getCollaborators, onCollaboratorsChange, assignColor } from '../crdt/awareness';
 export { enableOffline, disableOffline } from '../crdt/offline';
 export { isOfflineEnabled, getOfflineDocuments, loadDocumentByPageId, deleteDocumentState } from '../crdt/store';
-export { persistDocument, persistAllDirty } from '../crdt/persistence';
+export { persistDocument, persistAllDirty, deleteRemoteDocument } from '../crdt/persistence';
 export { getCRDTDiagnostics } from '../diagnostics';
 export type { CRDTConfig, UserPresenceState, OpenDocumentOptions } from '../crdt/types';
 //# sourceMappingURL=crdt.d.ts.map

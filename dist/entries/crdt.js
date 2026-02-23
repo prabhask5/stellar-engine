@@ -40,7 +40,7 @@ export { updateCursor, getCollaborators, onCollaboratorsChange, assignColor } fr
 //  Offline Management
 // =============================================================================
 export { enableOffline, disableOffline } from '../crdt/offline';
-export { isOfflineEnabled, getOfflineDocuments, loadDocumentByPageId } from '../crdt/store';
+export { isOfflineEnabled, getOfflineDocuments, loadDocumentByPageId, deleteDocumentState } from '../crdt/store';
 // =============================================================================
 //  Persistence (Advanced)
 // =============================================================================

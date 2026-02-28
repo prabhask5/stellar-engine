@@ -1,6 +1,13 @@
 # stellar-drive: Architecture & System Design
 
+> **What this document covers:** This is the complete architectural reference for stellar-drive, an offline-first sync engine for Supabase + Dexie.js applications. It explains every major subsystem -- how it works, why it was designed that way, and where to find the code.
+>
+> **Who it's for:** Developers (human or AI) who need to understand, modify, or extend the codebase. No prior knowledge of stellar-drive is assumed. Familiarity with TypeScript, IndexedDB concepts, and Supabase basics is helpful but not required -- key terms are defined as they appear.
+
+---
+
 ## Table of Contents
+
 1. [High-Level Architecture](#1-high-level-architecture)
 2. [Schema-Driven Configuration](#2-schema-driven-configuration)
 3. [Database Management](#3-database-management)
@@ -27,6 +34,8 @@
 ## 1. High-Level Architecture
 
 stellar-drive is an offline-first, local-first sync engine for **Supabase + Dexie.js** applications. It keeps a local IndexedDB database (via Dexie) synchronized with a remote Supabase database, providing instant reads, background sync, and real-time multi-device collaboration. Optional SvelteKit integrations are included but the core engine works with any framework.
+
+The central idea is simple: **the user's device is the source of truth for reads, and the server is the source of truth for persistence.** All reads happen from the local database (instant, works offline), all writes go to the local database first (no waiting for the network), and a background sync loop reconciles local and remote state.
 
 ### 1.1 Data Flow Diagram
 
@@ -78,6 +87,8 @@ stellar-drive is an offline-first, local-first sync engine for **Supabase + Dexi
 
 ### 1.2 Core Rules
 
+These five rules define the fundamental behavior of every stellar-drive application:
+
 ```
 Rule 1: All reads come from local DB (IndexedDB via Dexie) -- instant, offline
 Rule 2: All writes go to local DB first, immediately -- no waiting for network
@@ -94,9 +105,13 @@ The engine does NOT require a pre-created Supabase client. By default, the engin
 
 ---
 
+Now that we understand the overall architecture, the next section explains how an application tells stellar-drive what data it manages.
+
 ## 2. Schema-Driven Configuration
 
 **File**: `src/config.ts`
+
+The schema is the single source of truth for your application's data model. Instead of manually wiring up database tables, sync configuration, and type definitions separately, you declare your schema once and the engine derives everything else.
 
 ### 2.1 `initEngine()` -- The Single Entry Point
 
@@ -179,11 +194,11 @@ These correspond to the system columns every sync-enabled row has:
 | Column | Purpose |
 |--------|---------|
 | `id` | UUID primary key |
-| `user_id` | Ownership filter for RLS |
+| `user_id` | Ownership filter for RLS (Row-Level Security -- Supabase's mechanism for isolating each user's data) |
 | `created_at` | Creation timestamp (immutable) |
-| `updated_at` | Last modification timestamp (sync cursor) |
-| `deleted` | Soft-delete flag (tombstone) |
-| `_version` | Optimistic concurrency version counter |
+| `updated_at` | Last modification timestamp (used as the sync cursor to fetch only new changes) |
+| `deleted` | Soft-delete flag (a "tombstone" -- the row is marked as deleted but not physically removed, so other devices learn about the deletion during sync) |
+| `_version` | Optimistic concurrency version counter (incremented on every write to detect stale updates) |
 
 App-specific indexes are appended after the system indexes:
 
@@ -215,7 +230,7 @@ When the engine detects a rename, it generates a Dexie upgrade callback that cop
 The engine automatically manages Dexie version numbers so consumers never need to increment them manually. The algorithm:
 
 1. Serialize the merged store schema (app tables + system tables) into a deterministic sorted string
-2. Compute a DJB2 hash of the string (fast, deterministic, not cryptographic)
+2. Compute a DJB2 hash of the string (a fast, deterministic, non-cryptographic hash function)
 3. Compare the hash to the previous hash stored in `localStorage` (`${prefix}_schema_hash`)
 4. If unchanged: return the stored version number
 5. If changed (or first run): increment the stored version, persist the new hash, store the previous schema for upgrade path
@@ -244,9 +259,13 @@ When `initEngine({ schema: {...} })` is called, two internal functions run:
 
 ---
 
+With the schema configured, the next step is understanding how the local database is created and managed.
+
 ## 3. Database Management
 
 **File**: `src/database.ts`
+
+The local database is the user's personal copy of their data. It lives in the browser's IndexedDB (accessed through the Dexie.js library, which provides a friendlier API on top of raw IndexedDB). This section covers how that database is created, structured, and recovered from failures.
 
 ### 3.1 Two Modes
 
@@ -256,19 +275,19 @@ When `initEngine({ schema: {...} })` is called, two internal functions run:
 
 ### 3.2 System Tables
 
-These internal tables are auto-merged into every version declaration:
+These internal tables are auto-merged into every version declaration. They power the sync engine's internal bookkeeping:
 
 | Table | Indexes | Purpose |
 |-------|---------|---------|
-| `syncQueue` | `++id, table, entityId, timestamp` | Pending outbound operations (outbox) |
-| `conflictHistory` | `++id, entityId, entityType, timestamp` | Field-level conflict resolution audit trail |
-| `offlineCredentials` | `id` | Cached user credentials for offline sign-in |
+| `syncQueue` | `++id, table, entityId, timestamp` | Pending outbound operations (the "outbox" -- writes waiting to be sent to the server) |
+| `conflictHistory` | `++id, entityId, entityType, timestamp` | Field-level conflict resolution audit trail (which value won and why) |
+| `offlineCredentials` | `id` | Cached user credentials for offline sign-in (hashed, never plaintext) |
 | `offlineSession` | `id` | Offline session tokens |
-| `singleUserConfig` | `id` | Single-user mode gate configuration |
+| `singleUserConfig` | `id` | Single-user mode gate configuration (PIN/password settings) |
 
 ### 3.3 Conditional CRDT Tables
 
-When `crdt` config is provided to `initEngine()`, two additional tables are created:
+When `crdt` config is provided to `initEngine()`, two additional tables are created for collaborative editing support (see [Section 10](#10-crdt-collaborative-editing-system)):
 
 | Table | Indexes | Purpose |
 |-------|---------|---------|
@@ -306,20 +325,22 @@ The `resetDatabase()` function provides a nuclear recovery option: it closes con
 
 ---
 
+With the database ready to accept writes, the next section explains how those writes are recorded and why the format matters for efficient sync.
+
 ## 4. Intent-Based Sync Operations
 
 **Files**: `src/types.ts`, `src/queue.ts`
 
-### 4.1 Four Operation Types
+When a user makes a change, the engine doesn't just record the final state of the data. It records what the user **intended to do**. This distinction is critical for efficient sync and correct conflict resolution.
 
-Instead of recording final state, the engine records the user's **intent**:
+### 4.1 Four Operation Types
 
 | Operation | Semantics | Example |
 |-----------|-----------|---------|
 | `create` | Insert a new entity | User adds a new goal |
 | `set` | Overwrite field(s) with new value(s) | User renames a goal title |
 | `increment` | Add a numeric delta to a field | User taps "+1" on a counter |
-| `delete` | Soft-delete an entity | User removes a goal |
+| `delete` | Soft-delete an entity (mark as deleted, don't physically remove) | User removes a goal |
 
 ### 4.2 Why Intent Matters
 
@@ -334,7 +355,7 @@ With intent-preservation:
                                -->  1 Supabase UPDATE request
 ```
 
-Intent-based operations enable algebraic reduction. State snapshots cannot be reduced this way because the engine cannot determine whether the user meant to "set to 50" or "add 50 to whatever the current value is."
+**Why not just use snapshots?** Intent-based operations enable algebraic reduction (combining multiple operations into one equivalent operation). State snapshots cannot be reduced this way because the engine cannot determine whether the user meant to "set to 50" or "add 50 to whatever the current value is." By preserving the intent, the engine can safely combine operations, reducing server requests from potentially hundreds to just one.
 
 ### 4.3 SyncOperationItem Structure
 
@@ -356,6 +377,8 @@ Key design: `timestamp` is **immutable after creation**. It preserves enqueue or
 
 ### 4.4 Retry & Exponential Backoff
 
+When a sync operation fails (network error, server timeout, etc.), the engine uses exponential backoff -- each retry waits longer than the last, preventing the client from hammering a struggling server:
+
 ```
 Retry #0: Immediate (first attempt)
 Retry #1: 1 second backoff  (2^0 * 1000ms)
@@ -371,18 +394,20 @@ The `shouldRetryItem()` function checks both the retry count and the backoff win
 
 ---
 
+Before sync operations are sent to the server, they pass through the coalescing pipeline -- the engine's most important optimization for reducing network traffic.
+
 ## 5. Operation Coalescing Pipeline
 
 **File**: `src/queue.ts`
 
-The coalescing engine runs as a single-pass, in-memory algorithm before every push. It dramatically reduces the number of server requests and payload size.
+"Coalescing" means combining multiple pending operations into fewer, equivalent operations. This pipeline runs as a single-pass, in-memory algorithm before every push cycle. It dramatically reduces the number of server requests and payload size. For example, if a user makes 200 edits while offline, coalescing might reduce that to 5-10 actual server requests.
 
 ### 5.1 Performance Characteristics
 
 - **O(n) memory** where n = queue length (single fetch, in-memory processing)
 - **O(1) IndexedDB reads** regardless of queue size (one `toArray()` call)
 - **O(k) IndexedDB writes** where k = number of changed rows (bulk delete + transaction)
-- Crash-safe: all mutations are accumulated in `idsToDelete` and `itemUpdates` Sets/Maps and flushed atomically at the end. If the process crashes mid-pipeline, the queue is untouched.
+- **Crash-safe**: all mutations are accumulated in `idsToDelete` and `itemUpdates` Sets/Maps and flushed atomically at the end. If the process crashes mid-pipeline, the queue is untouched.
 
 ### 5.2 The 6-Step Pipeline in Detail
 
@@ -484,9 +509,13 @@ All deletions and updates are flushed to IndexedDB:
 
 ---
 
+With coalesced operations ready, the sync engine orchestrates the actual push and pull cycle.
+
 ## 6. Sync Cycle Orchestration
 
 **File**: `src/engine.ts`
+
+The sync engine is the central coordinator. It manages when and how data flows between the local database and Supabase. It handles push (sending local changes to the server), pull (fetching remote changes), hydration (initial data load), and various edge cases like tab visibility, network transitions, and stale locks.
 
 ### 6.1 Module State Variables
 
@@ -498,7 +527,7 @@ All deletions and updates are flushed to IndexedDB:
 | `lockAcquiredAt` | number or null | Timestamp when lock was acquired (for stale detection) |
 | `syncTimeout` | timer | Debounce timer for push-after-write (cleared on each new write) |
 | `syncInterval` | timer | Periodic background sync interval timer |
-| `recentlyModifiedEntities` | Map<string, number> | Entity ID -> timestamp map with 2s TTL, protects from pull overwrites |
+| `recentlyModifiedEntities` | Map<string, number> | Entity ID -> timestamp map with 2s TTL, protects recently-written entities from being overwritten by stale pull data |
 | `lastSuccessfulSyncTimestamp` | number | For reconnect cooldown comparison |
 | `isTabVisible` | boolean | Current tab visibility state |
 | `tabHiddenAt` | number or null | When the tab became hidden (for away-duration calculation) |
@@ -519,6 +548,8 @@ Called after auth resolves to start the sync lifecycle. Sets up:
 6. **Initial hydration** -- if local DB is empty, pull all data from Supabase
 
 ### 6.3 `runFullSync()` -- The Main Sync Cycle
+
+This is the core sync loop. It runs on a timer, after writes, on tab focus, and on reconnect:
 
 ```
 runFullSync(quiet, skipPull)
@@ -600,7 +631,7 @@ acquireSyncLock()  ------> Lock held? Check stale (>60s) -> force release or ski
 
 ### 6.4 Push Phase Details
 
-**Singleton Table Conflict Reconciliation**: When a `create` operation fails on a singleton table with a duplicate key error (another device created the singleton first), the engine reconciles the local ID with the server's existing row instead of treating it as an error. It fetches the server's row, updates the local entity's ID to match, and the create becomes an update.
+**Singleton Table Conflict Reconciliation**: A "singleton" table is one that holds exactly one row per user (e.g., user settings). When a `create` operation fails on a singleton table with a duplicate key error (another device created the singleton first), the engine reconciles the local ID with the server's existing row instead of treating it as an error. It fetches the server's row, updates the local entity's ID to match, and the create becomes an update.
 
 **Error Classification**: Errors are classified as transient (network timeout, rate-limit, 5xx) or persistent (auth failure, validation, RLS violation). Transient errors suppress UI error indicators until retry #3 to avoid alarming users during brief network hiccups.
 
@@ -621,6 +652,8 @@ The per-record application logic:
 After all records are processed, the sync cursor is advanced to the newest `updated_at` seen.
 
 ### 6.6 Mutex Lock Implementation
+
+A mutex lock prevents multiple sync cycles from running concurrently (which could cause race conditions and duplicate writes):
 
 ```
 acquireSyncLock()
@@ -661,7 +694,7 @@ getCurrentUserId()
 
 ### 6.8 Egress Optimization Strategies
 
-The engine aggressively minimizes Supabase bandwidth consumption:
+The engine aggressively minimizes Supabase bandwidth consumption. This matters because Supabase bills by egress, and mobile users have limited bandwidth:
 
 | Strategy | Savings | How It Works |
 |----------|---------|--------------|
@@ -694,7 +727,7 @@ Accessible via `getDiagnostics()` or `window.__<prefix>Diagnostics()` in the bro
 
 ### 6.10 Tombstone System
 
-The engine uses **soft deletes** with a `deleted` boolean flag instead of hard deletes. This enables multi-device sync (all devices must learn about deletions) while preventing data resurrection.
+The engine uses **soft deletes** (also called "tombstones") instead of hard deletes. When something is deleted, the row stays in the database with `deleted = true` rather than being physically removed. This is essential for multi-device sync: if a row were simply deleted, other devices would have no way to learn that the deletion happened -- they'd just see the row was missing and might think it was never synced.
 
 **Soft Delete Flow:**
 1. User deletes item -> local `item.deleted = true`, `updated_at = now()`
@@ -708,18 +741,23 @@ The engine uses **soft deletes** with a `deleted` boolean flag instead of hard d
    - UI reactively removes item from display
 
 **Tombstone Cleanup:**
+Tombstones accumulate over time and must eventually be cleaned up:
 - **Local cleanup**: `cleanupLocalTombstones()` removes records where `deleted=true AND updated_at < (now - tombstoneMaxAgeDays)`. Default: 7 days.
 - **Server cleanup**: `cleanupServerTombstones()` hard-deletes from PostgreSQL. Runs at most once per 24 hours (`CLEANUP_INTERVAL_MS = 86400000`). The `lastServerCleanup` timestamp prevents re-running.
 
 ---
 
+When the pull phase detects that both the local device and the server have modified the same data, the conflict resolution system decides which version wins.
+
 ## 7. Three-Tier Conflict Resolution
 
 **File**: `src/conflicts.ts`
 
-### 7.1 Architecture Overview
+Conflicts happen when two devices edit the same data before syncing with each other. For example, Device A changes a goal's title to "Alpha" while offline, and Device B changes the same goal's title to "Beta" on the server. When Device A comes back online, the engine must decide which title to keep.
 
-When a remote entity arrives that diverges from the local state, the engine walks through progressively finer granularity:
+**Why three tiers?** Most sync engines use a single strategy (usually "last write wins"). This works for simple cases but produces poor results when, for example, two users edit *different* fields of the same record. A three-tier approach handles the common case (different fields, no conflict) cheaply and automatically, while reserving expensive strategy-based resolution for the rare case (same field, true conflict).
+
+### 7.1 Architecture Overview
 
 ```
 Remote change arrives for entity X
@@ -760,21 +798,21 @@ Does entity X exist locally?
 ### 7.2 Tier-by-Tier Explanation
 
 **Tier 1: Non-Overlapping Entities (Auto-Merge)**
-Different entities changed on different devices never conflict. This is handled upstream by the sync pull logic before the conflict resolver is invoked. If the remote entity doesn't exist locally, it's simply inserted.
+Different entities changed on different devices never conflict. This is handled upstream by the sync pull logic before the conflict resolver is invoked. If the remote entity doesn't exist locally, it's simply inserted. This covers the vast majority of sync operations.
 
 **Tier 2: Different Fields on Same Entity (Auto-Merge)**
-When two devices edit different fields of the same entity, both changes are preserved automatically. The per-field loop inside `resolveConflicts()` only emits a `FieldConflictResolution` when the local and remote values for a given field actually differ. Fields that are equal are silently skipped -- no resolution entry is created, and both sides' values are preserved.
+When two devices edit different fields of the same entity, both changes are preserved automatically. The per-field loop inside `resolveConflicts()` only emits a `FieldConflictResolution` when the local and remote values for a given field actually differ. Fields that are equal are silently skipped -- no resolution entry is created, and both sides' values are preserved. For example, if Device A edits the title and Device B edits the description, both edits are kept with zero data loss.
 
 **Tier 3: Same Field on Same Entity (Strategy-Based)**
 When the exact same field was modified on both sides, a resolution strategy is selected based on priority order:
 
-1. **`local_pending`** (Tier 3a): The field has unsynced local operations in the sync queue. Local value wins unconditionally so user intent is never silently discarded. The pending op will be pushed on the next sync cycle. Why not merge? Because the user hasn't seen the remote value yet. Merging would produce surprising results.
+1. **`local_pending`** (Tier 3a): The field has unsynced local operations in the sync queue. Local value wins unconditionally so user intent is never silently discarded. The pending op will be pushed on the next sync cycle. **Why not merge the values?** Because the user hasn't seen the remote value yet. Merging would produce results the user never chose, which is more confusing than picking one side.
 
-2. **`numeric_merge`** (Tier 3b): Reserved for fields declared in `numericMergeFields` per table. Currently falls through to last-write-wins because true delta-merge requires storing the original base value or using an operation-inbox pattern. This is a forward-compatible hook.
+2. **`numeric_merge`** (Tier 3b): Reserved for fields declared in `numericMergeFields` per table. Currently falls through to last-write-wins because true delta-merge requires storing the original base value or using an operation-inbox pattern. This is a forward-compatible hook for future additive merge support.
 
-3. **`delete_wins`** (Tier 3, handled before per-field loop): When either side has a delete, the delete wins. This prevents entity resurrection.
+3. **`delete_wins`** (Tier 3, handled before per-field loop): When either side has a delete, the delete wins. **Why?** This prevents "entity resurrection" -- if a user deliberately deleted something, it should stay deleted even if another device edited it. Resurrecting deleted items is almost always the wrong behavior.
 
-4. **`last_write`** (Tier 3c): The default fallback. Compare `updated_at` timestamps; the later timestamp wins. On exact tie: device ID tiebreaker (lexicographically lower UUID wins).
+4. **`last_write`** (Tier 3c): The default fallback. Compare `updated_at` timestamps; the later timestamp wins. On exact tie: device ID tiebreaker (lexicographically lower UUID wins). The tiebreaker is arbitrary but **consistent** -- every device will make the same tiebreaking decision, which is essential for convergence.
 
 ### 7.3 Excluded Fields
 
@@ -815,7 +853,7 @@ After all fields are resolved:
 
 ### 7.6 Conflict History
 
-Every resolved conflict is logged to the `conflictHistory` IndexedDB table:
+Every resolved conflict is logged to the `conflictHistory` IndexedDB table for debugging and auditing:
 
 ```typescript
 interface ConflictHistoryEntry {
@@ -834,6 +872,8 @@ interface ConflictHistoryEntry {
 Each field-level decision is stored as a separate row (via `bulkAdd`) for fine-grained auditing. History is auto-cleaned after 30 days via `cleanupConflictHistory()`. Storage cost is minimal (~200-500 bytes per entry). Conflict history never leaves the device.
 
 ### 7.7 Detailed Conflict Example
+
+This walkthrough shows how a real multi-device conflict plays out end-to-end:
 
 ```
 Device A (offline for 2 hours):      Device B (online):
@@ -887,9 +927,13 @@ runFullSync()
 
 ---
 
+While the sync cycle handles periodic reconciliation, realtime subscriptions provide instant push notifications from the server for low-latency collaboration.
+
 ## 8. Realtime Subscriptions
 
 **File**: `src/realtime.ts`
+
+Realtime subscriptions use Supabase's WebSocket-based Realtime service to receive instant notifications when other devices modify data. This eliminates the latency of waiting for the next polling-based sync cycle -- changes from other users appear within milliseconds.
 
 ### 8.1 Architecture
 
@@ -915,7 +959,7 @@ runFullSync()
 
 ### 8.2 Consolidated Channel Pattern
 
-Instead of N separate channels (one per table), the engine uses a **single channel** with N event subscriptions:
+Instead of N separate channels (one per table), the engine uses a **single channel** with N event subscriptions. This reduces WebSocket overhead from N connections to 1:
 
 ```typescript
 const channelName = `${prefix}_sync_${userId}`;
@@ -933,11 +977,9 @@ for (const table of realtimeTables) {
 
 The engine subscribes to prefixed table names in PostgreSQL changes (e.g., `stellar_goals`, not `goals`), matching the actual Supabase table names.
 
-This reduces WebSocket overhead from N connections to 1.
-
 ### 8.3 Echo Suppression
 
-When device A pushes a change, Supabase broadcasts it to all subscribers, including device A itself. The realtime handler skips changes from its own device:
+When device A pushes a change, Supabase broadcasts it to all subscribers, including device A itself. Without echo suppression, the device would process its own change as if it came from another user. The realtime handler skips changes from its own device:
 
 ```typescript
 function isOwnDeviceChange(record: Record<string, unknown>): boolean {
@@ -1027,7 +1069,11 @@ A `reconnectScheduled` flag prevents duplicate reconnect attempts when both `CHA
 
 ---
 
+The sync and realtime systems require authenticated users. The next section covers how authentication works, including offline scenarios.
+
 ## 9. Authentication System
+
+The authentication system supports multiple modes to handle the full spectrum of connectivity scenarios -- from fully online with a Supabase JWT session, to completely offline with cached credentials, to demo mode with no server at all.
 
 ### 9.1 Auth Modes
 
@@ -1060,7 +1106,7 @@ Important: `authState` is an OBJECT store. Do NOT compare `$authState === 'strin
 
 **File**: `src/auth/singleUser.ts`
 
-The engine implements a single-user auth mode with a simplified PIN code or password gate. The `auth` config uses a flat format:
+The engine implements a single-user auth mode with a simplified PIN code or password gate. This is designed for personal apps where the user is the only person who accesses the account, but still needs Supabase auth for RLS enforcement.
 
 ```typescript
 auth: {
@@ -1073,7 +1119,7 @@ auth: {
 
 The PIN is padded to meet Supabase's minimum password length and used as a real Supabase password via `supabase.auth.signUp()`. This gives the same `auth.uid()` as a regular email/password user, enabling proper RLS enforcement.
 
-`padPin(gate)` appends a fixed suffix `_app` to the PIN before padding. This means the same email + same PIN produces the same Supabase password across every app sharing a Supabase project — users carry one credential set regardless of which app registered them. A `padPinLegacy(gate, prefix)` helper reproduces the old per-app-prefix format used before this change; it is used internally for transparent password migration.
+`padPin(gate)` appends a fixed suffix `_app` to the PIN before padding. This means the same email + same PIN produces the same Supabase password across every app sharing a Supabase project -- users carry one credential set regardless of which app registered them. A `padPinLegacy(gate, prefix)` helper reproduces the old per-app-prefix format used before this change; it is used internally for transparent password migration.
 
 **Setup Flow:**
 ```
@@ -1157,7 +1203,9 @@ changeSingleUserGate(oldGate, newGate)
 
 **File**: `src/auth/deviceVerification.ts`
 
-Trusted device registry stored in Supabase `trusted_devices` table.
+When a user signs in from a new device, the engine can require email-based verification before granting access. This prevents unauthorized access even if the PIN is compromised.
+
+Trusted device registry stored in Supabase `trusted_devices` table:
 
 | Column | Type | Purpose |
 |--------|------|---------|
@@ -1179,7 +1227,7 @@ Flow: Login on untrusted device -> OTP email sent via Supabase -> user enters OT
 
 **File**: `src/auth/resolveAuthState.ts`
 
-Determines the initial auth state at app startup:
+Determines the initial auth state at app startup. This runs before anything else and decides whether the user needs to log in:
 
 1. Check for demo mode -> return `authMode: 'demo'`
 2. If single-user mode configured, delegate to `resolveSingleUserAuthState()`
@@ -1201,7 +1249,7 @@ For single-user mode, the resolution determines the auth mode based on local con
 
 **File**: `src/auth/loginGuard.ts`
 
-Minimizes Supabase auth API requests by verifying credentials locally first.
+Minimizes Supabase auth API requests by verifying credentials locally first. This is especially useful for rate-limited Supabase auth endpoints and for providing instant feedback on incorrect PINs:
 
 ```
 User enters PIN/password
@@ -1242,7 +1290,7 @@ Created on successful Supabase login. Cleared on logout. The `hashValue()` funct
 
 ### 9.8 Reconnection Security
 
-When the device comes back online after offline usage:
+When the device comes back online after offline usage, the engine takes a cautious approach to prevent unauthorized data from reaching the server:
 
 1. `markOffline()` sets `wasOffline = true`, `authValidatedAfterReconnect = false`
 2. **All sync operations are blocked** until auth is re-validated
@@ -1252,11 +1300,13 @@ When the device comes back online after offline usage:
 
 ---
 
+For use cases that require finer granularity than row/field-level sync -- such as collaborative rich text editing -- the engine includes an optional CRDT subsystem.
+
 ## 10. CRDT Collaborative Editing System
 
 **Files**: `src/crdt/`
 
-An optional Yjs-based CRDT subsystem for real-time collaborative document editing. Enabled by adding `crdt: true` (shorthand for `crdt: {}`) to `initEngine()`.
+An optional Yjs-based CRDT (Conflict-free Replicated Data Type) subsystem for real-time collaborative document editing. CRDTs are data structures that can be edited independently on multiple devices and always merge to the same result, with mathematical guarantees -- no merge dialogs, no data loss. Enabled by adding `crdt: true` (shorthand for `crdt: {}`) to `initEngine()`.
 
 ### 10.1 Architecture
 
@@ -1412,10 +1462,10 @@ On channel disconnect, exponential backoff reconnection is attempted up to `maxR
 
 **File**: `src/crdt/awareness.ts`
 
-Uses Supabase Presence (on the same channel as Broadcast) for cursor and selection sync.
+Uses Supabase Presence (on the same channel as Broadcast) for cursor and selection sync -- showing where each collaborator is typing in real time.
 
 **Deterministic Color Assignment:**
-Each collaborator gets a color from a 12-color palette, assigned by hashing their userId:
+Each collaborator gets a consistent color from a 12-color palette, assigned by hashing their userId:
 
 ```typescript
 const COLLABORATOR_COLORS = [
@@ -1473,6 +1523,8 @@ Documents can be marked as "offline-enabled" to persist their full state to Inde
 
 ### 10.8 Why CRDT vs Classic Sync
 
+The engine provides two sync mechanisms because they solve fundamentally different problems:
+
 | Aspect | Classic Sync Engine | CRDT (Yjs) |
 |--------|-------------------|------------|
 | Conflict resolution | 3-tier, field-level, requires strategy configuration | Mathematically guaranteed convergence, zero merge dialogs |
@@ -1485,11 +1537,13 @@ Use the classic engine for structured entity data (goals, tasks, settings). Use 
 
 ---
 
+With sync and auth covered, the next sections describe the application-facing APIs: how apps read and write data, subscribe to changes, and handle UI animations.
+
 ## 11. Data Operations
 
 **File**: `src/data.ts`
 
-The generic CRUD layer replaces per-entity repository boilerplate with a unified, table-driven API. All operations reference tables by their Supabase name; the engine resolves to the corresponding Dexie table internally (snake_case -> camelCase via `snakeToCamel()`).
+The generic CRUD layer replaces per-entity repository boilerplate with a unified, table-driven API. Instead of writing separate create/update/delete functions for every table, apps use a single set of generic functions. All operations reference tables by their Supabase name; the engine resolves to the corresponding Dexie table internally (snake_case -> camelCase via `snakeToCamel()`).
 
 ### 11.1 Write Operations
 
@@ -1537,13 +1591,15 @@ All write operations follow the same transactional pattern:
 
 **Files**: `src/stores/`
 
+Reactive stores bridge the gap between the sync engine and the UI. They expose engine state as Svelte-compatible stores that automatically update when sync completes, remote changes arrive, or network state changes.
+
 ### 12.1 Auth State Store (`authState.ts`)
 
-Object store tracking the current authentication mode and session. See Section 9.2.
+Object store tracking the current authentication mode and session. See [Section 9.2](#92-auth-state-store).
 
 ### 12.2 Sync Status Store (`sync.ts`)
 
-Tracks sync progress for UI indicators with anti-flicker logic:
+Tracks sync progress for UI indicators (e.g., a spinning sync icon):
 
 ```typescript
 interface SyncState {
@@ -1558,7 +1614,7 @@ interface SyncState {
 }
 ```
 
-**Anti-Flicker Logic:** The store enforces a minimum 500ms display time for the `'syncing'` state. If a sync cycle completes faster than 500ms, the status change to `'idle'` is deferred until the minimum time elapses.
+**Anti-Flicker Logic:** The store enforces a minimum 500ms display time for the `'syncing'` state. If a sync cycle completes faster than 500ms, the status change to `'idle'` is deferred until the minimum time elapses. This prevents the sync indicator from rapidly flashing on and off.
 
 Setter methods: `setStatus()`, `setPendingCount()`, `setError()`, `setRealtimeState()`, `setSyncMessage()`, `addSyncError()`.
 
@@ -1593,7 +1649,7 @@ Since Supabase Realtime only sends INSERT/UPDATE/DELETE events (no semantic acti
 
 **File**: `src/stores/network.ts`
 
-Tracks online/offline state with iOS PWA workaround:
+Tracks online/offline state with a workaround for iOS PWA quirks:
 
 ```
 +----------+     'offline' event     +-----------+
@@ -1619,7 +1675,7 @@ Tracks online/offline state with iOS PWA workaround:
 +----------+
 ```
 
-**iOS PWA Special Handling:** iOS Safari does not reliably fire `online`/`offline` events in PWA standalone mode. The store listens for `visibilitychange` events as a fallback.
+**iOS PWA Special Handling:** iOS Safari does not reliably fire `online`/`offline` events in PWA standalone mode. The store listens for `visibilitychange` events as a fallback -- when the app becomes visible again, it checks the actual network state.
 
 **Sequential Callback Execution:** Reconnect callbacks are executed sequentially with async/await (not concurrently). This ensures auth validation completes before sync is triggered.
 
@@ -1643,6 +1699,8 @@ Consumer apps typically create many collection stores and detail stores. The sto
 ## 13. Svelte Actions
 
 **File**: `src/actions/remoteChange.ts`
+
+Svelte actions are reusable behaviors attached to DOM elements. These actions handle the visual feedback when remote changes arrive or local actions occur.
 
 ### 13.1 `remoteChangeAnimation`
 
@@ -1682,7 +1740,7 @@ Programmatic animation trigger for locally initiated actions (not remote). Suppo
 
 **File**: `src/demo.ts`
 
-Demo mode provides a completely isolated sandbox at the engine level.
+Demo mode provides a completely isolated sandbox at the engine level, allowing users to try the app without creating an account or connecting to a server. Every layer of the engine participates in the isolation to ensure zero risk of data contamination.
 
 ### 14.1 Database Isolation
 
@@ -1727,6 +1785,8 @@ User -> setDemoMode(true) + page reload
 
 **File**: `src/schema.ts`
 
+The schema module generates both the Supabase SQL DDL (Data Definition Language -- the SQL statements that create tables, indexes, and policies) and TypeScript interfaces from the same schema definition. This ensures the database structure and TypeScript types never drift apart.
+
 ### 15.1 `generateSupabaseSQL(schema, options)`
 
 Generates complete Supabase SQL from a declarative schema. Accepts a `prefix` option which causes all generated `CREATE TABLE` names, RLS policy names, trigger names, and index names to be prefixed with `${prefix}_`. Auto-migration SQL is also generated to rename legacy unprefixed tables (e.g., `ALTER TABLE goals RENAME TO stellar_goals`) for backward compatibility.
@@ -1742,7 +1802,7 @@ Generated output includes:
 
 ### 15.2 Column Type Inference
 
-Types are inferred from field naming conventions:
+Types are inferred from field naming conventions, so you rarely need to specify SQL types explicitly:
 
 | Pattern | Inferred SQL Type | Example |
 |---------|-------------------|---------|
@@ -1772,6 +1832,8 @@ Generates TypeScript interfaces from schema field definitions. Each table gets a
 ## 16. Diagnostics
 
 **File**: `src/diagnostics.ts`
+
+The diagnostics system provides full observability into the engine's internal state. This is invaluable for debugging sync issues, understanding egress costs, and monitoring conflict resolution in production.
 
 ### 16.1 `getDiagnostics()`
 
@@ -1823,7 +1885,7 @@ Returns a comprehensive `DiagnosticsSnapshot` -- a single JSON-serializable obje
 
 ### 16.2 Sub-Category Functions
 
-Lightweight access to specific sections:
+Lightweight access to specific sections without fetching the full snapshot:
 
 | Function | Async | Returns |
 |----------|-------|---------|
@@ -1853,7 +1915,7 @@ Available in debug mode via the browser console (toggle: `localStorage.setItem('
 
 **File**: `src/debug.ts`
 
-All log messages use structured prefixes for filtering:
+All log messages use structured prefixes for filtering in the browser console:
 
 | Prefix | Source | Examples |
 |--------|--------|---------|
@@ -1875,6 +1937,8 @@ When debug mode is disabled, all `debugLog()`, `debugWarn()`, and `debugError()`
 
 **Files**: `src/kit/`
 
+While the core engine is framework-agnostic, these modules provide first-class SvelteKit integration for common patterns like layout load functions, server-side config, email confirmation, and service worker management.
+
 ### 17.1 Load Function Helpers (`kit/loads.ts`)
 
 **`resolveRootLayout()`**: Full app initialization sequence for the root `+layout.ts`:
@@ -1894,9 +1958,9 @@ When debug mode is disabled, all `debugLog()`, `debugWarn()`, and `debugError()`
 
 **`getServerConfig()`**: Returns runtime Supabase config for client hydration. Reads from environment variables.
 
-**`createServerSupabaseClient(prefix?)`**: Creates a server-side Supabase client from environment variables. When a `prefix` is provided (e.g. `'switchboard'`), returns a Proxy that transparently prefixes all `.from()` calls — `.from('users')` becomes `.from('switchboard_users')`. This matches the client-side auto-prefixing done by `resolveSupabaseName()` in `config.ts`.
+**`createServerSupabaseClient(prefix?)`**: Creates a server-side Supabase client from environment variables. When a `prefix` is provided (e.g. `'switchboard'`), returns a Proxy that transparently prefixes all `.from()` calls -- `.from('users')` becomes `.from('switchboard_users')`. This matches the client-side auto-prefixing done by `resolveSupabaseName()` in `config.ts`.
 
-**`deployToVercel(config)`**: Deploys environment variables to a Vercel project. Used by the `/setup` wizard. Accepts an optional `prefix` field in `DeployConfig` — when set, also writes `PUBLIC_APP_PREFIX` to Vercel env vars.
+**`deployToVercel(config)`**: Deploys environment variables to a Vercel project. Used by the `/setup` wizard. Accepts an optional `prefix` field in `DeployConfig` -- when set, also writes `PUBLIC_APP_PREFIX` to Vercel env vars.
 
 **`createValidateHandler()`**: Creates a request handler that validates Supabase credentials and schema against the database.
 
@@ -1933,16 +1997,18 @@ All functions include SSR guards (`typeof navigator === 'undefined'`) for univer
 
 **File**: `src/bin/commands.ts`
 
+The CLI provides a scaffolding command that generates a complete SvelteKit project pre-wired for stellar-drive.
+
 ### 18.1 `stellar-drive install pwa`
 
-Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkthrough.
+Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkthrough:
 
 ```
 +--------------------------------------------------------------------+
 |                    INSTALL PWA SCAFFOLDER                           |
 |                                                                    |
 |  1. Interactive prompts: name, shortName, prefix, description       |
-|  2. Write package.json with stellar-drive dep          |
+|  2. Write package.json with stellar-drive dep                       |
 |  3. npm install                                                    |
 |  4. Generate 34+ template files (grouped with animated progress)   |
 |  5. npx husky init + pre-commit hook                               |
@@ -2000,7 +2066,7 @@ The scaffolded project is fully wired for the schema auto-generation workflow:
 
 **File**: `src/sw/build/vite-plugin.ts`
 
-The `stellarPWA` Vite plugin handles service worker builds, asset manifest generation, and (when `schema` is enabled) automatic TypeScript type generation and Supabase migration pushing.
+The `stellarPWA` Vite plugin handles service worker builds, asset manifest generation, and (when `schema` is enabled) automatic TypeScript type generation and Supabase migration pushing. This creates a "save schema file -> types + database update automatically" developer experience.
 
 ### 19.1 Schema Processing Flow
 
@@ -2008,26 +2074,26 @@ The `stellarPWA` Vite plugin handles service worker builds, asset manifest gener
 Schema file changes (src/lib/schema.ts)
   |
   v
-[Load schema] ── dev: ssrLoadModule()
-  |               build: esbuild → dynamic import
+[Load schema] -- dev: ssrLoadModule()
+  |               build: esbuild -> dynamic import
   v
-[Generate TypeScript] ── generateTypeScript(schema) → src/lib/types.generated.ts
+[Generate TypeScript] -- generateTypeScript(schema) -> src/lib/types.generated.ts
   |
   v
-[Load snapshot] ── .stellar/schema-snapshot.json
+[Load snapshot] -- .stellar/schema-snapshot.json
   |
-  +── No snapshot (first run):
-  |     generateSupabaseSQL(schema) → full CREATE TABLE DDL
+  +-- No snapshot (first run):
+  |     generateSupabaseSQL(schema) -> full CREATE TABLE DDL
   |
-  +── Snapshot exists:
+  +-- Snapshot exists:
         diff JSON.stringify(old) vs JSON.stringify(new)
-        if different: generateMigrationSQL(old, new) → ALTER TABLE deltas
+        if different: generateMigrationSQL(old, new) -> ALTER TABLE deltas
   |
   v
-[Push migration SQL] ── direct Postgres connection via DATABASE_URL
+[Push migration SQL] -- direct Postgres connection via DATABASE_URL
   |                      uses `postgres` npm package
   v
-[Save snapshot] ── .stellar/schema-snapshot.json (only on success)
+[Save snapshot] -- .stellar/schema-snapshot.json (only on success)
 ```
 
 ### 19.2 Dev vs Build Behavior
@@ -2063,7 +2129,7 @@ Migrations are pushed via a **direct Postgres connection** using the `DATABASE_U
 
 - **Additive operations** (new tables, new columns) are applied automatically.
 - **Destructive operations** (DROP TABLE, DROP COLUMN) are generated as **comments**, requiring manual review and execution.
-- **Type changes** (e.g., `text` → `integer`) are not detected and require manual migration.
+- **Type changes** (e.g., `text` -> `integer`) are not detected and require manual migration.
 - **Renames** (via `renamedFrom` and `renamedColumns`) produce proper `ALTER TABLE ... RENAME` statements.
 
 ### 19.6 Generated Files
@@ -2078,6 +2144,8 @@ Migrations are pushed via a **direct Postgres connection** using the `DATABASE_U
 ---
 
 ## 20. File Map
+
+This is a complete reference of every source file and its purpose. Use it to quickly locate the code for any concept discussed above.
 
 | Layer | File | Purpose |
 |-------|------|---------|

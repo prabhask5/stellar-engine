@@ -1,29 +1,47 @@
-# stellar-drive -- Frameworks & Libraries
+# stellar-drive -- Frameworks & Libraries Guide
 
-The `stellar-drive` package is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database and a remote Supabase PostgreSQL backend, using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
+## Introduction
 
-This document explains each underlying technology from scratch, assuming no prior knowledge, and then describes how stellar-drive uses it.
+This document is a comprehensive guide to every underlying technology that `stellar-drive` depends on. It is written for **developers and AI coding assistants who may be encountering these technologies for the first time**. Each section follows the same structure: we explain what the technology is, why stellar-drive chose it, how stellar-drive uses it in practice, and the key concepts you need to understand to work with the codebase effectively.
+
+**What is stellar-drive?** It is an offline-first, local-first sync engine for web applications. It handles bidirectional synchronization between a local IndexedDB database (in the browser) and a remote Supabase PostgreSQL backend (on the server), using intent-based operations, operation coalescing, and three-tier conflict resolution. The engine is designed to be consumed by any frontend application; Svelte integration is provided as an optional peer dependency.
+
+---
+
+## Prerequisites
+
+This guide assumes you have:
+
+- **Basic JavaScript/TypeScript knowledge** -- variables, functions, `async`/`await`, promises, objects, and arrays.
+- **General web development familiarity** -- you know what a browser is, what HTML/CSS does, and roughly what a server does.
+- **No prior knowledge required** of IndexedDB, Dexie.js, Supabase, Svelte, SvelteKit, or Yjs. Each section starts from scratch.
+
+If you are an AI coding assistant, this document provides the context you need to understand why code is structured the way it is, what trade-offs were made, and how the pieces fit together.
 
 ---
 
 ## Table of Contents
 
-1. [IndexedDB (Browser Database)](#1-indexeddb-browser-database)
-2. [Dexie.js (IndexedDB Wrapper)](#2-dexiejs-indexeddb-wrapper)
-3. [Supabase (Backend-as-a-Service)](#3-supabase-backend-as-a-service)
-4. [Svelte (UI Framework)](#4-svelte-ui-framework)
-5. [SvelteKit (Application Framework)](#5-sveltekit-application-framework)
-6. [Yjs (CRDT Library)](#6-yjs-crdt-library)
+1. [IndexedDB (Browser Database)](#1-indexeddb-browser-database) -- The local database that lives inside every browser
+2. [Dexie.js (IndexedDB Wrapper)](#2-dexiejs-indexeddb-wrapper) -- A clean API layer on top of IndexedDB
+3. [Supabase (Backend-as-a-Service)](#3-supabase-backend-as-a-service) -- The remote server, database, auth, and real-time infrastructure
+4. [Svelte (UI Framework)](#4-svelte-ui-framework) -- The compiler-based UI framework for building interfaces
+5. [SvelteKit (Application Framework)](#5-sveltekit-application-framework) -- The full-stack framework that adds routing, SSR, and deployment
+6. [Yjs (CRDT Library)](#6-yjs-crdt-library) -- Real-time collaborative editing without conflicts
 
 ---
 
 ## 1. IndexedDB (Browser Database)
 
-### What is IndexedDB?
+### What Is It?
 
 IndexedDB is a full NoSQL database built into every modern web browser. When you open Chrome, Firefox, Safari, or Edge, there is already a complete database engine running inside it -- you do not need to install anything. Every website or web application can create its own database that lives on the user's device, completely separate from the server.
 
 Think of it like having a local SQLite database, but inside the browser.
+
+### Why Does stellar-drive Use It?
+
+stellar-drive is an **offline-first** engine. That means the app must work without an internet connection. To achieve this, all data the user interacts with must be stored locally on their device. IndexedDB is the only browser-native database with enough storage capacity (potentially gigabytes), structured querying, and transactional guarantees to serve as a real application database.
 
 ### How IndexedDB Differs from localStorage
 
@@ -38,7 +56,7 @@ You may have heard of `localStorage`, which is a simpler key-value store in the 
 | Async/Sync | Synchronous (blocks the page) | Asynchronous (non-blocking) |
 | Structured data | Must JSON.stringify everything | Stores objects natively |
 
-### Key Concepts
+### Key Concepts You Need to Know
 
 **Object Stores** are like tables in a SQL database. Each object store holds a collection of records. For example, you might have a `tasks` object store that holds all your task records, and a `projects` object store that holds all your projects. You define object stores when you create the database.
 
@@ -78,7 +96,7 @@ IndexedDB data persists across browser restarts, system reboots, and updates. It
 1. The user manually clears browser data (Settings > Clear Browsing Data).
 2. The browser evicts data under extreme storage pressure (very low disk space). Browsers use a "best-effort" policy for storage and may evict the least-recently-used site's data. You can prevent this by requesting **persistent storage** via the Storage API (`navigator.storage.persist()`), which tells the browser to keep this site's data even under pressure.
 
-### Why Dexie.js is Needed (Raw IndexedDB Example)
+### Why the Raw API is Impractical (and Why Dexie.js is Needed)
 
 Here is what it looks like to add a single record using the raw IndexedDB API:
 
@@ -135,17 +153,19 @@ That is over 30 lines of nested callbacks just to add one record. Querying, upda
 - **Five internal system tables** live in IndexedDB alongside app data: `syncQueue` (pending outbound operations), `conflictHistory` (field-level conflict resolution records), `offlineCredentials` (cached user credentials for offline sign-in), `offlineSession` (offline session tokens), and `singleUserConfig` (single-user gate configuration).
 - **Recovery via delete-and-rebuild.** If the IndexedDB database is corrupted or has mismatched object stores (e.g., from a stale service worker), the engine deletes the entire database and recreates it from scratch. Data is rehydrated from Supabase on the next sync cycle.
 
+> **Section Summary:** IndexedDB is the browser-native database that makes offline-first apps possible. It provides gigabytes of structured, transactional storage directly on the user's device. stellar-drive uses it as the single source of truth for all UI reads and as the first destination for all writes, with a sync queue ensuring changes eventually reach the server.
+
 ---
 
 ## 2. Dexie.js (IndexedDB Wrapper)
 
-### What is Dexie.js?
+### What Is It?
 
 Dexie.js is a minimalist, Promise-based wrapper around IndexedDB. It takes the verbose, callback-heavy raw IndexedDB API and replaces it with a clean, modern API that supports `async`/`await`, method chaining, and intuitive query syntax. The name "Dexie" is short for "IndexedDB" (inDeXiEdb).
 
-### Why Dexie Exists
+### Why Does stellar-drive Use It?
 
-As shown in the IndexedDB section above, the raw API requires deeply nested callbacks, manual transaction management, and verbose event handling. Dexie solves all of this:
+As shown in the IndexedDB section above, the raw API requires deeply nested callbacks, manual transaction management, and verbose event handling. stellar-drive performs hundreds of IndexedDB operations across sync cycles, conflict resolution, and CRUD operations. Using the raw API would make the codebase fragile and hard to maintain. Dexie reduces the surface area dramatically:
 
 ```javascript
 // Raw IndexedDB: ~35 lines of nested callbacks
@@ -153,7 +173,7 @@ As shown in the IndexedDB section above, the raw API requires deeply nested call
 await db.tasks.add({ id: 'task-1', name: 'Buy groceries', completed: false });
 ```
 
-### Key Concepts
+### Key Concepts You Need to Know
 
 #### Database Creation
 
@@ -252,6 +272,8 @@ await db.transaction('rw', [db.tasks, db.syncQueue], async () => {
 
 The `'rw'` means read-write mode. The array `[db.tasks, db.syncQueue]` lists which tables the transaction touches. If any operation inside the callback throws an error, the entire transaction is automatically rolled back.
 
+> **Why this matters for stellar-drive:** Every local write is paired with a sync queue entry inside a single transaction. This guarantees that if data is written locally, a corresponding sync operation is always queued -- and if either fails, neither is persisted, preventing orphaned data or missing sync entries.
+
 #### Table References
 
 You can access tables in two ways:
@@ -300,6 +322,8 @@ Dexie handles the migration automatically when the database is opened. Each vers
 - **Auto-creates and manages the Dexie instance** via `initEngine()`. Consumer apps do not need to create their own Dexie database; the engine creates it based on the provided schema configuration:
 
 ```typescript
+// This is what a consumer app passes to initEngine().
+// The engine creates and manages the Dexie database internally.
 initEngine({
   prefix: 'myapp',
   schema: {
@@ -317,15 +341,29 @@ initEngine({
 - **Snake-to-camel table name conversion.** Supabase table names are snake_case (`goal_lists`), but Dexie table names are auto-converted to camelCase (`goalLists`) for JavaScript-idiomatic access.
 - **Table names are unprefixed.** Dexie table names are derived from the raw schema keys (e.g., `tasks`), not the prefixed Supabase names (e.g., `myapp_tasks`). IndexedDB is already namespaced by the database name `${prefix}DB`, so no table-level prefixing is needed.
 
+> **Section Summary:** Dexie.js replaces the verbose, callback-heavy raw IndexedDB API with a clean, Promise-based interface. stellar-drive uses Dexie as its sole interface to IndexedDB -- managing schema creation, version upgrades, transactional writes (always pairing data writes with sync queue entries), and query execution. Consumer apps never interact with Dexie directly; the engine handles all database operations internally.
+
 ---
 
 ## 3. Supabase (Backend-as-a-Service)
 
-### What is Supabase?
+### What Is It?
 
 Supabase is an open-source alternative to Firebase. It provides a complete backend for your application -- database, authentication, real-time subscriptions, file storage, and auto-generated APIs -- all built on top of PostgreSQL, the world's most advanced open-source relational database.
 
 Instead of building your own server, writing your own authentication system, designing your own API, and managing your own database, you can point your frontend directly at Supabase and get all of these out of the box. Supabase is self-hostable, meaning you can run it on your own server instead of using their hosted service.
+
+### Why Does stellar-drive Use It?
+
+stellar-drive needs a remote backend to sync data across devices, authenticate users, and push real-time updates. Supabase provides all of these as a single cohesive platform:
+
+- **PostgreSQL** for durable, relational storage of synced data
+- **Auth** for user identity, session management, and JWT tokens
+- **Realtime** for instant cross-device sync via WebSockets
+- **Row Level Security** for server-enforced per-user data isolation
+- **Auto-generated REST API** so the engine never needs custom server code
+
+This means stellar-drive can provide a complete sync solution without requiring consumers to build or maintain any backend infrastructure.
 
 ### Key Services
 
@@ -496,13 +534,19 @@ supabase
 - **RLS policies enforce per-user data access.** Every table uses `user_id = auth.uid()` policies so users can only access their own data, enforced at the database level. The engine auto-generates these policies via `generateSupabaseSQL()`.
 - **SQL generation from schema.** The engine can generate complete Supabase SQL (CREATE TABLE, RLS policies, triggers, indexes, realtime publication) from the same declarative schema passed to `initEngine()`, so the schema in code is the single source of truth for both IndexedDB and PostgreSQL.
 
+> **Section Summary:** Supabase is the remote backend that stellar-drive syncs with. It provides the PostgreSQL database for durable storage, authentication for user identity, Realtime for instant cross-device updates and CRDT broadcasting, Row Level Security for server-enforced data isolation, and an auto-generated REST API that eliminates the need for custom server code. The engine abstracts all Supabase interactions behind its own API, so consumer apps never call Supabase directly.
+
 ---
 
 ## 4. Svelte (UI Framework)
 
-### What is Svelte?
+### What Is It?
 
 Svelte is a UI framework for building web applications. If you have used React or Vue, Svelte fills the same role -- it lets you build interactive user interfaces with components, reactive state, and declarative templates. But Svelte has one fundamental difference: **it is a compiler, not a runtime**.
+
+### Why Does stellar-drive Use It?
+
+stellar-drive's core sync engine is framework-agnostic TypeScript. However, the apps that consume stellar-drive (Stellar and Infinite) are built with Svelte 5, so the engine provides optional Svelte-specific integrations: reactive stores that implement the Svelte store contract, `use:` actions for DOM behavior, and CSS custom property theming. Because Svelte is an optional peer dependency, non-Svelte consumers can use the engine without pulling in any Svelte code.
 
 ### The Compiler Difference
 
@@ -514,11 +558,11 @@ Think of it this way:
 - **React/Vue**: ships a general-purpose engine to the browser, which interprets your components at runtime
 - **Svelte**: compiles your components into specialized code at build time, so only the exact DOM operations needed are shipped to the browser
 
-### Svelte 5 (Current Version, Used by stellar-drive)
+### Key Concepts You Need to Know
 
-Svelte 5 introduced a new reactivity system called **Runes**. Runes are special functions (prefixed with `$`) that tell the Svelte compiler how to handle reactivity.
+#### Svelte 5 Runes (Reactivity System)
 
-#### Runes (Reactivity System)
+Svelte 5 (the current version used by stellar-drive) introduced a new reactivity system called **Runes**. Runes are special functions (prefixed with `$`) that tell the Svelte compiler how to handle reactivity.
 
 **`$state()`** declares reactive state. When this value changes, anything that depends on it automatically updates:
 
@@ -679,11 +723,13 @@ When the component is created, Svelte calls `syncStatusStore.subscribe(callback)
 - **CSS custom properties for theming.** Components use CSS custom properties (variables like `--sync-color`) that consumer apps can override to match their design.
 - **Svelte is an OPTIONAL peer dependency.** The core engine (sync, queue, conflicts, realtime, auth, config) is framework-agnostic TypeScript. If a consumer app does not use Svelte, the stores and actions are simply not imported and are tree-shaken away by the bundler.
 
+> **Section Summary:** Svelte is a compiler-based UI framework that generates optimized DOM operations at build time instead of shipping a runtime library. stellar-drive provides optional Svelte integrations -- reactive stores, DOM actions, and CSS custom property theming -- that make it easy to build UIs on top of the sync engine. The core engine itself is framework-agnostic and works without Svelte.
+
 ---
 
 ## 5. SvelteKit (Application Framework)
 
-### What is SvelteKit?
+### What Is It?
 
 SvelteKit is a full-stack application framework built on top of Svelte, in the same way that Next.js is built on top of React. While Svelte handles individual UI components, SvelteKit handles everything else you need to build a complete web application:
 
@@ -695,7 +741,11 @@ SvelteKit is a full-stack application framework built on top of Svelte, in the s
 
 Without SvelteKit, you would need to manually configure a router, a bundler, a dev server, server-side rendering, and deployment. SvelteKit handles all of this with sensible defaults and minimal configuration.
 
-### Key Concepts
+### Why Does stellar-drive Use It?
+
+The consumer apps (Stellar and Infinite) are SvelteKit applications. stellar-drive provides optional SvelteKit-specific integrations through its `stellar-drive/kit` subpath export -- factory functions that generate load functions, server API handlers, and auth hydration utilities. These save each consumer app from reimplementing the same initialization, configuration fetching, and auth-guarding logic.
+
+### Key Concepts You Need to Know
 
 #### File-Based Routing
 
@@ -848,13 +898,21 @@ SvelteKit integration is provided through the `stellar-drive/kit` subpath export
 - **Service worker lifecycle.** `pollForNewServiceWorker()` and `monitorSwLifecycle()` manage PWA service worker updates, prompting users when a new version is available.
 - **Project scaffolding.** The CLI command `stellar-drive install pwa` generates a complete SvelteKit project structure with routes, layouts, service worker, manifest, and configuration files.
 
+> **Section Summary:** SvelteKit is the full-stack framework that provides routing, server-side rendering, API endpoints, and deployment for Svelte applications. stellar-drive offers optional SvelteKit integrations through `stellar-drive/kit` -- factory functions for layout load functions, server API handlers, auth hydration, and service worker management -- so consumer apps can wire up the engine with minimal boilerplate.
+
 ---
 
 ## 6. Yjs (CRDT Library)
 
-### What is Yjs?
+### What Is It?
 
 Yjs is a high-performance implementation of CRDTs (Conflict-free Replicated Data Types) in JavaScript. It enables real-time collaborative editing -- the kind of experience you see in Google Docs, where multiple users can edit the same document simultaneously and all changes merge together automatically.
+
+### Why Does stellar-drive Use It?
+
+The engine's regular sync system (push/pull with conflict resolution) handles structured records -- rows in a table with fields like `title`, `completed`, `order`. When two devices change the same field on the same record, the engine uses last-write-wins or additive merge to resolve the conflict. This works well for discrete values but **breaks down for text** -- you cannot meaningfully "last-write-wins" two people typing in the same paragraph.
+
+Yjs solves the text problem by tracking every individual character insertion and deletion as a separate, ordered operation. This is why the engine uses **both** systems: structured records go through the push/pull sync queue, and rich text content goes through Yjs.
 
 ### What are CRDTs?
 
@@ -866,7 +924,7 @@ CRDTs are data structures mathematically designed so that **any two copies can a
 
 The key insight is that each operation in a CRDT carries enough metadata (who made it, when, and where in the document) to be placed unambiguously, no matter what other operations have been applied. This is achieved through a structure where each character (or element) has a globally unique ID and a reference to its left neighbor at the time of insertion.
 
-### Why CRDTs Matter
+### Why CRDTs Over Other Approaches
 
 Without CRDTs, collaborative editing requires a central server that serializes all operations (like Operational Transformation, used by the original Google Docs). That approach:
 - Requires a persistent server connection
@@ -875,13 +933,9 @@ Without CRDTs, collaborative editing requires a central server that serializes a
 
 CRDTs eliminate these problems. Each client has a complete local copy, can edit freely offline, and merges are always automatic and correct. This aligns perfectly with an offline-first architecture.
 
-### How CRDTs Differ from the Engine's Regular Sync
+### Key Concepts You Need to Know
 
-The engine's regular sync system (push/pull with conflict resolution) handles structured records -- rows in a table with fields like `title`, `completed`, `order`. When two devices change the same field on the same record, the engine uses last-write-wins or additive merge to resolve the conflict. This works well for discrete values but breaks down for text -- you cannot meaningfully "last-write-wins" two people typing in the same paragraph.
-
-CRDTs solve the text problem by tracking every individual character insertion and deletion as a separate, ordered operation. This is why the engine uses both systems: structured records go through the push/pull sync queue, and rich text content goes through Yjs.
-
-### Key Shared Types in Yjs
+#### Shared Types in Yjs
 
 Yjs provides several collaborative data types that mirror common JavaScript data structures:
 
@@ -923,7 +977,7 @@ const yfragment = ydoc.getXmlFragment('editor-content');
 // Typically manipulated by editor bindings, not directly
 ```
 
-### How Sync Works in Yjs
+#### How Sync Works in Yjs
 
 Each Yjs document (`Y.Doc`) tracks all changes as operations. Every operation is uniquely identified by a `(clientId, clock)` tuple:
 
@@ -943,6 +997,7 @@ This means every character typed, every deletion, every formatting change has a 
 The engine's CRDT subsystem is optional (enabled by passing `crdt: true` or `crdt: {}` to `initEngine()`) and used for rich collaborative content like text documents or structured editors:
 
 ```typescript
+// Enabling CRDT support in the engine configuration
 initEngine({
   prefix: 'myapp',
   schema: {
@@ -959,3 +1014,5 @@ initEngine({
 - **Two IndexedDB tables for local persistence.** `crdtDocuments` stores the full Yjs document state (for offline access and cross-session recovery). `crdtPendingUpdates` stores incremental update deltas for crash safety -- if the browser crashes between full saves, these deltas are replayed on next load.
 - **Periodic full-state persistence to Supabase.** The complete document state is saved to the `crdt_documents` Supabase table at regular intervals. This serves as a durable backup and allows new devices to load the latest state without replaying all historical operations.
 - **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the `stellar-drive/crdt` subpath export, keeping the dependency tree clean.
+
+> **Section Summary:** Yjs is a CRDT library that enables conflict-free collaborative editing for rich text and structured content. stellar-drive uses it as a complement to its regular record-based sync -- structured data goes through the push/pull queue, while collaborative text goes through Yjs. Updates are broadcast in real time via Supabase Realtime, persisted locally in IndexedDB for offline access, and periodically saved to Supabase for durability. The CRDT subsystem is optional and only activated when `crdt: true` is passed to `initEngine()`.

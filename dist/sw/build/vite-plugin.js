@@ -244,7 +244,10 @@ async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectR
                 const custom = readFileSync(absPath, 'utf-8').trim();
                 if (custom) {
                     fullSQL += `\n\n-- Custom SQL: ${sqlPath}\n${custom}\n`;
-                    console.log(`[stellar-drive] Appended custom SQL: ${sqlPath}`);
+                    console.log(`[stellar-drive] Appended custom SQL: ${sqlPath} (${custom.length} chars, first line: "${custom
+                        .split('\n')
+                        .find((l) => l.trim() && !l.trim().startsWith('--'))
+                        ?.trim() || ''}")`);
                 }
             }
             else {
@@ -313,6 +316,8 @@ async function pushSchema(sql, opts, root) {
     };
     const sql_client = postgres(databaseUrl, { max: 1, idle_timeout: 5, onnotice });
     try {
+        const stmtCount = sql.split(';').filter((s) => s.trim()).length;
+        console.log(`[stellar-drive] Pushing schema (${stmtCount} statements, ${sql.length} chars)...`);
         await sql_client.unsafe(sql);
         console.log('[stellar-drive] \u2705 Schema pushed successfully');
         return true;

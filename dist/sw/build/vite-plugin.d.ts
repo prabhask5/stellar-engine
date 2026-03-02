@@ -80,6 +80,20 @@ export interface SchemaConfig {
      * @default false
      */
     includeCRDT?: boolean;
+    /**
+     * Path(s) to custom `.sql` files that are appended to the generated schema
+     * SQL and executed on every build alongside it. Useful for app-specific RPC
+     * functions, views, or triggers that stellar-drive doesn't generate.
+     *
+     * Paths are resolved relative to the project root. The SQL should be
+     * idempotent (`CREATE OR REPLACE`, `IF NOT EXISTS`, etc.) since it runs
+     * on every build.
+     *
+     * @example
+     * schema: { customSQL: 'src/lib/custom.sql' }
+     * schema: { customSQL: ['src/lib/rpc.sql', 'src/lib/views.sql'] }
+     */
+    customSQL?: string | string[];
 }
 /**
  * Configuration options for the stellarPWA Vite plugin.

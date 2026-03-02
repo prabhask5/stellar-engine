@@ -4048,6 +4048,7 @@ interface SchemaConfig {
   typesOutput?: string;    // Default: 'src/lib/types.generated.ts'
   autoMigrate?: boolean;   // Default: true (requires DATABASE_URL in .env)
   includeCRDT?: boolean;   // Default: false
+  customSQL?: string | string[];  // Paths to custom SQL files
 }
 ```
 
@@ -4099,6 +4100,22 @@ stellarPWA({ prefix: 'myapp', name: 'My App' })
 ```ts
 stellarPWA({ prefix: 'myapp', name: 'My App', schema: true })
 ```
+
+**With custom SQL files:**
+```ts
+stellarPWA({
+  prefix: 'myapp',
+  name: 'My App',
+  schema: { customSQL: 'src/lib/custom.sql' }
+})
+
+// Multiple files:
+schema: { customSQL: ['src/lib/rpc.sql', 'src/lib/views.sql'] }
+```
+
+Custom SQL files are appended to the auto-generated schema SQL and executed on every build via the same Postgres connection. Paths are resolved relative to the project root.
+
+> **Warning:** Custom SQL is executed on **every build** (dev and production). All statements **must be idempotent** — use `CREATE OR REPLACE FUNCTION`, `CREATE TABLE IF NOT EXISTS`, `DO $$ ... END $$` guards, etc. Non-idempotent statements (e.g., bare `INSERT`, `CREATE FUNCTION` without `OR REPLACE`) will fail or produce duplicates on repeated builds.
 
 ---
 

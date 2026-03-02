@@ -101,7 +101,26 @@ export interface SchemaConfig {
    * @default false
    */
   includeCRDT?: boolean;
+
+  /**
+   * Path(s) to custom `.sql` files that are appended to the generated schema
+   * SQL and executed on every build alongside it. Useful for app-specific RPC
+   * functions, views, or triggers that stellar-drive doesn't generate.
+   *
+   * Paths are resolved relative to the project root. The SQL should be
+   * idempotent (`CREATE OR REPLACE`, `IF NOT EXISTS`, etc.) since it runs
+   * on every build.
+   *
+   * @example
+   * schema: { customSQL: 'src/lib/custom.sql' }
+   * schema: { customSQL: ['src/lib/rpc.sql', 'src/lib/views.sql'] }
+   */
+  customSQL?: string | string[];
 }
+
+/** Resolved schema config with all defaults applied. */
+type ResolvedSchemaConfig = Required<Omit<SchemaConfig, 'customSQL'>> &
+  Pick<SchemaConfig, 'customSQL'>;
 
 /**
  * Configuration options for the stellarPWA Vite plugin.
@@ -220,20 +239,22 @@ function findSwSource(): string {
  * @param schema - The raw schema config from {@link SWConfig}.
  * @returns A fully-resolved schema options object.
  */
-function resolveSchemaOpts(schema: boolean | SchemaConfig): Required<SchemaConfig> {
+function resolveSchemaOpts(schema: boolean | SchemaConfig): ResolvedSchemaConfig {
   if (typeof schema === 'object') {
     return {
       path: schema.path || 'src/lib/schema.ts',
       typesOutput: schema.typesOutput || 'src/lib/types.generated.ts',
       autoMigrate: schema.autoMigrate !== false,
-      includeCRDT: schema.includeCRDT === true
+      includeCRDT: schema.includeCRDT === true,
+      customSQL: schema.customSQL
     };
   }
   return {
     path: 'src/lib/schema.ts',
     typesOutput: 'src/lib/types.generated.ts',
     autoMigrate: true,
-    includeCRDT: false
+    includeCRDT: false,
+    customSQL: undefined
   };
 }
 
@@ -289,7 +310,7 @@ async function processLoadedSchema(
   schema: Record<string, unknown>,
   appName: string,
   prefix: string,
-  schemaOpts: Required<SchemaConfig>,
+  schemaOpts: ResolvedSchemaConfig,
   projectRoot: string
 ): Promise<void> {
   const typesAbsPath = resolve(schemaOpts.typesOutput);
@@ -344,12 +365,33 @@ async function processLoadedSchema(
   }
 
   console.log(`[stellar-drive] Syncing ${tableNames.length} tables: ${tableNames.join(', ')}`);
-  const fullSQL = generateSupabaseSQL(schema as import('../../types').SchemaDefinition, {
+  let fullSQL = generateSupabaseSQL(schema as import('../../types').SchemaDefinition, {
     appName,
     prefix,
     includeHelperFunctions: true,
     includeCRDT: schemaOpts.includeCRDT
   });
+
+  /* 3. Append custom SQL files (app-specific RPC functions, views, etc.). */
+  if (schemaOpts.customSQL) {
+    const sqlPaths = Array.isArray(schemaOpts.customSQL)
+      ? schemaOpts.customSQL
+      : [schemaOpts.customSQL];
+
+    for (const sqlPath of sqlPaths) {
+      const absPath = resolve(projectRoot, sqlPath);
+      if (existsSync(absPath)) {
+        const custom = readFileSync(absPath, 'utf-8').trim();
+        if (custom) {
+          fullSQL += `\n\n-- Custom SQL: ${sqlPath}\n${custom}\n`;
+          console.log(`[stellar-drive] Appended custom SQL: ${sqlPath}`);
+        }
+      } else {
+        console.warn(`[stellar-drive] Custom SQL file not found: ${sqlPath}`);
+      }
+    }
+  }
+
   await pushSchema(fullSQL, schemaOpts, projectRoot);
 }
 
@@ -366,11 +408,7 @@ async function processLoadedSchema(
  * @param root - The project root directory.
  * @returns `true` if the push succeeded, `false` otherwise.
  */
-async function pushSchema(
-  sql: string,
-  opts: Required<SchemaConfig>,
-  root: string
-): Promise<boolean> {
+async function pushSchema(sql: string, opts: ResolvedSchemaConfig, root: string): Promise<boolean> {
   let databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     for (const envFile of ['.env.local', '.env']) {

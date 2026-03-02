@@ -124,14 +124,16 @@ function resolveSchemaOpts(schema) {
             path: schema.path || 'src/lib/schema.ts',
             typesOutput: schema.typesOutput || 'src/lib/types.generated.ts',
             autoMigrate: schema.autoMigrate !== false,
-            includeCRDT: schema.includeCRDT === true
+            includeCRDT: schema.includeCRDT === true,
+            customSQL: schema.customSQL
         };
     }
     return {
         path: 'src/lib/schema.ts',
         typesOutput: 'src/lib/types.generated.ts',
         autoMigrate: true,
-        includeCRDT: false
+        includeCRDT: false,
+        customSQL: undefined
     };
 }
 /**
@@ -225,12 +227,31 @@ async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectR
         return;
     }
     console.log(`[stellar-drive] Syncing ${tableNames.length} tables: ${tableNames.join(', ')}`);
-    const fullSQL = generateSupabaseSQL(schema, {
+    let fullSQL = generateSupabaseSQL(schema, {
         appName,
         prefix,
         includeHelperFunctions: true,
         includeCRDT: schemaOpts.includeCRDT
     });
+    /* 3. Append custom SQL files (app-specific RPC functions, views, etc.). */
+    if (schemaOpts.customSQL) {
+        const sqlPaths = Array.isArray(schemaOpts.customSQL)
+            ? schemaOpts.customSQL
+            : [schemaOpts.customSQL];
+        for (const sqlPath of sqlPaths) {
+            const absPath = resolve(projectRoot, sqlPath);
+            if (existsSync(absPath)) {
+                const custom = readFileSync(absPath, 'utf-8').trim();
+                if (custom) {
+                    fullSQL += `\n\n-- Custom SQL: ${sqlPath}\n${custom}\n`;
+                    console.log(`[stellar-drive] Appended custom SQL: ${sqlPath}`);
+                }
+            }
+            else {
+                console.warn(`[stellar-drive] Custom SQL file not found: ${sqlPath}`);
+            }
+        }
+    }
     await pushSchema(fullSQL, schemaOpts, projectRoot);
 }
 /**

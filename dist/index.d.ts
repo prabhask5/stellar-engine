@@ -57,7 +57,7 @@ export { createCollectionStore, createDetailStore } from './stores/factories';
 export type { CollectionStore, CollectionStoreConfig, DetailStore, DetailStoreConfig } from './stores/factories';
 export { onRealtimeDataUpdate } from './realtime';
 export { supabase } from './supabase/client';
-export { initConfig, getConfig, setConfig } from './runtime/runtimeConfig';
+export { initConfig, getConfig, setConfig, probeNetworkReachability, isOffline, setOfflineFlag } from './runtime/runtimeConfig';
 export type { AppConfig } from './runtime/runtimeConfig';
 export { debug, isDebugMode, setDebugMode } from './debug';
 export { generateId, now, calculateNewOrder, snakeToCamel, formatBytes } from './utils';

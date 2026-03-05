@@ -2681,6 +2681,138 @@ setConfig({
 
 ---
 
+#### `probeNetworkReachability()`
+
+Tests whether the network is actually reachable by performing a real connectivity check. This exists because `navigator.onLine` is unreliable on iOS PWA — it often reports `true` even in airplane mode, causing network-dependent code (`fetch()`, `supabase.auth.refreshSession()`, etc.) to hang indefinitely instead of failing promptly.
+
+The consumer app should call this **once** before `resolveRootLayout()` in the root layout load function. All downstream code (`initConfig()`, `resolveAuthState()`, `getSession()`) then uses `isOffline()` synchronously.
+
+The probe works in three steps:
+
+1. **`navigator.onLine` check** — if `false`, returns `false` immediately (no network request).
+2. **Redundancy guard** — if already known offline (prior probe failed, or the SW sent a `NETWORK_UNREACHABLE` message via the `window.__stellarOffline` bridge), returns `false` immediately.
+3. **Live probe** — sends a `HEAD` request to `/api/config` with a **1.5-second `AbortController` timeout**. The `/api/config` endpoint is chosen because the service worker skips `/api/*` routes, so the request goes directly to the network — giving a ground-truth connectivity result rather than a cache hit.
+
+The result is stored in an in-memory flag readable synchronously via `isOffline()`. The flag is reset to `false` when a subsequent probe succeeds (e.g., after the device comes back online).
+
+**Signature:**
+```ts
+function probeNetworkReachability(): Promise<boolean>
+```
+
+**Returns:** `boolean` — `true` if the network is reachable, `false` if the device is offline or the probe timed out.
+
+**Example — call once before startup:**
+```ts
+import { probeNetworkReachability } from 'stellar-drive';
+import { resolveRootLayout } from 'stellar-drive/kit';
+
+// In root layout load function:
+await probeNetworkReachability();
+const result = await resolveRootLayout();
+```
+
+**Example — guard a network call:**
+```ts
+import { probeNetworkReachability } from 'stellar-drive';
+
+const reachable = await probeNetworkReachability();
+if (!reachable) {
+  return getCachedData();
+}
+const response = await fetch('/api/data');
+```
+
+**Behaviour summary:**
+
+| Scenario | Network Request | Result | Flag |
+|---|---|---|---|
+| `navigator.onLine` is `false` | None | `false` | `_offline = true` |
+| Already known offline (prior probe or SW message) | None | `false` | unchanged |
+| `HEAD /api/config` succeeds within 1.5s | 1 `HEAD` | `true` | `_offline = false` |
+| `HEAD /api/config` times out after 1.5s | 1 `HEAD` | `false` | `_offline = true` |
+| `HEAD /api/config` throws (network error) | 1 `HEAD` | `false` | `_offline = true` |
+
+**See also:** `isOffline()` for synchronous access to the offline flag.
+
+---
+
+#### `isOffline()`
+
+Synchronous check of whether the device is effectively offline. Combines three signal sources into a single boolean:
+
+1. **Probe flag** — set by `probeNetworkReachability()` when a network probe fails or times out.
+2. **SW message bridge** — set by the service worker via `postMessage` → `window.__stellarOffline` when the navigation fetch times out. An inline `<script>` in `app.html` listens for this message before JS bundles load, so the flag is available immediately.
+3. **`navigator.onLine`** — the browser's built-in connectivity flag (unreliable on iOS PWA, but correct when it reports `false`).
+
+Use this in all startup-path code instead of raw `navigator.onLine` checks. It does **not** make a network request or perform any I/O.
+
+**Signature:**
+```ts
+function isOffline(): boolean
+```
+
+**Returns:** `boolean` — `true` if the device is effectively offline, `false` if the network appears reachable.
+
+**Example — skip network calls in startup code:**
+```ts
+import { isOffline } from 'stellar-drive';
+
+if (isOffline()) {
+  // Use cached data, skip Supabase SDK calls
+  return getSessionFromLocalStorage();
+}
+const { data } = await supabase.auth.getSession();
+```
+
+**Example — conditional UI rendering:**
+```ts
+import { isOffline } from 'stellar-drive';
+
+const showOfflineBadge = isOffline();
+```
+
+**Behaviour summary:**
+
+| Signal | Condition | Result |
+|---|---|---|
+| Probe flag (`_offline`) | Set `true` by failed probe | `true` |
+| SW bridge (`window.__stellarOffline`) | Set `true` by SW `NETWORK_UNREACHABLE` message | `true` (promotes to probe flag) |
+| `navigator.onLine` | `false` | `true` |
+| All signals clear | — | `false` |
+
+**See also:** `probeNetworkReachability()` for the async probe that sets the offline flag, `setOfflineFlag()` for manual flag control.
+
+---
+
+#### `setOfflineFlag()`
+
+Manually set or clear the offline flag. This is an **internal** API primarily used by the `online` event handler and the service worker message bridge. Consumer apps should not normally need to call this directly — use `probeNetworkReachability()` instead.
+
+**Signature:**
+```ts
+function setOfflineFlag(value: boolean): void
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `value` | `boolean` | `true` to mark the app as offline, `false` to mark it as online. |
+
+**Example — reset on connectivity restored:**
+```ts
+import { setOfflineFlag } from 'stellar-drive';
+
+window.addEventListener('online', () => {
+  setOfflineFlag(false);
+});
+```
+
+**See also:** `isOffline()`, `probeNetworkReachability()`.
+
+---
+
 ## Svelte Actions
 
 Import from `stellar-drive/actions`. These are Svelte `use:action` directives that attach DOM-level behavior for remote change animations, edit tracking, and tooltip truncation.

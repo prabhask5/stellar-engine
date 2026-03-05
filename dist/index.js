@@ -166,7 +166,10 @@ export { supabase } from './supabase/client';
 // - `initConfig` — initializes with defaults on app boot.
 // - `getConfig` — reads the current configuration snapshot.
 // - `setConfig` — merges partial updates into the active configuration.
-export { initConfig, getConfig, setConfig } from './runtime/runtimeConfig';
+// - `probeNetworkReachability` — async probe that tests actual connectivity.
+// - `isOffline` — synchronous check: is the device effectively offline?
+// - `setOfflineFlag` — manual offline flag control (internal / SW bridge).
+export { initConfig, getConfig, setConfig, probeNetworkReachability, isOffline, setOfflineFlag } from './runtime/runtimeConfig';
 // =============================================================================
 //  Debug Utilities
 // =============================================================================

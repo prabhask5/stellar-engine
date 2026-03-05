@@ -40,6 +40,7 @@ import { clearOfflineSession } from '../auth/offlineSession';
 import { resetLoginGuard } from '../auth/loginGuard';
 import { debugLog, debugWarn, debugError } from '../debug';
 import { getEngineConfig } from '../config';
+import { isOffline } from '../runtime/runtimeConfig';
 import { syncStatusStore } from '../stores/sync';
 import { authState } from '../stores/authState';
 import { isDemoMode } from '../demo';
@@ -173,10 +174,12 @@ export async function signOut(options) {
  * Get the current Supabase session.
  *
  * Uses an **offline-first** strategy:
- * - When `navigator.onLine` is `false`, goes straight to localStorage via
- *   {@link getSessionFromStorage} without calling the Supabase SDK. This
- *   prevents `supabase.auth.getSession()` from triggering a token refresh
- *   that hangs indefinitely in airplane mode (especially on iOS PWA).
+ * - When {@link isOffline} returns `true` (covers `navigator.onLine`, the
+ *   network reachability probe, and the SW message bridge), goes straight
+ *   to localStorage via {@link getSessionFromStorage} without calling the
+ *   Supabase SDK. This prevents `supabase.auth.getSession()` from triggering
+ *   a token refresh that hangs indefinitely in airplane mode (especially on
+ *   iOS PWA where `navigator.onLine` falsely reports `true`).
  * - When online, delegates to `supabase.auth.getSession()` which may trigger
  *   a token refresh if the access token is close to expiry.
  * - If the SDK call fails with a corrupted-session error, falls back to
@@ -203,11 +206,13 @@ export async function signOut(options) {
 export async function getSession() {
     if (isDemoMode())
         return null;
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     /* Offline fast path: skip the SDK call entirely when offline to prevent
        supabase.auth.getSession() from triggering a token refresh that hangs
-       in airplane mode. Go straight to localStorage. */
-    if (isOffline) {
+       in airplane mode. Go straight to localStorage.
+  
+       isOffline() checks the probe flag (catches iOS PWA where navigator.onLine
+       lies), the SW message bridge, and navigator.onLine — all synchronously. */
+    if (isOffline()) {
         debugLog('[Auth] Offline - reading session from localStorage directly');
         return getSessionFromStorage();
     }

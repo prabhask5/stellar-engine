@@ -78,10 +78,12 @@ export declare function signOut(options?: {
  * Get the current Supabase session.
  *
  * Uses an **offline-first** strategy:
- * - When `navigator.onLine` is `false`, goes straight to localStorage via
- *   {@link getSessionFromStorage} without calling the Supabase SDK. This
- *   prevents `supabase.auth.getSession()` from triggering a token refresh
- *   that hangs indefinitely in airplane mode (especially on iOS PWA).
+ * - When {@link isOffline} returns `true` (covers `navigator.onLine`, the
+ *   network reachability probe, and the SW message bridge), goes straight
+ *   to localStorage via {@link getSessionFromStorage} without calling the
+ *   Supabase SDK. This prevents `supabase.auth.getSession()` from triggering
+ *   a token refresh that hangs indefinitely in airplane mode (especially on
+ *   iOS PWA where `navigator.onLine` falsely reports `true`).
  * - When online, delegates to `supabase.auth.getSession()` which may trigger
  *   a token refresh if the access token is close to expiry.
  * - If the SDK call fails with a corrupted-session error, falls back to

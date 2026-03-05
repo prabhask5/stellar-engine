@@ -13,17 +13,27 @@
  *   4. If the network is unreachable (offline PWA), the cached config is used
  *      as-is — ensuring the app can boot without connectivity.
  *
- * **Offline fast path:**
- *   When `navigator.onLine` is `false` and a valid cached config exists,
- *   `initConfig()` returns the cached config immediately without attempting a
- *   network fetch. As a defense against iOS PWA environments where
- *   `navigator.onLine` can falsely report `true`, all fetches use a 3-second
- *   `AbortController` timeout — if the fetch hangs, the cached config is used.
+ * **Offline detection:**
+ *   The module provides a unified `isOffline()` check that combines the
+ *   browser's `navigator.onLine` flag with a network reachability probe
+ *   result (`probeNetworkReachability()`). The consumer app calls the probe
+ *   once before `resolveRootLayout()`, and all downstream code uses
+ *   `isOffline()` synchronously. The service worker can also set the offline
+ *   flag early via `postMessage` → `window.__stellarOffline` bridge, so the
+ *   probe returns instantly when the SW already detected a network timeout.
  *
  * @see {@link initConfig} for the async initialisation flow
  * @see {@link getConfig} for synchronous access after initialisation
  * @see {@link setConfig} for programmatic updates (e.g., after a setup wizard)
  */
+
+/* Global augmentation: the inline script in app.html sets this flag when
+   the service worker broadcasts NETWORK_UNREACHABLE. */
+declare global {
+  interface Window {
+    __stellarOffline?: boolean;
+  }
+}
 
 // =============================================================================
 //                              TYPES
@@ -103,6 +113,143 @@ let configCache: AppConfig | null = null;
  */
 let configPromise: Promise<AppConfig | null> | null = null;
 
+/**
+ * Module-level offline flag. Set by {@link probeNetworkReachability} or by the
+ * service worker via the `window.__stellarOffline` bridge. Read by
+ * {@link isOffline}. Reset to `false` when a probe succeeds or the browser
+ * fires an `online` event.
+ */
+let _offline = false;
+
+// =============================================================================
+//                     OFFLINE DETECTION
+// =============================================================================
+
+/**
+ * Whether the app should treat itself as offline.
+ *
+ * Returns `true` if any of the following are true:
+ *   - The last {@link probeNetworkReachability} probe failed (timeout / error).
+ *   - The service worker reported a navigation timeout via `postMessage`
+ *     (bridged through `window.__stellarOffline`).
+ *   - `navigator.onLine` is `false`.
+ *
+ * This is a **synchronous** check — no network request is made. All
+ * startup-path code should use this instead of raw `navigator.onLine`
+ * checks or the old `isNetworkUnreachable()`.
+ *
+ * @returns `true` if the device is effectively offline.
+ *
+ * @example
+ * ```ts
+ * import { isOffline } from 'stellar-drive';
+ *
+ * if (isOffline()) {
+ *   // Skip network calls, use cached data
+ * }
+ * ```
+ *
+ * @see {@link probeNetworkReachability} — async probe that sets the flag
+ * @see {@link setOfflineFlag} — manual flag control (internal)
+ */
+export function isOffline(): boolean {
+  if (_offline) return true;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  /* Bridge: an inline script in app.html listens for the service worker's
+     NETWORK_UNREACHABLE message and sets this global before JS bundles load.
+     Promote it to the module flag so we don't re-check the global. */
+  if (typeof window !== 'undefined' && window.__stellarOffline) {
+    _offline = true;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Manually set the offline flag.
+ *
+ * Used internally by the `online` event handler and the service worker
+ * message bridge. Consumer apps should not need to call this directly —
+ * use {@link probeNetworkReachability} instead.
+ *
+ * @param value - `true` to mark offline, `false` to mark online.
+ * @internal
+ */
+export function setOfflineFlag(value: boolean): void {
+  _offline = value;
+}
+
+/**
+ * Probe whether the network is actually reachable.
+ *
+ * `navigator.onLine` is unreliable on iOS PWA — it often reports `true` even
+ * in airplane mode. This function performs a real network probe by sending a
+ * `HEAD` request to `/api/config` (which bypasses the service worker, since
+ * the SW skips `/api/*` routes) with a **500 ms timeout**.
+ *
+ * The result is stored in the module-level `_offline` flag, readable
+ * synchronously via {@link isOffline}. The consumer app should call this
+ * **once** before `resolveRootLayout()` so all downstream code can use
+ * `isOffline()` without any network calls.
+ *
+ * If the service worker has already detected a network timeout (via the
+ * `window.__stellarOffline` bridge), the probe returns instantly without
+ * making a request.
+ *
+ * **Behaviour:**
+ * - If `navigator.onLine` is `false`, returns `false` immediately (no probe).
+ * - If already known offline (flag set), returns `false` immediately.
+ * - If the `HEAD` request succeeds within 1.5s, returns `true`.
+ * - If the request times out or fails, returns `false`.
+ *
+ * @returns `true` if the network is reachable, `false` otherwise.
+ *
+ * @example
+ * ```ts
+ * // In your root layout load function — call once before startup:
+ * await probeNetworkReachability();
+ * const result = await resolveRootLayout();
+ * ```
+ *
+ * @see {@link isOffline} — synchronous check of the offline flag
+ */
+export async function probeNetworkReachability(): Promise<boolean> {
+  /* Fast path: navigator.onLine says we're offline */
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    _offline = true;
+    return false;
+  }
+
+  /* If already known offline (set by SW message bridge or prior probe),
+     skip the HEAD request. The flag is reset when a probe succeeds or
+     when the browser fires an 'online' event. */
+  if (_offline) {
+    return false;
+  }
+
+  /* Check the SW bridge global (inline script in app.html may have set
+     this before our JS bundle loaded). */
+  if (typeof window !== 'undefined' && window.__stellarOffline) {
+    _offline = true;
+    return false;
+  }
+
+  /* Probe: send a lightweight HEAD request to /api/config which bypasses
+     the service worker (SW skips /api/* routes), giving a true network check.
+     1.5s timeout avoids false positives on slow connections. */
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
+    await fetch('/api/config', { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeoutId);
+    _offline = false;
+    return true;
+  } catch {
+    _offline = true;
+    return false;
+  }
+}
+
 // =============================================================================
 //                     LOCAL STORAGE HELPERS
 // =============================================================================
@@ -160,14 +307,15 @@ function saveToCache(config: AppConfig): void {
  * **Strategy:**
  *   1. Return the in-flight promise if already initialising (de-duplication).
  *   2. Try localStorage first for an instant, synchronous result.
- *   3. **Offline fast path**: If `navigator.onLine` is `false` and a valid
- *      cached config exists, return it immediately (no network fetch).
- *   4. Fetch `/api/config` with a **3-second timeout** to validate / update
- *      the cached value. The timeout defends against iOS PWA environments
- *      where `navigator.onLine` falsely reports `true` but fetch hangs.
+ *   3. Check {@link isOffline} — if the offline flag is set (by the probe or
+ *      the SW message bridge), return the cached config immediately.
+ *   4. Fetch `/api/config` from the server to validate / update the cache.
  *   5. If the server says "not configured", clear any stale cache and return `null`.
- *   6. If the network is unreachable or the fetch times out, fall back to the
- *      cached config (offline PWA).
+ *   6. If the fetch fails, fall back to the cached config (offline PWA).
+ *
+ * **Important:** The consumer app must call {@link probeNetworkReachability}
+ * before `resolveRootLayout()` (which calls `initConfig()`). This ensures the
+ * offline flag is already set by the time we reach step 3.
  *
  * @returns A promise resolving to the `AppConfig` if the app is configured,
  *          or `null` if not yet configured / unreachable.
@@ -191,22 +339,16 @@ export async function initConfig(): Promise<AppConfig | null> {
       configCache = cached;
     }
 
-    /* Offline fast path: skip the network fetch entirely when offline and
-       cached config is available. This prevents fetch() from hanging
-       indefinitely on iOS in airplane mode. */
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-    if (isOffline && configCache) {
+    /* Check the offline flag (set by probeNetworkReachability() which the
+       consumer calls before resolveRootLayout(), or by the SW message bridge).
+       When offline, return the cached config without attempting a fetch. */
+    if (isOffline()) {
       return configCache;
     }
 
-    /* Fetch from server to validate/update.
-       Use a 3s AbortController timeout as defense against iOS PWA environments
-       where navigator.onLine falsely reports true but the network is unreachable. */
+    /* Network is reachable — fetch from server to validate/update */
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      const response = await fetch('/api/config', { signal: controller.signal });
-      clearTimeout(timeoutId);
+      const response = await fetch('/api/config');
       if (response.ok) {
         const serverConfig = await response.json();
         if (serverConfig.configured) {
@@ -226,7 +368,7 @@ export async function initConfig(): Promise<AppConfig | null> {
         }
       }
     } catch {
-      /* Network error or timeout — use cached config if available (offline PWA support) */
+      /* Network error — use cached config if available */
       if (configCache) {
         return configCache;
       }

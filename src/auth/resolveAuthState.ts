@@ -11,9 +11,11 @@
  *   If not configured, returns `authMode: 'none'` immediately.
  * - Checks local `singleUserConfig` in IndexedDB, handles legacy migration,
  *   PIN length migration, session refresh, and offline fallback.
- * - **Offline-first**: When `navigator.onLine` is `false`, the resolver skips
- *   all Supabase SDK calls (which can hang in airplane mode) and goes straight
- *   to localStorage/IndexedDB for cached session and offline credentials.
+ * - **Offline-first**: When `isOffline()` returns `true` (covers both
+ *   `navigator.onLine` and the network reachability probe), the resolver
+ *   skips all Supabase SDK calls (which can hang in airplane mode) and goes
+ *   straight to localStorage/IndexedDB for cached session and offline
+ *   credentials.
  * - The resolver does NOT start the sync engine -- callers decide whether to
  *   start sync based on the returned `authMode`.
  * - On catastrophic failure (corrupted auth state), all Supabase localStorage
@@ -42,6 +44,7 @@ import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { debugLog, debugWarn, debugError } from '../debug';
 import { isDemoMode } from '../demo';
+import { isOffline } from '../runtime/runtimeConfig';
 
 // =============================================================================
 // TYPES
@@ -213,11 +216,12 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
        IMPORTANT: Skip migration when offline — resetSingleUserRemote() makes an
        RPC call that will hang indefinitely in airplane mode. The migration will
        run on the next online startup. */
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const offline = isOffline();
     const expectedCodeLength = getEngineConfig().auth?.singleUser?.codeLength;
     const storedCodeLength = config.codeLength;
+
     if (expectedCodeLength && storedCodeLength !== expectedCodeLength) {
-      if (isOffline) {
+      if (offline) {
         debugLog('[Auth] codeLength mismatch detected but offline — deferring migration');
       } else {
         debugLog('[Auth] codeLength mismatch detected:', storedCodeLength, '→', expectedCodeLength);
@@ -255,9 +259,10 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
     // Offline fast path: skip all Supabase SDK calls when offline
     // =========================================================================
     // supabase.auth.getSession() and refreshSession() can hang indefinitely
-    // in airplane mode (especially on iOS PWA). When offline, read the session
-    // directly from localStorage and check IndexedDB for offline credentials.
-    if (isOffline) {
+    // in airplane mode (especially on iOS PWA). When offline — or when
+    // initConfig() detected the network is unreachable (navigator.onLine lied)
+    // — read the session directly from localStorage and check IndexedDB.
+    if (offline) {
       debugLog('[Auth] Offline fast path — reading session from localStorage');
       const cachedSession = getSessionFromStorage();
 

@@ -719,6 +719,28 @@ function generateAppHtml(opts: InstallOptions): string {
     </script>
 
     <!-- ================================================================= -->
+    <!--              SW OFFLINE BRIDGE (runs before bundles load)          -->
+    <!-- ================================================================= -->
+    <!--
+      Listens for the service worker's NETWORK_UNREACHABLE message, which is
+      sent when the SW's navigation fetch times out (1.5s). Sets a global
+      flag that probeNetworkReachability() reads so it can skip its own HEAD
+      request. The 'online' handler resets the flag when connectivity returns.
+    -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', function (e) {
+          if (e.data && e.data.type === 'NETWORK_UNREACHABLE') {
+            window.__stellarOffline = true;
+          }
+        });
+      }
+      window.addEventListener('online', function () {
+        window.__stellarOffline = false;
+      });
+    </script>
+
+    <!-- ================================================================= -->
     <!--                SERVICE WORKER REGISTRATION                        -->
     <!-- ================================================================= -->
     <!--
@@ -1556,7 +1578,7 @@ function generateRootLayoutTs(opts: InstallOptions): string {
 import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { goto } from '$app/navigation';
-import { initEngine, supabase } from 'stellar-drive';
+import { initEngine, supabase, probeNetworkReachability } from 'stellar-drive';
 import { lockSingleUser } from 'stellar-drive/auth';
 import { resolveRootLayout } from 'stellar-drive/kit';
 import { isSafeRedirect } from 'stellar-drive/utils';
@@ -1629,6 +1651,12 @@ const PUBLIC_ROUTES = ['/policy', '/login', '/demo', '/confirm', '/setup'];
  */
 export const load: LayoutLoad = async ({ url }): Promise<RootLayoutData> => {
   if (browser) {
+    /* Probe actual network reachability ONCE before any startup code.
+       Sets the offline flag so initConfig(), resolveAuthState(), and
+       getSession() can skip network calls synchronously. If the SW has
+       already set the flag via NETWORK_UNREACHABLE postMessage, the probe
+       returns immediately without a network request. */
+    await probeNetworkReachability();
     const result = await resolveRootLayout();
 
     if (result.authMode === 'none') {

@@ -11,9 +11,11 @@
  *   If not configured, returns `authMode: 'none'` immediately.
  * - Checks local `singleUserConfig` in IndexedDB, handles legacy migration,
  *   PIN length migration, session refresh, and offline fallback.
- * - **Offline-first**: When `navigator.onLine` is `false`, the resolver skips
- *   all Supabase SDK calls (which can hang in airplane mode) and goes straight
- *   to localStorage/IndexedDB for cached session and offline credentials.
+ * - **Offline-first**: When `isOffline()` returns `true` (covers both
+ *   `navigator.onLine` and the network reachability probe), the resolver
+ *   skips all Supabase SDK calls (which can hang in airplane mode) and goes
+ *   straight to localStorage/IndexedDB for cached session and offline
+ *   credentials.
  * - The resolver does NOT start the sync engine -- callers decide whether to
  *   start sync based on the returned `authMode`.
  * - On catastrophic failure (corrupted auth state), all Supabase localStorage

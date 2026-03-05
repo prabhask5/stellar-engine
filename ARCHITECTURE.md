@@ -1235,7 +1235,9 @@ Determines the initial auth state at app startup. This runs before anything else
 4. If no session, check offline credentials + session -> return `authMode: 'offline'`
 5. Return `authMode: 'none'`
 
-**Offline fast path**: When `navigator.onLine` is `false`, the resolver skips all Supabase SDK calls (`getSession()`, `refreshSession()`) which can hang indefinitely in airplane mode on iOS. Instead, it reads the session directly from localStorage via `getSessionFromStorage()` and checks IndexedDB for offline session credentials. The codeLength migration is also deferred when offline to avoid hanging on RPC calls.
+**Offline fast path**: When `isOffline()` returns `true`, the resolver skips all Supabase SDK calls (`getSession()`, `refreshSession()`) which can hang indefinitely in airplane mode. Instead, it reads the session directly from localStorage via `getSessionFromStorage()` and checks IndexedDB for offline session credentials. The codeLength migration is also deferred when offline to avoid hanging on RPC calls.
+
+**Unified offline detection**: The `isOffline()` function combines three signal sources: (1) `navigator.onLine`, (2) the network reachability probe result, and (3) the service worker's `NETWORK_UNREACHABLE` message bridge (`window.__stellarOffline`). The consumer app calls `probeNetworkReachability()` once in the root layout load function before `resolveRootLayout()`. The probe sends a `HEAD` request to `/api/config` (bypasses the SW) with a 1.5s timeout, and stores the result in a module-level flag. If the SW's navigation fetch already timed out (1.5s), it broadcasts `NETWORK_UNREACHABLE` to all clients — an inline `<script>` in `app.html` catches this and sets `window.__stellarOffline = true` before JS bundles load, so the probe returns instantly. All downstream startup code (`initConfig()`, `resolveAuthState()`, `getSession()`) uses `isOffline()` synchronously.
 
 For single-user mode, the resolution determines the auth mode based on local config and session state:
 

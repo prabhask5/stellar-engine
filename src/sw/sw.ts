@@ -16,9 +16,11 @@ export {}; // ensure this is treated as a module
  *     Stored in `SHELL_CACHE` which is keyed by `APP_VERSION` and
  *     automatically cleaned up when a new SW activates.
  *
- *   - **Navigation requests** (HTML) — network-first with a 3-second
- *     timeout, falling back to the cached root `/` document. Ensures the
- *     app loads offline while staying fresh when online.
+ *   - **Navigation requests** (HTML) — network-first with an 800 ms
+ *     timeout, falling back to the cached root `/` document. When the
+ *     fetch times out, the SW broadcasts a `NETWORK_UNREACHABLE` message
+ *     to all clients so the main thread can skip its own network probe.
+ *     Ensures the app loads offline while staying fresh when online.
  *
  *   - **Background precaching** — after install, the SW can be told to
  *     fetch all assets listed in `asset-manifest.json`, downloading only
@@ -319,9 +321,11 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
   }
 
   try {
-    /* 3-second timeout — don't leave the user staring at a blank screen */
+    /* 1.5-second timeout — don't leave the user staring at a blank screen.
+       When this times out, the catch block notifies the main thread via
+       NETWORK_UNREACHABLE so the probe can skip its own HEAD request. */
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
 
     const response = await fetch(request, { signal: controller.signal });
     clearTimeout(timeoutId);
@@ -335,6 +339,12 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
   } catch {
     /* Network failed or timed out — serve cached HTML */
     console.log('[SW] Navigation offline, serving cache');
+
+    /* Notify the main thread that the network is unreachable so
+       probeNetworkReachability() and downstream startup code can
+       skip their own network calls via the isOffline() flag. */
+    notifyClients({ type: 'NETWORK_UNREACHABLE' });
+
     const cached = await cache.match('/');
     if (cached) return cached;
 
@@ -691,13 +701,18 @@ function getOfflineHTML(): string {
 /**
  * Listens for messages from the app's client-side code.
  *
- * **Supported message types:**
+ * **Supported message types (inbound, client → SW):**
  *   - `SKIP_WAITING`     --> Immediately activate the waiting SW (user accepted update)
  *   - `GET_VERSION`      --> Responds with the current `APP_VERSION` via `MessagePort`
  *   - `PRECACHE_ALL`     --> Triggers {@link backgroundPrecache} to download all assets
  *   - `CLEANUP_OLD`      --> Triggers {@link cleanupOldAssets} to remove stale cache entries
  *   - `CACHE_URLS`       --> Caches a specific list of URLs (used for route prefetching)
  *   - `GET_CACHE_STATUS` --> Responds with cache completeness info via `MessagePort`
+ *
+ * **Outbound messages (SW → client):**
+ *   - `SW_INSTALLED`         --> Sent when a new SW version has been installed
+ *   - `NETWORK_UNREACHABLE`  --> Sent when the navigation fetch times out, so the
+ *                                main thread can set the offline flag immediately
  *
  * @param event - The {@link ExtendableMessageEvent} from a client.
  */

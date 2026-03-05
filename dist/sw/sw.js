@@ -256,6 +256,22 @@ function isStaticAsset(pathname) {
  */
 async function handleNavigationRequest(request) {
     const cache = await caches.open(SHELL_CACHE);
+    /* Offline fast path: skip the network entirely when we know we're offline.
+       This eliminates the 3-second timeout delay on iOS PWA in airplane mode,
+       where fetch() hangs instead of rejecting promptly. */
+    if (!self.navigator.onLine) {
+        console.log('[SW] Navigation offline (fast path), serving cache');
+        const cached = await cache.match('/');
+        if (cached)
+            return cached;
+        const offlinePage = await cache.match('/offline.html');
+        if (offlinePage)
+            return offlinePage;
+        return new Response(getOfflineHTML(), {
+            status: 200,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+    }
     try {
         /* 3-second timeout — don't leave the user staring at a blank screen */
         const controller = new AbortController();
@@ -309,9 +325,17 @@ async function handleImmutableAsset(request) {
     if (cached) {
         return cached;
     }
-    /* Not cached yet — fetch from network and cache for next time */
+    /* Offline fast path: don't even try the network when offline */
+    if (!self.navigator.onLine) {
+        console.error('[SW] Immutable asset not cached and offline:', request.url);
+        return new Response('Asset not available offline', { status: 503 });
+    }
+    /* Not cached yet — fetch from network with 3s timeout and cache for next time */
     try {
-        const response = await fetch(request);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(request, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (response.ok) {
             cache.put(request, response.clone());
         }
@@ -343,9 +367,16 @@ async function handleStaticAsset(request) {
     if (cached) {
         return cached;
     }
-    /* Not cached — fetch and store (only cache successful responses) */
+    /* Offline fast path: don't try the network when offline */
+    if (!self.navigator.onLine) {
+        return new Response('Asset not available offline', { status: 503 });
+    }
+    /* Not cached — fetch with 3s timeout and store (only cache successful responses) */
     try {
-        const response = await fetch(request);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(request, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (response.ok) {
             cache.put(request, response.clone());
         }
@@ -373,8 +404,18 @@ async function handleStaticAsset(request) {
  */
 async function handleOtherRequest(request) {
     const cache = await caches.open(SHELL_CACHE);
+    /* Offline fast path: go straight to cache when offline */
+    if (!self.navigator.onLine) {
+        const cached = await cache.match(request);
+        if (cached)
+            return cached;
+        return new Response('Offline', { status: 503 });
+    }
     try {
-        const response = await fetch(request);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch(request, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (response.ok) {
             cache.put(request, response.clone());
         }

@@ -2690,7 +2690,7 @@ The consumer app should call this **once** before `resolveRootLayout()` in the r
 The probe works in three steps:
 
 1. **`navigator.onLine` check** — if `false`, returns `false` immediately (no network request).
-2. **Redundancy guard** — if already known offline (prior probe failed, or the SW sent a `NETWORK_UNREACHABLE` message via the `window.__stellarOffline` bridge), returns `false` immediately.
+2. **Redundancy guard** — if already known offline (prior probe failed, SW wrote a Cache API entry on cold start, or the SW sent a `NETWORK_UNREACHABLE` postMessage on warm reload), returns `false` immediately.
 3. **Live probe** — sends a `HEAD` request to `/api/config` with a **1.5-second `AbortController` timeout**. The `/api/config` endpoint is chosen because the service worker skips `/api/*` routes, so the request goes directly to the network — giving a ground-truth connectivity result rather than a cache hit.
 
 The result is stored in an in-memory flag readable synchronously via `isOffline()`. The flag is reset to `false` when a subsequent probe succeeds (e.g., after the device comes back online).
@@ -2728,7 +2728,7 @@ const response = await fetch('/api/data');
 | Scenario | Network Request | Result | Flag |
 |---|---|---|---|
 | `navigator.onLine` is `false` | None | `false` | `_offline = true` |
-| Already known offline (prior probe or SW message) | None | `false` | unchanged |
+| Already known offline (prior probe, SW Cache API entry, or SW postMessage) | None | `false` | unchanged |
 | `HEAD /api/config` succeeds within 1.5s | 1 `HEAD` | `true` | `_offline = false` |
 | `HEAD /api/config` times out after 1.5s | 1 `HEAD` | `false` | `_offline = true` |
 | `HEAD /api/config` throws (network error) | 1 `HEAD` | `false` | `_offline = true` |

@@ -150,9 +150,10 @@ export function setOfflineFlag(value) {
  * **once** before `resolveRootLayout()` so all downstream code can use
  * `isOffline()` without any network calls.
  *
- * If the service worker has already detected a network timeout (via the
- * `window.__stellarOffline` bridge), the probe returns instantly without
- * making a request.
+ * If the service worker has already detected a network timeout, the probe
+ * returns instantly without making a request. The SW signals this via two
+ * mechanisms: a Cache API entry (`stellar-network/__status`) for cold starts,
+ * and a `postMessage` → `window.__stellarOffline` bridge for warm reloads.
  *
  * **Behaviour:**
  * - If `navigator.onLine` is `false`, returns `false` immediately (no probe).
@@ -184,10 +185,36 @@ export async function probeNetworkReachability() {
         return false;
     }
     /* Check the SW bridge global (inline script in app.html may have set
-       this before our JS bundle loaded). */
+       this before our JS bundle loaded — works for warm reloads). */
     if (typeof window !== 'undefined' && window.__stellarOffline) {
         _offline = true;
         return false;
+    }
+    /* Check the Cache API for a recent SW network status entry.
+       On cold starts, postMessage doesn't work because the page doesn't
+       exist as a client yet when the SW sends the message. So the SW also
+       writes a timestamp entry to the Cache API, which IS accessible from
+       both the SW and main thread regardless of timing. */
+    try {
+        if (typeof caches !== 'undefined') {
+            const cache = await caches.open('stellar-network');
+            const entry = await cache.match('/__status');
+            if (entry) {
+                const ts = parseInt(entry.headers.get('x-ts') || '0');
+                /* Trust the entry if it was written within the last 10 seconds
+                   (i.e., the SW's navigation fetch just timed out moments ago). */
+                if (Date.now() - ts < 10000) {
+                    _offline = true;
+                    await cache.delete('/__status');
+                    return false;
+                }
+                /* Stale entry — clean it up */
+                await cache.delete('/__status');
+            }
+        }
+    }
+    catch {
+        /* Cache API unavailable or error — fall through to probe */
     }
     /* Probe: send a lightweight HEAD request to /api/config which bypasses
        the service worker (SW skips /api/* routes), giving a true network check.

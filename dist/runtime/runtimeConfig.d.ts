@@ -115,9 +115,10 @@ export declare function setOfflineFlag(value: boolean): void;
  * **once** before `resolveRootLayout()` so all downstream code can use
  * `isOffline()` without any network calls.
  *
- * If the service worker has already detected a network timeout (via the
- * `window.__stellarOffline` bridge), the probe returns instantly without
- * making a request.
+ * If the service worker has already detected a network timeout, the probe
+ * returns instantly without making a request. The SW signals this via two
+ * mechanisms: a Cache API entry (`stellar-network/__status`) for cold starts,
+ * and a `postMessage` → `window.__stellarOffline` bridge for warm reloads.
  *
  * **Behaviour:**
  * - If `navigator.onLine` is `false`, returns `false` immediately (no probe).

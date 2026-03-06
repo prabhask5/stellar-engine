@@ -13,10 +13,12 @@
  *     Stored in `SHELL_CACHE` which is keyed by `APP_VERSION` and
  *     automatically cleaned up when a new SW activates.
  *
- *   - **Navigation requests** (HTML) — network-first with an 800 ms
+ *   - **Navigation requests** (HTML) — network-first with a 1.5-second
  *     timeout, falling back to the cached root `/` document. When the
- *     fetch times out, the SW broadcasts a `NETWORK_UNREACHABLE` message
- *     to all clients so the main thread can skip its own network probe.
+ *     fetch times out, the SW writes a timestamp to the Cache API
+ *     (`stellar-network/__status`) and broadcasts `NETWORK_UNREACHABLE`
+ *     to clients. The main thread's `probeNetworkReachability()` checks
+ *     the Cache API entry first, so it can skip its own HEAD request.
  *     Ensures the app loads offline while staying fresh when online.
  *
  *   - **Background precaching** — after install, the SW can be told to
@@ -292,9 +294,21 @@ async function handleNavigationRequest(request) {
     catch {
         /* Network failed or timed out — serve cached HTML */
         console.log('[SW] Navigation offline, serving cache');
-        /* Notify the main thread that the network is unreachable so
-           probeNetworkReachability() and downstream startup code can
-           skip their own network calls via the isOffline() flag. */
+        /* Signal the main thread that the network is unreachable.
+    
+           Two mechanisms for different timing scenarios:
+    
+           1. Cache API entry (for cold starts): probeNetworkReachability()
+              checks this before making its own HEAD request. Works even when
+              no page client exists yet (SW is serving the HTML that will
+              create the client).
+    
+           2. postMessage (for warm reloads): If a page is already open,
+              the inline listener in app.html catches this and sets
+              window.__stellarOffline immediately. */
+        caches
+            .open('stellar-network')
+            .then((c) => c.put('/__status', new Response('', { headers: { 'x-ts': Date.now().toString() } })));
         notifyClients({ type: 'NETWORK_UNREACHABLE' });
         const cached = await cache.match('/');
         if (cached)

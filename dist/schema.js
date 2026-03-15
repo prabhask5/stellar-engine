@@ -474,47 +474,96 @@ function generateTableSQL(tableName, config, options) {
     lines.push(`create table if not exists ${tableName} (`);
     lines.push(columnDefs.join(',\n'));
     lines.push(');');
-    /* Ensure ALL columns exist on pre-existing tables. CREATE TABLE IF NOT
-       EXISTS silently skips if the table already exists, so any columns added
-       after the table was originally created would be missing. This makes the
-       schema fully convergent — no matter what state the database is in, after
-       running this SQL every table will have every column. */
+    /* ── Convergent column migration ──────────────────────────────────────
+       CREATE TABLE IF NOT EXISTS silently skips if the table already exists,
+       so any columns added after the initial CREATE would be missing.
+       ADD COLUMN IF NOT EXISTS patches that, but it can't change an existing
+       column's type, nullability, or default. We emit additional ALTERs to
+       ensure every column fully matches the schema no matter what state the
+       database is in — even after field type or nullability changes. */
     for (const colDef of columnDefs) {
-        /* Each columnDef is e.g. "  id uuid default gen_random_uuid() primary key"
-           Extract the column name (first token after trimming) and the rest as the type.
-           Skip PRIMARY KEY columns — ADD COLUMN IF NOT EXISTS can't add a PK. */
         const trimmed = colDef.trim();
         if (trimmed.toLowerCase().includes('primary key'))
             continue;
-        /* Split into name and type definition */
+        /* Split "colName colType" */
         const firstSpace = trimmed.indexOf(' ');
         if (firstSpace === -1)
             continue;
         const colName = trimmed.substring(0, firstSpace);
         const colType = trimmed.substring(firstSpace + 1);
+        /* 1. Add column if it doesn't exist yet. */
         lines.push(`alter table ${tableName} add column if not exists ${colName} ${colType};`);
+        /* Skip system columns for type/nullability convergence — they are
+           invariant and some (user_id) have FK references that complicate ALTER. */
+        const bareColName = colName.replace(/"/g, '');
+        const isSystemCol = SYSTEM_COLUMNS.some(([name]) => name === bareColName);
+        if (isSystemCol)
+            continue;
+        /* 2. Converge column type — extract the base SQL type (everything before
+           'not null', 'default', or end of string) and ALTER TYPE if needed.
+           ALTER TYPE with USING ensures safe casts (e.g., text→integer). */
+        const colTypeLower = colType.toLowerCase();
+        const baseType = colTypeLower
+            .replace(/\s+not\s+null.*$/, '')
+            .replace(/\s+default\s+.*$/, '')
+            .trim();
+        if (baseType) {
+            lines.push(`do $$ begin alter table ${tableName} alter column ${colName} type ${baseType} using ${colName}::${baseType}; exception when others then null; end $$;`);
+        }
+        /* 3. Converge nullability. */
+        if (!colTypeLower.includes('not null')) {
+            lines.push(`alter table ${tableName} alter column ${colName} drop not null;`);
+        }
+        else {
+            /* SET NOT NULL will fail if existing rows have NULLs. Wrap in
+               exception handler so the migration is still idempotent — the app
+               should backfill NULLs before tightening the constraint. */
+            lines.push(`do $$ begin alter table ${tableName} alter column ${colName} set not null; exception when others then null; end $$;`);
+        }
+        /* 4. Converge defaults — extract the default clause and set or drop it. */
+        const defaultMatch = colTypeLower.match(/default\s+(.+?)(?:\s*$)/);
+        if (defaultMatch) {
+            const defaultVal = colType
+                .substring(colType.toLowerCase().indexOf('default') + 'default'.length)
+                .replace(/\s+not\s+null.*/i, '')
+                .trim();
+            lines.push(`alter table ${tableName} alter column ${colName} set default ${defaultVal};`);
+        }
+        else if (!colTypeLower.includes('default')) {
+            lines.push(`alter table ${tableName} alter column ${colName} drop default;`);
+        }
     }
     lines.push('');
     /* ---- ROW LEVEL SECURITY ---- */
     lines.push(`alter table ${tableName} enable row level security;`);
+    /* Drop ALL known policy patterns first, then recreate only the ones that
+       match the current ownership mode. This ensures stale policies from a
+       previous parent↔child change are cleaned up. */
+    lines.push(`drop policy if exists "Users can manage own ${tableName}" on ${tableName};`);
+    lines.push(`drop policy if exists "Owner can view ${tableName}" on ${tableName};`);
+    lines.push(`drop policy if exists "Owner can create ${tableName}" on ${tableName};`);
+    lines.push(`drop policy if exists "Owner can update ${tableName}" on ${tableName};`);
+    lines.push(`drop policy if exists "Owner can delete ${tableName}" on ${tableName};`);
     if (isChildTable) {
         /* Child table — RLS via parent FK existence check.
            The parent name from schema config is the raw key — prefix it for multi-tenant. */
         const { parent, fk } = config.ownership;
         const parentName = options?.prefix ? `${options.prefix}_${parent}` : parent;
         const check = `exists (select 1 from ${parentName} where id = ${tableName}.${fk} and user_id = auth.uid())`;
-        lines.push(`do $$ begin create policy "Owner can view ${tableName}" on ${tableName} for select using (${check}); exception when duplicate_object then null; end $$;`);
-        lines.push(`do $$ begin create policy "Owner can create ${tableName}" on ${tableName} for insert with check (${check}); exception when duplicate_object then null; end $$;`);
-        lines.push(`do $$ begin create policy "Owner can update ${tableName}" on ${tableName} for update using (${check}); exception when duplicate_object then null; end $$;`);
-        lines.push(`do $$ begin create policy "Owner can delete ${tableName}" on ${tableName} for delete using (${check}); exception when duplicate_object then null; end $$;`);
+        lines.push(`create policy "Owner can view ${tableName}" on ${tableName} for select using (${check});`);
+        lines.push(`create policy "Owner can create ${tableName}" on ${tableName} for insert with check (${check});`);
+        lines.push(`create policy "Owner can update ${tableName}" on ${tableName} for update using (${check});`);
+        lines.push(`create policy "Owner can delete ${tableName}" on ${tableName} for delete using (${check});`);
     }
     else {
-        lines.push(`do $$ begin create policy "Users can manage own ${tableName}" on ${tableName} for all using (auth.uid() = user_id); exception when duplicate_object then null; end $$;`);
+        lines.push(`create policy "Users can manage own ${tableName}" on ${tableName} for all using (auth.uid() = user_id);`);
     }
     lines.push('');
     /* ---- TRIGGERS ---- */
+    /* Always drop both trigger types to clean up stale triggers from
+       ownership changes (e.g., parent→child no longer needs set_user_id). */
+    lines.push(`drop trigger if exists set_user_id_${tableName} on ${tableName};`);
     if (!isChildTable) {
-        lines.push(`drop trigger if exists set_user_id_${tableName} on ${tableName};`);
         lines.push(`create trigger set_user_id_${tableName} before insert on ${tableName} for each row execute function set_user_id();`);
     }
     lines.push(`drop trigger if exists update_${tableName}_updated_at on ${tableName};`);

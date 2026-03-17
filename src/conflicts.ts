@@ -515,7 +515,7 @@ export async function resolveConflicts(
 
          **Why last-write-wins?** It's the simplest strategy that produces
          predictable, consistent results across all devices. More sophisticated
-         strategies (operational transform, CRDTs) add significant complexity
+         strategies (operational transform, etc.) add significant complexity
          and are overkill for the entity-level sync this engine performs. */
       resolution = resolveByTimestamp(
         field,

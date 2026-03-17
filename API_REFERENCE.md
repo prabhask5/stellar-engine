@@ -15,7 +15,6 @@ Complete reference for every public export from the `stellar-drive` package. Thi
 | `stellar-drive/config` | Runtime configuration management (read/write app settings) |
 | `stellar-drive/vite` | Vite plugin for PWA service worker builds, asset manifests, and schema auto-generation |
 | `stellar-drive/kit` | SvelteKit-specific helpers: server route factories, layout loaders, email confirmation, SW lifecycle, auth hydration |
-| `stellar-drive/crdt` | CRDT collaborative editing: document lifecycle, shared types, presence/cursors, offline, persistence |
 
 ---
 
@@ -73,14 +72,6 @@ Complete reference for every public export from the `stellar-drive` package. Thi
   - [Service Worker Lifecycle](#service-worker-lifecycle)
   - [Auth Hydration](#auth-hydration)
 - [Vite Plugin (`stellar-drive/vite`)](#vite-plugin)
-- [CRDT Collaborative Editing (`stellar-drive/crdt`)](#crdt-collaborative-editing)
-  - [Document Lifecycle](#document-lifecycle)
-  - [Shared Type Factories](#shared-type-factories)
-  - [Yjs Re-exports](#yjs-re-exports)
-  - [Awareness / Presence](#awareness--presence)
-  - [Offline Management](#offline-management)
-  - [Persistence (Advanced)](#persistence-advanced)
-  - [CRDT Diagnostics](#crdt-diagnostics)
 - [CLI (`stellar-drive` bin)](#cli)
   - [install pwa](#install-pwa)
 - [Type Definitions (`stellar-drive/types`)](#type-definitions)
@@ -95,7 +86,7 @@ These exports control the core sync engine — initialization, database access, 
 
 #### `initEngine(config)`
 
-Bootstraps the entire sync engine with a declarative configuration. This must be called **before** any other stellar-drive function. It sets up the IndexedDB database schema, configures table mappings, auth settings, conflict resolution strategies, and optional subsystems (CRDT, demo mode).
+Bootstraps the entire sync engine with a declarative configuration. This must be called **before** any other stellar-drive function. It sets up the IndexedDB database schema, configures table mappings, auth settings, conflict resolution strategies, and optional subsystems (demo mode).
 
 The recommended approach is **schema-driven configuration**, where you pass a `schema` object and the engine auto-generates the database versions, table configs, and Dexie indexes. Alternatively, you can provide manual `tables` and `database` config for full control.
 
@@ -118,7 +109,6 @@ function initEngine(config: InitEngineInput): void
 | `config.syncDebounceMs` | `number` | Delay in ms before pushing local changes to Supabase after a write. Default: `2000`. |
 | `config.syncIntervalMs` | `number` | Interval in ms for periodic background sync polling. Default: `900000` (15 min). |
 | `config.tombstoneMaxAgeDays` | `number` | Days before soft-deleted records are permanently purged. Default: `7`. |
-| `config.crdt` | `CRDTConfig` | Enables the CRDT collaborative editing subsystem. Omit to disable. |
 | `config.demo` | `DemoConfig` | Enables demo mode with sandboxed database and mock data. |
 
 **Example — Schema-driven (recommended):**
@@ -146,7 +136,7 @@ initEngine({
 });
 ```
 
-**Example — With CRDT and demo mode:**
+**Example — With demo mode:**
 ```ts
 initEngine({
   prefix: 'notes',
@@ -157,7 +147,6 @@ initEngine({
     notebooks: 'order'
   },
   auth: { gateType: 'password' },
-  crdt: { persistIntervalMs: 30000 },
   demo: {
     seedData: async (db) => { /* seed mock data */ },
     mockProfile: { firstName: 'Demo', email: 'demo@example.com' }
@@ -182,7 +171,6 @@ interface SyncEngineConfig {
   syncDebounceMs: number;
   syncIntervalMs: number;
   tombstoneMaxAgeDays: number;
-  crdt?: CRDTConfig;
   demo?: DemoConfig;
 }
 ```
@@ -222,7 +210,6 @@ interface InitEngineInput {
   syncDebounceMs?: number;
   syncIntervalMs?: number;
   tombstoneMaxAgeDays?: number;
-  crdt?: CRDTConfig;
   demo?: DemoConfig;
 }
 ```
@@ -3189,7 +3176,7 @@ debug('error', 'Failed to push changes:', error);
 
 #### `isDebugMode()`
 
-Returns whether debug mode is currently enabled. Debug mode causes all `debug()` calls to output to the browser console, providing visibility into sync cycles, realtime events, and CRDT operations.
+Returns whether debug mode is currently enabled. Debug mode causes all `debug()` calls to output to the browser console, providing visibility into sync cycles and realtime events.
 
 **Signature:**
 ```ts
@@ -3211,7 +3198,7 @@ if (isDebugMode()) {
 
 #### `setDebugMode(enabled)`
 
-Enables or disables debug mode at runtime. When enabled, all `debug()` calls will output to the console, logging sync cycles, realtime events, CRDT operations, and more. The setting persists in localStorage so it survives page reloads.
+Enables or disables debug mode at runtime. When enabled, all `debug()` calls will output to the console, logging sync cycles, realtime events, and more. The setting persists in localStorage so it survives page reloads.
 
 **Signature:**
 ```ts
@@ -3243,7 +3230,7 @@ Unified diagnostics API for inspecting the engine's internal state. Useful for d
 
 #### `getDiagnostics()`
 
-Returns a comprehensive JSON snapshot of the entire engine state, including sync status, queue state, realtime connection, conflict history, network status, error history, and CRDT state.
+Returns a comprehensive JSON snapshot of the entire engine state, including sync status, queue state, realtime connection, conflict history, network status, and error history.
 
 **Signature:**
 ```ts
@@ -3428,8 +3415,7 @@ Generates a complete, idempotent SQL file that can be pasted directly into the S
 2. Helper trigger functions (`set_user_id`, `update_updated_at_column`)
 3. One `CREATE TABLE` block per schema table (with columns, RLS policies, triggers, indexes)
 4. `trusted_devices` table (unless `includeDeviceVerification: false`)
-5. `crdt_documents` table (only if `includeCRDT: true`)
-6. Supabase Realtime publication for all tables
+5. Supabase Realtime publication for all tables
 7. Storage bucket policies (if configured)
 
 Column types are inferred from field naming conventions:
@@ -3457,7 +3443,6 @@ function generateSupabaseSQL(
 |---|---|---|---|
 | `appName` | `string` | — | Application name for SQL comments. |
 | `prefix` | `string` | — | Table name prefix for multi-tenant setups. |
-| `includeCRDT` | `boolean` | `false` | Include `crdt_documents` table. |
 | `includeDeviceVerification` | `boolean` | `true` | Include `trusted_devices` table. |
 | `includeHelperFunctions` | `boolean` | `true` | Include trigger helper functions. |
 | `storage.buckets` | `StorageBucketConfig[]` | — | Storage buckets to create with RLS policies. |
@@ -3473,7 +3458,6 @@ const sql = generateSupabaseSQL({
 }, {
   appName: 'My App',
   prefix: 'myapp',
-  includeCRDT: true,
   storage: {
     buckets: [
       { name: 'avatars', public: true, maxFileSize: 2097152, allowedMimeTypes: ['image/png', 'image/jpeg'] }
@@ -4259,7 +4243,6 @@ interface SchemaConfig {
   path?: string;           // Default: 'src/lib/schema.ts'
   typesOutput?: string;    // Default: 'src/lib/types.generated.ts'
   autoMigrate?: boolean;   // Default: true (requires DATABASE_URL in .env)
-  includeCRDT?: boolean;   // Default: false
   customSQL?: string | string[];  // Paths to custom SQL files
 }
 ```
@@ -4295,8 +4278,7 @@ export default defineConfig({
       schema: {
         path: 'src/lib/schema.ts',
         typesOutput: 'src/lib/types.generated.ts',
-        autoMigrate: true,
-        includeCRDT: false
+        autoMigrate: true
       }
     })
   ]
@@ -4328,686 +4310,6 @@ schema: { customSQL: ['src/lib/rpc.sql', 'src/lib/views.sql'] }
 Custom SQL files are appended to the auto-generated schema SQL and executed on every build via the same Postgres connection. Paths are resolved relative to the project root.
 
 > **Warning:** Custom SQL is executed on **every build** (dev and production). All statements **must be idempotent** — use `CREATE OR REPLACE FUNCTION`, `CREATE TABLE IF NOT EXISTS`, `DO $$ ... END $$` guards, etc. Non-idempotent statements (e.g., bare `INSERT`, `CREATE FUNCTION` without `OR REPLACE`) will fail or produce duplicates on repeated builds.
-
----
-
-## CRDT Collaborative Editing
-
-Import from `stellar-drive/crdt`. Provides real-time collaborative document editing powered by Yjs. Consumers never need to install `yjs` directly — all necessary types and constructors are re-exported.
-
-The CRDT subsystem must be enabled by providing `crdt` config to `initEngine()`.
-
-### Document Lifecycle
-
-#### `openDocument(documentId, options?)`
-
-Opens a CRDT document for collaborative editing. Loads the document state from IndexedDB (if available) or Supabase, establishes a Supabase Broadcast channel for real-time sync, and starts awareness (presence tracking).
-
-**Idempotent** — calling with the same `documentId` returns the existing provider.
-
-**Signature:**
-```ts
-function openDocument(
-  documentId: string,
-  options?: OpenDocumentOptions
-): Promise<CRDTProvider>
-```
-
-**Types:**
-```ts
-interface OpenDocumentOptions {
-  offlineEnabled?: boolean;
-  initialPresence?: Partial<UserPresenceState>;
-}
-
-interface CRDTProvider {
-  doc: YDoc;
-  documentId: string;
-  destroy(): Promise<void>;
-}
-```
-
-**Example:**
-```ts
-import { openDocument, createSharedText } from 'stellar-drive/crdt';
-
-const provider = await openDocument('page-123');
-const text = createSharedText(provider.doc);
-// Use `text` with a Yjs-compatible editor (e.g., TipTap, ProseMirror)
-```
-
----
-
-#### `closeDocument(documentId)`
-
-Closes a specific CRDT document. Saves the final state to IndexedDB (if offline-enabled), persists to Supabase if dirty and online, leaves the Broadcast channel and presence, destroys the `Y.Doc`, and removes the provider from the active registry. No-op if the document is not currently open.
-
-**Signature:**
-```ts
-function closeDocument(documentId: string): Promise<void>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The unique document identifier to close. |
-
-**Returns:** `Promise<void>` — Resolves when the document has been fully cleaned up.
-
-**Example:**
-```ts
-import { closeDocument } from 'stellar-drive/crdt';
-
-// Close a single document (e.g., when navigating away from the editor page)
-await closeDocument('doc-123');
-```
-
----
-
-#### `closeAllDocuments()`
-
-Closes all currently open CRDT documents in parallel. Each document is saved, persisted (if dirty and online), and cleaned up. Call this during app teardown or sign-out to ensure all collaborative documents are properly saved and all Broadcast channels are disconnected.
-
-**Signature:**
-```ts
-function closeAllDocuments(): Promise<void>
-```
-
-**Returns:** `Promise<void>` — Resolves when all documents have been closed. Uses `Promise.allSettled` internally so one document's failure doesn't block others.
-
-**Example:**
-```ts
-import { closeAllDocuments } from 'stellar-drive/crdt';
-
-// During sign-out flow
-async function handleSignOut() {
-  await closeAllDocuments();
-  // Now safe to clear auth state, redirect to login, etc.
-}
-```
-
----
-
-### Shared Type Factories
-
-Factory functions that create Yjs shared types on a document. These are the building blocks for collaborative data structures. Each factory takes a `Y.Doc` and an optional name string. If the type already exists in the doc (e.g., from a previous session or a remote peer), the existing instance is returned — Yjs shared types are singletons keyed by name within a doc.
-
-#### `createSharedText(doc, name?)`
-
-Gets or creates a `Y.Text` shared type within a Yjs document. `Y.Text` supports rich text with formatting attributes (bold, italic, etc.) and is the standard type for collaborative text editors like TipTap, ProseMirror, or CodeMirror.
-
-**Signature:**
-```ts
-function createSharedText(doc: YDoc, name?: string): YText
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `doc` | `YDoc` | — | The Yjs document instance (from `provider.doc`). |
-| `name` | `string` | `'text'` | The shared type name (unique within the document). |
-
-**Returns:** `YText` — The shared text instance, either existing or newly created.
-
-**Example:**
-```ts
-import { openDocument, createSharedText } from 'stellar-drive/crdt';
-
-const provider = await openDocument('doc-1', 'page-1');
-const title = createSharedText(provider.doc, 'title');
-title.insert(0, 'My Page Title');
-
-// Use with TipTap editor:
-// new Editor({ extensions: [Collaboration.configure({ document: provider.doc, field: 'title' })] })
-```
-
----
-
-#### `createSharedXmlFragment(doc, name?)`
-
-Gets or creates a `Y.XmlFragment` shared type within a Yjs document. `Y.XmlFragment` is the standard container for block-based editors (ProseMirror, TipTap, BlockNote). It represents a tree of XML elements that maps to the editor's document model.
-
-**Signature:**
-```ts
-function createSharedXmlFragment(doc: YDoc, name?: string): YXmlFragment
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `doc` | `YDoc` | — | The Yjs document instance. |
-| `name` | `string` | `'content'` | The shared type name. |
-
-**Returns:** `YXmlFragment` — The shared XML fragment instance.
-
-**Example:**
-```ts
-import { openDocument, createSharedXmlFragment } from 'stellar-drive/crdt';
-
-const provider = await openDocument('doc-1', 'page-1');
-const content = createSharedXmlFragment(provider.doc, 'content');
-// Use with TipTap:
-// new Editor({ extensions: [Collaboration.configure({ fragment: content })] })
-```
-
----
-
-#### `createSharedArray(doc, name?)`
-
-Gets or creates a `Y.Array` shared type within a Yjs document. `Y.Array` is a CRDT list type suitable for ordered collections (e.g., a list of block IDs, kanban columns, or comment threads).
-
-**Signature:**
-```ts
-function createSharedArray<T>(doc: YDoc, name?: string): YArray<T>
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `doc` | `YDoc` | — | The Yjs document instance. |
-| `name` | `string` | `'array'` | The shared type name. |
-
-**Returns:** `YArray<T>` — The shared array instance.
-
-**Example:**
-```ts
-import { openDocument, createSharedArray } from 'stellar-drive/crdt';
-
-const provider = await openDocument('doc-1', 'page-1');
-const blockOrder = createSharedArray<string>(provider.doc, 'blockOrder');
-blockOrder.push(['block-1', 'block-2', 'block-3']);
-```
-
----
-
-#### `createSharedMap(doc, name?)`
-
-Gets or creates a `Y.Map` shared type within a Yjs document. `Y.Map` is a CRDT key-value map suitable for document metadata, settings, or per-block properties.
-
-**Signature:**
-```ts
-function createSharedMap<T>(doc: YDoc, name?: string): YMap<T>
-```
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `doc` | `YDoc` | — | The Yjs document instance. |
-| `name` | `string` | `'map'` | The shared type name. |
-
-**Returns:** `YMap<T>` — The shared map instance.
-
-**Example:**
-```ts
-import { openDocument, createSharedMap } from 'stellar-drive/crdt';
-
-const provider = await openDocument('doc-1', 'page-1');
-const settings = createSharedMap<string>(provider.doc, 'settings');
-settings.set('theme', 'dark');
-settings.set('fontSize', '14');
-```
-
----
-
-#### `createBlockDocument(doc)`
-
-Sets up a standard "block document" structure within a Yjs document. Creates two shared types commonly used by Notion-style block editors: a `Y.XmlFragment` named `'content'` for the block tree (paragraphs, headings, lists, etc.) and a `Y.Map` named `'meta'` for per-document metadata (title, icon, cover, properties, etc.). This is a convenience wrapper — you can also create these types individually using the other factory functions.
-
-**Signature:**
-```ts
-function createBlockDocument(doc: YDoc): { content: YXmlFragment; meta: YMap<unknown> }
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `doc` | `YDoc` | The Yjs document instance. |
-
-**Returns:** `{ content: YXmlFragment; meta: YMap<unknown> }` — Object with `content` (block tree) and `meta` (metadata map) shared types.
-
-**Example:**
-```ts
-import { openDocument, createBlockDocument } from 'stellar-drive/crdt';
-
-const provider = await openDocument('doc-1', 'page-1');
-const { content, meta } = createBlockDocument(provider.doc);
-meta.set('title', 'My Page');
-meta.set('icon', '📝');
-// Pass `content` to your block editor's collaboration extension
-```
-
----
-
-### Yjs Re-exports
-
-These re-exports allow consumers to work with Yjs without installing it directly:
-
-| Export | Yjs Type | Description |
-|---|---|---|
-| `YDoc` | `Doc` | The root Yjs document (class, can be instantiated) |
-| `YText` | `Text` | Collaborative text type |
-| `YXmlFragment` | `XmlFragment` | XML fragment type |
-| `YArray` | `Array` | Ordered array type |
-| `YMap` | `Map` | Key-value map type |
-| `YXmlElement` | `XmlElement` | XML element type |
-
----
-
-### Awareness / Presence
-
-Track which users are currently viewing or editing a document, their cursor positions, and selections.
-
-#### `updateCursor(documentId, cursor, selection?)`
-
-Updates the local user's cursor position and optional selection in a document. Debounced to `cursorDebounceMs` (default 50ms) to avoid flooding the Presence channel with rapid cursor movements. The cursor and selection values are opaque to the engine — pass whatever your editor provides.
-
-**Signature:**
-```ts
-function updateCursor(
-  documentId: string,
-  cursor: unknown,
-  selection?: unknown
-): void
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The document to update cursor for. |
-| `cursor` | `unknown` | Editor-specific cursor position (opaque to the engine). |
-| `selection` | `unknown` | Optional editor-specific selection range. |
-
-**Returns:** `void`
-
-**Example:**
-```ts
-import { updateCursor } from 'stellar-drive/crdt';
-
-// In your TipTap editor's selection change handler:
-editor.on('selectionUpdate', ({ editor }) => {
-  updateCursor('doc-1', editor.state.selection.anchor, editor.state.selection);
-});
-```
-
----
-
-#### `getCollaborators(documentId)`
-
-Returns all currently active remote collaborators in a document. Excludes the local user (they don't need to see their own cursor). Each collaborator includes their name, deterministically assigned color, cursor position, and selection.
-
-**Signature:**
-```ts
-function getCollaborators(documentId: string): UserPresenceState[]
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The document to get collaborators for. |
-
-**Returns:** `UserPresenceState[]` — Array of presence states for remote collaborators.
-
-**Type:**
-```ts
-interface UserPresenceState {
-  userId: string;
-  deviceId: string;
-  name: string;
-  color: string;
-  cursor?: unknown;
-  selection?: unknown;
-  lastActiveAt: string;
-}
-```
-
-**Example:**
-```ts
-import { getCollaborators } from 'stellar-drive/crdt';
-
-const collaborators = getCollaborators('doc-1');
-collaborators.forEach(c => {
-  console.log(`${c.name} is editing (color: ${c.color})`);
-});
-// [{ userId: '...', name: 'Alice', color: '#E57373', cursor: 42 }]
-```
-
----
-
-#### `onCollaboratorsChange(documentId, callback)`
-
-Subscribes to collaborator changes for a document. The callback fires whenever a collaborator joins, leaves, or updates their cursor position. The callback receives the current list of remote collaborators (excluding the local user). Returns an unsubscribe function for cleanup.
-
-**Signature:**
-```ts
-function onCollaboratorsChange(
-  documentId: string,
-  callback: (collaborators: UserPresenceState[]) => void
-): () => void
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The document to subscribe to. |
-| `callback` | `(collaborators: UserPresenceState[]) => void` | Called with the updated collaborator list. |
-
-**Returns:** `() => void` — Unsubscribe function. Call it to stop receiving updates.
-
-**Example:**
-```ts
-import { onCollaboratorsChange } from 'stellar-drive/crdt';
-
-// In a Svelte component
-let collaborators = $state<UserPresenceState[]>([]);
-
-$effect(() => {
-  const unsubscribe = onCollaboratorsChange('doc-1', (collabs) => {
-    collaborators = collabs;
-  });
-  return unsubscribe;
-});
-
-// Render avatar list from `collaborators`
-```
-
----
-
-#### `assignColor(userId)`
-
-Deterministically assigns a hex color string to a user ID from a 12-color palette. Uses a simple hash of the userId to index into the palette. The same userId always gets the same color across sessions and devices, ensuring consistent collaborator colors.
-
-**Signature:**
-```ts
-function assignColor(userId: string): string
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `userId` | `string` | The user's UUID. |
-
-**Returns:** `string` — A hex color string from the 12-color palette (e.g., `'#E57373'`).
-
-**Example:**
-```ts
-import { assignColor } from 'stellar-drive/crdt';
-
-const color = assignColor('user-abc-123');
-// '#64B5F6' — always the same for this userId
-// Use for cursor color, avatar ring, selection highlight, etc.
-```
-
----
-
-### Offline Management
-
-#### `enableOffline(pageId, documentId)`
-
-Marks a CRDT document for offline storage so it's available without network access. Persists the document's current Yjs state to IndexedDB. If the document is currently open in a provider, its live state is saved. If not open but online, the state is fetched from Supabase. Enforces the `maxOfflineDocuments` limit configured in `CRDTConfig` (default: 50).
-
-**Signature:**
-```ts
-function enableOffline(pageId: string, documentId: string): Promise<void>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `pageId` | `string` | The page/entity this document belongs to. |
-| `documentId` | `string` | The unique document identifier. |
-
-**Returns:** `Promise<void>` — Resolves when the document is saved for offline access.
-
-**Throws:**
-- `Error` if the offline document limit has been reached.
-- `Error` if the document is not open and the device is offline (can't fetch remote state).
-
-**Example:**
-```ts
-import { enableOffline } from 'stellar-drive/crdt';
-
-// Mark a document for offline access
-await enableOffline('page-1', 'doc-1');
-// Document is now available even without network connectivity
-```
-
----
-
-#### `disableOffline(pageId, documentId)`
-
-Removes a CRDT document from offline storage. Deletes the document and all its pending updates from IndexedDB. If the document is currently open in a provider, it continues to work in memory but will no longer persist to IndexedDB.
-
-**Signature:**
-```ts
-function disableOffline(pageId: string, documentId: string): Promise<void>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `pageId` | `string` | The page/entity this document belongs to (kept for API consistency). |
-| `documentId` | `string` | The document to remove from offline storage. |
-
-**Returns:** `Promise<void>` — Resolves when the document has been removed from offline storage.
-
-**Example:**
-```ts
-import { disableOffline } from 'stellar-drive/crdt';
-
-await disableOffline('page-1', 'doc-1');
-// Document is no longer available offline
-```
-
----
-
-#### `isOfflineEnabled(documentId)`
-
-Checks whether a specific document is stored for offline access. Reads the document record from IndexedDB and checks the `offlineEnabled` flag.
-
-**Signature:**
-```ts
-function isOfflineEnabled(documentId: string): Promise<boolean>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The document to check. |
-
-**Returns:** `Promise<boolean>` — `true` if the document has `offlineEnabled: 1` in IndexedDB.
-
-**Example:**
-```ts
-import { isOfflineEnabled } from 'stellar-drive/crdt';
-
-const offline = await isOfflineEnabled('doc-1');
-if (offline) {
-  console.log('This document is available offline');
-}
-```
-
----
-
-#### `getOfflineDocuments()`
-
-Returns all CRDT document records that are stored for offline access. Each record includes the document ID, page ID, state size, timestamps, and sync status.
-
-**Signature:**
-```ts
-function getOfflineDocuments(): Promise<CRDTDocumentRecord[]>
-```
-
-**Returns:** `Promise<CRDTDocumentRecord[]>` — Array of document records with `offlineEnabled: 1`.
-
-**Example:**
-```ts
-import { getOfflineDocuments } from 'stellar-drive/crdt';
-
-const docs = await getOfflineDocuments();
-console.log(`${docs.length} documents available offline`);
-docs.forEach(d => console.log(`${d.documentId}: ${d.stateSize} bytes`));
-```
-
----
-
-#### `loadDocumentByPageId(pageId)`
-
-Loads a CRDT document record from IndexedDB by its page reference ID. Pages have at most one CRDT document. Returns the full document record including the Yjs binary state, or `undefined` if not found.
-
-**Signature:**
-```ts
-function loadDocumentByPageId(pageId: string): Promise<CRDTDocumentRecord | undefined>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `pageId` | `string` | The page/entity ID to look up. |
-
-**Returns:** `Promise<CRDTDocumentRecord | undefined>` — The document record, or `undefined` if no offline document exists for this page.
-
-**Example:**
-```ts
-import { loadDocumentByPageId } from 'stellar-drive/crdt';
-
-const record = await loadDocumentByPageId('page-123');
-if (record) {
-  console.log(`Found offline document: ${record.documentId} (${record.stateSize} bytes)`);
-}
-```
-
----
-
-#### `deleteDocumentState(documentId)`
-
-Deletes a CRDT document's offline state from IndexedDB. Also clears all associated pending crash-recovery updates for the document.
-
-**Signature:**
-```ts
-function deleteDocumentState(documentId: string): Promise<void>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The document to delete from offline storage. |
-
-**Returns:** `Promise<void>` — Resolves when the document and its pending updates are deleted.
-
-**Example:**
-```ts
-import { deleteDocumentState } from 'stellar-drive/crdt';
-
-// Manually clean up a document's offline data
-await deleteDocumentState('doc-123');
-```
-
----
-
-### Persistence (Advanced)
-
-Low-level persistence functions. The CRDT provider automatically handles persistence during normal operation — these are for advanced use cases like forced saves or manual cleanup.
-
-#### `persistDocument(documentId, doc)`
-
-Immediately saves a Yjs document's full state to Supabase via upsert. The upsert key is `page_id` (unique per user via RLS). On success, clears all `crdtPendingUpdates` for this document in IndexedDB and updates `lastPersistedAt` in the local record. The CRDT provider calls this automatically on a periodic timer (`persistIntervalMs`, default 30s), but you can call it manually for a forced save.
-
-**Signature:**
-```ts
-function persistDocument(documentId: string, doc: YDoc): Promise<void>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `documentId` | `string` | The document identifier (for logging and IndexedDB updates). |
-| `doc` | `YDoc` | The Yjs document to persist. |
-
-**Returns:** `Promise<void>` — Resolves when the Supabase upsert succeeds.
-
-**Throws:** `Error` if the Supabase upsert fails or no active provider exists for this document.
-
-**Example:**
-```ts
-import { openDocument, persistDocument } from 'stellar-drive/crdt';
-
-const provider = await openDocument('doc-1', 'page-1');
-// ... make edits ...
-// Force an immediate save to Supabase
-await persistDocument('doc-1', provider.doc);
-```
-
----
-
-#### `persistAllDirty()`
-
-Persists all active documents that have unsaved changes (dirty flag set) to Supabase. Iterates all active providers, checks each for dirty state, and persists each one. Errors are caught per-document so one failure doesn't block others. Useful as a manual "save all" action or for pre-close cleanup.
-
-**Signature:**
-```ts
-function persistAllDirty(): Promise<void>
-```
-
-**Returns:** `Promise<void>` — Resolves when all dirty documents have been persisted (or failed individually).
-
-**Example:**
-```ts
-import { persistAllDirty } from 'stellar-drive/crdt';
-
-// Save all unsaved CRDT documents before app teardown
-await persistAllDirty();
-```
-
----
-
-#### `deleteRemoteDocument(pageId)`
-
-Deletes a CRDT document from Supabase by page ID. Removes the row from the `crdt_documents` table. RLS scopes the delete to the current user's row. No-op if the row doesn't exist.
-
-**Signature:**
-```ts
-function deleteRemoteDocument(pageId: string): Promise<void>
-```
-
-| Parameter | Type | Description |
-|---|---|---|
-| `pageId` | `string` | The page/entity ID whose CRDT document should be deleted from Supabase. |
-
-**Returns:** `Promise<void>` — Resolves when the remote document is deleted (or if it didn't exist).
-
-**Example:**
-```ts
-import { deleteRemoteDocument } from 'stellar-drive/crdt';
-
-// When deleting a page, also clean up its CRDT document
-await deleteRemoteDocument('page-123');
-```
-
----
-
-### CRDT Diagnostics
-
-#### `getCRDTDiagnostics()`
-
-Returns a comprehensive diagnostic snapshot of the CRDT subsystem. Includes active documents with their state sizes and connection states, collaborator counts, offline storage usage and per-document details, pending crash-recovery updates, and the resolved CRDT configuration. If CRDT is not enabled, returns a minimal object with `enabled: false`. This is an async function because it reads from IndexedDB for offline and pending data.
-
-**Signature:**
-```ts
-function getCRDTDiagnostics(): Promise<DiagnosticsSnapshot['crdt']>
-```
-
-**Returns:** `Promise<DiagnosticsSnapshot['crdt']>` — Object with `enabled`, `config`, `activeDocuments`, `activeDocumentCount`, `offline` (storage stats), `pendingUpdates`, and `totalPendingUpdates`.
-
-**Example:**
-```ts
-import { getCRDTDiagnostics } from 'stellar-drive/crdt';
-
-const crdt = await getCRDTDiagnostics();
-console.log(`CRDT enabled: ${crdt.enabled}`);
-console.log(`Active documents: ${crdt.activeDocumentCount}`);
-console.log(`Offline documents: ${crdt.offline.documentCount}/${crdt.offline.maxDocuments}`);
-console.log(`Offline storage: ${crdt.offline.totalSizeFormatted}`);
-console.log(`Pending updates: ${crdt.totalPendingUpdates}`);
-```
-
----
-
-### CRDT Configuration Types
-
-```ts
-interface CRDTConfig {
-  persistIntervalMs?: number;        // Default: 30000 (30s)
-  broadcastDebounceMs?: number;      // Default: 100
-  localSaveDebounceMs?: number;      // Default: 5000
-  cursorDebounceMs?: number;         // Default: 50
-  maxOfflineDocuments?: number;      // Default: 50
-  maxBroadcastPayloadBytes?: number; // Default: 256000 (250KB)
-}
-```
 
 ---
 
@@ -5458,8 +4760,6 @@ interface SQLGenerationOptions {
   appName?: string;
   /** Table name prefix for multi-tenant setups. */
   prefix?: string;
-  /** Include crdt_documents table. @default false */
-  includeCRDT?: boolean;
   /** Include trusted_devices table. @default true */
   includeDeviceVerification?: boolean;
   /** Include trigger helper functions. @default true */
@@ -5588,107 +4888,6 @@ interface CrudCollectionStoreConfig<T> {
 
 ---
 
-### CRDT Types
-
-#### `CRDTConfig`
-
-Configuration for the CRDT collaborative editing subsystem. All fields are optional with sensible defaults.
-
-```ts
-interface CRDTConfig {
-  /** Supabase table name for CRDT document storage. @default 'crdt_documents' */
-  supabaseTable?: string;
-  /** How often to persist dirty documents to Supabase (ms). @default 30000 */
-  persistIntervalMs?: number;
-  /** Debounce for broadcasting Yjs updates to peers (ms). @default 100 */
-  broadcastDebounceMs?: number;
-  /** Debounce for local IndexedDB full-state saves (ms). @default 5000 */
-  localSaveDebounceMs?: number;
-  /** Debounce for cursor/presence updates (ms). @default 50 */
-  cursorDebounceMs?: number;
-  /** Maximum documents stored for offline access. @default 50 */
-  maxOfflineDocuments?: number;
-  /** Maximum Broadcast payload size in bytes. @default 256000 */
-  maxBroadcastPayloadBytes?: number;
-}
-```
-
-**Usage:** Pass to `initEngine({ crdt: { ... } })`.
-
----
-
-#### `CRDTProvider`
-
-Public interface for a CRDT document provider. Returned by `openDocument()`. Provides access to the Yjs document instance and metadata.
-
-```ts
-interface CRDTProvider {
-  /** The Yjs document instance — use with your editor. */
-  readonly doc: YDoc;
-  /** Unique document identifier. */
-  readonly documentId: string;
-  /** The page/entity this document belongs to. */
-  readonly pageId: string;
-  /** Current Broadcast channel connection state. */
-  readonly connectionState: CRDTConnectionState;
-  /** Whether the document has unsaved changes. */
-  readonly isDirty: boolean;
-  /** Resolves when network sync (channel join + sync protocol) completes. */
-  readonly networkReady: Promise<void>;
-  /** Destroy this provider and release all resources. */
-  destroy(): Promise<void>;
-}
-```
-
-**Usage:** Returned by `openDocument()`. Pass `provider.doc` to your editor's collaboration extension.
-
----
-
-#### `OpenDocumentOptions`
-
-Options for `openDocument()`.
-
-```ts
-interface OpenDocumentOptions {
-  /** Whether this document should be persisted to IndexedDB for offline access. @default false */
-  offlineEnabled?: boolean;
-  /** Initial presence info for awareness tracking. */
-  initialPresence?: {
-    name: string;
-    avatarUrl?: string;
-  };
-}
-```
-
----
-
-#### `UserPresenceState`
-
-Per-user cursor/presence state for awareness tracking. Represents a remote collaborator's current position and identity within a document.
-
-```ts
-interface UserPresenceState {
-  /** Supabase user UUID. */
-  userId: string;
-  /** Stable device identifier. */
-  deviceId: string;
-  /** Display name (from initialPresence). */
-  name: string;
-  /** Deterministically assigned hex color. */
-  color: string;
-  /** Editor-specific cursor position (opaque to the engine). */
-  cursor?: unknown;
-  /** Editor-specific selection range (opaque to the engine). */
-  selection?: unknown;
-  /** ISO 8601 timestamp of last activity. */
-  lastActiveAt: string;
-}
-```
-
-**Usage:** Returned by `getCollaborators()` and passed to `onCollaboratorsChange()` callbacks.
-
----
-
 ### Diagnostics Types
 
 #### `DiagnosticsSnapshot`
@@ -5707,7 +4906,6 @@ interface DiagnosticsSnapshot {
   network: { online };
   engine: { isTabVisible, lockHeld, wasOffline, ... };
   conflicts: { recentHistory, totalCount };
-  crdt: { enabled, activeDocuments, offline, pendingUpdates, ... };
   errors: { lastError, lastErrorDetails, recentErrors };
   config: { tableCount, tableNames, syncDebounceMs, ... };
 }

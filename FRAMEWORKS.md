@@ -14,7 +14,7 @@ This guide assumes you have:
 
 - **Basic JavaScript/TypeScript knowledge** -- variables, functions, `async`/`await`, promises, objects, and arrays.
 - **General web development familiarity** -- you know what a browser is, what HTML/CSS does, and roughly what a server does.
-- **No prior knowledge required** of IndexedDB, Dexie.js, Supabase, Svelte, SvelteKit, or Yjs. Each section starts from scratch.
+- **No prior knowledge required** of IndexedDB, Dexie.js, Supabase, Svelte, or SvelteKit. Each section starts from scratch.
 
 If you are an AI coding assistant, this document provides the context you need to understand why code is structured the way it is, what trade-offs were made, and how the pieces fit together.
 
@@ -27,7 +27,6 @@ If you are an AI coding assistant, this document provides the context you need t
 3. [Supabase (Backend-as-a-Service)](#3-supabase-backend-as-a-service) -- The remote server, database, auth, and real-time infrastructure
 4. [Svelte (UI Framework)](#4-svelte-ui-framework) -- The compiler-based UI framework for building interfaces
 5. [SvelteKit (Application Framework)](#5-sveltekit-application-framework) -- The full-stack framework that adds routing, SSR, and deployment
-6. [Yjs (CRDT Library)](#6-yjs-crdt-library) -- Real-time collaborative editing without conflicts
 
 ---
 
@@ -413,7 +412,7 @@ Supabase Realtime uses WebSockets to push database changes to connected clients 
 Supabase Realtime has three modes:
 
 - **Postgres Changes** -- subscribe to INSERT, UPDATE, DELETE events on specific tables. The server watches PostgreSQL's write-ahead log and pushes changes to subscribed clients.
-- **Broadcast** -- a pub/sub channel not tied to database tables. Any client can publish a message, and all other clients on the same channel receive it. Useful for ephemeral data like cursor positions or CRDT document updates.
+- **Broadcast** -- a pub/sub channel not tied to database tables. Any client can publish a message, and all other clients on the same channel receive it. Useful for ephemeral data like cursor positions.
 - **Presence** -- tracks which users are currently connected to a channel. Each client can share arbitrary state (like their cursor position), and all clients receive join/leave events. Useful for "who's online" features.
 
 #### Row Level Security (RLS)
@@ -528,13 +527,12 @@ supabase
 - **Table prefixing for multi-tenant isolation.** All app-defined tables in Supabase are prefixed with the app's `prefix` value from `initEngine()`. For example, with `prefix: 'myapp'` and a schema key `tasks`, the actual Supabase table name is `myapp_tasks`. This allows multiple apps to share a single Supabase project without table name collisions. Consumer code and IndexedDB always use the unprefixed names -- the engine transparently adds and strips the prefix when communicating with Supabase.
 - **REST API for push/pull sync operations.** The engine pushes local changes to the server via Supabase's REST API (insert, update, upsert) and pulls remote changes by querying for records updated since the last sync cursor (an `updated_at` timestamp stored in localStorage).
 - **Realtime Postgres Changes for instant cross-device updates.** The engine subscribes to PostgreSQL changes on every configured table via Supabase Realtime. When Device A pushes a change, Device B receives it within milliseconds via WebSocket instead of waiting for the next background poll.
-- **Realtime Broadcast for CRDT document sync.** Yjs document updates (typically a few bytes per keystroke) are broadcast to other connected clients via Supabase's Broadcast pub/sub channel. This avoids writing every keystroke to the database.
 - **Realtime Presence for collaborative cursor tracking.** Supabase Presence tracks which users are currently viewing or editing a document, enabling features like showing collaborator cursors.
 - **Auth for single-user PIN mode.** The engine uses Supabase Auth for user registration, login, session management, and token refresh. In single-user mode, the PIN or password is padded to meet Supabase's minimum password length and used as a real Supabase password, giving the user a real `auth.uid()` for RLS compliance.
 - **RLS policies enforce per-user data access.** Every table uses `user_id = auth.uid()` policies so users can only access their own data, enforced at the database level. The engine auto-generates these policies via `generateSupabaseSQL()`.
 - **SQL generation from schema.** The engine can generate complete Supabase SQL (CREATE TABLE, RLS policies, triggers, indexes, realtime publication) from the same declarative schema passed to `initEngine()`, so the schema in code is the single source of truth for both IndexedDB and PostgreSQL.
 
-> **Section Summary:** Supabase is the remote backend that stellar-drive syncs with. It provides the PostgreSQL database for durable storage, authentication for user identity, Realtime for instant cross-device updates and CRDT broadcasting, Row Level Security for server-enforced data isolation, and an auto-generated REST API that eliminates the need for custom server code. The engine abstracts all Supabase interactions behind its own API, so consumer apps never call Supabase directly.
+> **Section Summary:** Supabase is the remote backend that stellar-drive syncs with. It provides the PostgreSQL database for durable storage, authentication for user identity, Realtime for instant cross-device updates, Row Level Security for server-enforced data isolation, and an auto-generated REST API that eliminates the need for custom server code. The engine abstracts all Supabase interactions behind its own API, so consumer apps never call Supabase directly.
 
 ---
 
@@ -900,119 +898,3 @@ SvelteKit integration is provided through the `stellar-drive/kit` subpath export
 
 > **Section Summary:** SvelteKit is the full-stack framework that provides routing, server-side rendering, API endpoints, and deployment for Svelte applications. stellar-drive offers optional SvelteKit integrations through `stellar-drive/kit` -- factory functions for layout load functions, server API handlers, auth hydration, and service worker management -- so consumer apps can wire up the engine with minimal boilerplate.
 
----
-
-## 6. Yjs (CRDT Library)
-
-### What Is It?
-
-Yjs is a high-performance implementation of CRDTs (Conflict-free Replicated Data Types) in JavaScript. It enables real-time collaborative editing -- the kind of experience you see in Google Docs, where multiple users can edit the same document simultaneously and all changes merge together automatically.
-
-### Why Does stellar-drive Use It?
-
-The engine's regular sync system (push/pull with conflict resolution) handles structured records -- rows in a table with fields like `title`, `completed`, `order`. When two devices change the same field on the same record, the engine uses last-write-wins or additive merge to resolve the conflict. This works well for discrete values but **breaks down for text** -- you cannot meaningfully "last-write-wins" two people typing in the same paragraph.
-
-Yjs solves the text problem by tracking every individual character insertion and deletion as a separate, ordered operation. This is why the engine uses **both** systems: structured records go through the push/pull sync queue, and rich text content goes through Yjs.
-
-### What are CRDTs?
-
-CRDT stands for **Conflict-free Replicated Data Type**. To understand why they matter, consider the problem they solve.
-
-Imagine two users, Alice and Bob, are editing the same text document that currently says "The cat". Alice adds " sat" at the end (making "The cat sat"), and at the same time (before either sees the other's change), Bob adds "big " before "cat" (making "The big cat"). With a naive approach, you have a conflict -- whose version wins? Do you overwrite one person's work? Show a conflict dialog?
-
-CRDTs are data structures mathematically designed so that **any two copies can always be merged automatically, without conflicts, regardless of the order operations arrive**. Both edits survive: the final document becomes "The big cat sat" on every device, even if the operations arrive in different orders.
-
-The key insight is that each operation in a CRDT carries enough metadata (who made it, when, and where in the document) to be placed unambiguously, no matter what other operations have been applied. This is achieved through a structure where each character (or element) has a globally unique ID and a reference to its left neighbor at the time of insertion.
-
-### Why CRDTs Over Other Approaches
-
-Without CRDTs, collaborative editing requires a central server that serializes all operations (like Operational Transformation, used by the original Google Docs). That approach:
-- Requires a persistent server connection
-- Does not work offline
-- Has complex edge cases around operation ordering that are hard to get right
-
-CRDTs eliminate these problems. Each client has a complete local copy, can edit freely offline, and merges are always automatic and correct. This aligns perfectly with an offline-first architecture.
-
-### Key Concepts You Need to Know
-
-#### Shared Types in Yjs
-
-Yjs provides several collaborative data types that mirror common JavaScript data structures:
-
-**`Y.Text`** is collaborative text. Multiple users can type, delete, and format text simultaneously. It supports rich-text attributes (bold, italic, etc.) and is commonly used with text editors like Tiptap, ProseMirror, or CodeMirror:
-
-```javascript
-const ytext = ydoc.getText('document-title');
-ytext.insert(0, 'Hello ');       // Insert "Hello " at position 0
-ytext.insert(6, 'World');        // Insert "World" at position 6
-ytext.toString();                // "Hello World"
-
-// Rich text formatting
-ytext.format(0, 5, { bold: true });  // Make "Hello" bold
-```
-
-**`Y.Array`** is a collaborative ordered list. Items can be inserted, deleted, and moved by multiple users:
-
-```javascript
-const yarray = ydoc.getArray('todo-list');
-yarray.insert(0, ['Buy groceries']);
-yarray.insert(1, ['Walk the dog']);
-yarray.push(['Read a book']);
-yarray.toArray();  // ['Buy groceries', 'Walk the dog', 'Read a book']
-```
-
-**`Y.Map`** is a collaborative key-value store, like a JavaScript object that multiple users can edit:
-
-```javascript
-const ymap = ydoc.getMap('settings');
-ymap.set('theme', 'dark');
-ymap.set('fontSize', 14);
-ymap.get('theme');  // 'dark'
-```
-
-**`Y.XmlFragment`** is a collaborative XML tree structure. It is primarily used by block editors like Tiptap (which represents documents as XML-like trees of nodes):
-
-```javascript
-const yfragment = ydoc.getXmlFragment('editor-content');
-// Typically manipulated by editor bindings, not directly
-```
-
-#### How Sync Works in Yjs
-
-Each Yjs document (`Y.Doc`) tracks all changes as operations. Every operation is uniquely identified by a `(clientId, clock)` tuple:
-
-- **clientId**: a random number assigned to each peer (browser tab, device)
-- **clock**: a counter that increments with each operation on that client
-
-This means every character typed, every deletion, every formatting change has a globally unique identifier.
-
-**State vectors** track what each peer has seen. A state vector is a map of `{ clientId: lastSeenClock }`. When two peers connect, they exchange state vectors, and each peer can compute exactly which operations the other is missing.
-
-**Delta sync** means only missing operations are sent. If Alice has made 1000 edits and Bob has seen 990 of them, only the 10 missing edits are transmitted. This makes sync extremely efficient, even for large documents.
-
-**Merging** is automatic and deterministic. Given the same set of operations (in any order), every peer produces the exact same final document. There are no conflicts, no merge dialogs, no "your version vs. their version."
-
-### How stellar-drive Uses Yjs
-
-The engine's CRDT subsystem is optional (enabled by passing `crdt: true` or `crdt: {}` to `initEngine()`) and used for rich collaborative content like text documents or structured editors:
-
-```typescript
-// Enabling CRDT support in the engine configuration
-initEngine({
-  prefix: 'myapp',
-  schema: {
-    tasks: 'project_id, order',
-    settings: { singleton: true },
-  },
-  auth: { gateType: 'code', codeLength: 6 },
-  crdt: true,
-});
-```
-
-- **Documents are `Y.Doc` instances managed by `CRDTProvider`.** Each collaborative document is opened via `openDocument(documentId, pageId)`, which returns a provider containing the `Y.Doc`. The provider manages the full lifecycle: loading state, wiring up persistence, and broadcasting updates.
-- **Updates broadcast via Supabase Realtime Broadcast** (not database writes per keystroke). When a user types a character, the Yjs update (typically a few bytes) is broadcast to other connected clients via Supabase's pub/sub channel. This is far more efficient than writing every keystroke to the database.
-- **Two IndexedDB tables for local persistence.** `crdtDocuments` stores the full Yjs document state (for offline access and cross-session recovery). `crdtPendingUpdates` stores incremental update deltas for crash safety -- if the browser crashes between full saves, these deltas are replayed on next load.
-- **Periodic full-state persistence to Supabase.** The complete document state is saved to the `crdt_documents` Supabase table at regular intervals. This serves as a durable backup and allows new devices to load the latest state without replaying all historical operations.
-- **Consumers never need to import Yjs directly.** All Yjs types and utilities needed by consumer applications are re-exported from the `stellar-drive/crdt` subpath export, keeping the dependency tree clean.
-
-> **Section Summary:** Yjs is a CRDT library that enables conflict-free collaborative editing for rich text and structured content. stellar-drive uses it as a complement to its regular record-based sync -- structured data goes through the push/pull queue, while collaborative text goes through Yjs. Updates are broadcast in real time via Supabase Realtime, persisted locally in IndexedDB for offline access, and periodically saved to Supabase for durability. The CRDT subsystem is optional and only activated when `crdt: true` is passed to `initEngine()`.

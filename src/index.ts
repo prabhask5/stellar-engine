@@ -380,14 +380,3 @@ export type { Session, SupabaseClient } from '@supabase/supabase-js';
 //   exist in the connected Supabase project.
 
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
-
-// =============================================================================
-//  CRDT Collaborative Editing
-// =============================================================================
-// Optional CRDT subsystem for real-time collaborative document editing.
-// Only functional when `crdt` config is provided to `initEngine()`.
-// For tree-shaking, prefer the subpath: `stellar-drive/crdt`.
-
-export { isCRDTEnabled } from './crdt/config';
-export type { CRDTConfig } from './crdt/types';
-export type { UserPresenceState } from './crdt/types';

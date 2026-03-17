@@ -124,7 +124,6 @@ function resolveSchemaOpts(schema) {
             path: schema.path || 'src/lib/schema.ts',
             typesOutput: schema.typesOutput || 'src/lib/types.generated.ts',
             autoMigrate: schema.autoMigrate !== false,
-            includeCRDT: schema.includeCRDT === true,
             customSQL: schema.customSQL
         };
     }
@@ -132,7 +131,6 @@ function resolveSchemaOpts(schema) {
         path: 'src/lib/schema.ts',
         typesOutput: 'src/lib/types.generated.ts',
         autoMigrate: true,
-        includeCRDT: false,
         customSQL: undefined
     };
 }
@@ -239,7 +237,6 @@ async function processLoadedSchema(schema, appName, prefix, schemaOpts, projectR
         appName,
         prefix,
         includeHelperFunctions: true,
-        includeCRDT: schemaOpts.includeCRDT,
         previousTables
     });
     /* 3. Append custom SQL files (app-specific RPC functions, views, etc.). */

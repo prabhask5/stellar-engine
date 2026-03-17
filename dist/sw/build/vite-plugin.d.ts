@@ -75,12 +75,6 @@ export interface SchemaConfig {
      */
     autoMigrate?: boolean;
     /**
-     * Whether to include the `crdt_documents` table in auto-generated SQL.
-     * Set to `true` if the app uses CRDT collaborative editing.
-     * @default false
-     */
-    includeCRDT?: boolean;
-    /**
      * Path(s) to custom `.sql` files that are appended to the generated schema
      * SQL and executed on every build alongside it. Useful for app-specific RPC
      * functions, views, or triggers that stellar-drive doesn't generate.

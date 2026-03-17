@@ -42,7 +42,6 @@ Building offline-first sync is notoriously difficult. stellar-drive handles the 
 - **Realtime subscriptions** -- Supabase Realtime WebSocket push with echo suppression and deduplication against polling. Changes appear instantly across tabs and devices.
 - **Tombstone management** -- Soft deletes with configurable garbage collection. Deleted records sync correctly before being permanently purged.
 - **Egress optimization** -- Column-level selects, operation coalescing, push-only mode when realtime is healthy, and cursor-based pulls minimize bandwidth.
-- **CRDT collaborative editing** -- Optional Yjs-based subsystem for real-time multi-user editing via Supabase Broadcast. Zero database writes per keystroke.
 - **Demo mode** -- Sandboxed database, zero Supabase connections, mock auth. Ship instant onboarding experiences without backend setup.
 - **Reactive stores** -- Svelte-compatible stores for sync status, auth state, network state, and remote changes. Works with Svelte 5 runes.
 - **Store factories** -- `createCollectionStore` and `createDetailStore` for boilerplate-free reactive data layers with auto-refresh on sync.
@@ -58,7 +57,7 @@ Building offline-first sync is notoriously difficult. stellar-drive handles the 
 ### Use cases
 
 - Productivity and task management apps
-- Notion-like block editors (with CRDT collaborative editing)
+- Notion-like block editors
 - Personal finance trackers (numeric merge across devices)
 - File and asset management UIs (fractional ordering for drag-and-drop)
 - Habit trackers and daily planners
@@ -112,9 +111,6 @@ initEngine({
     profileExtractor: (meta) => ({ firstName: meta.first_name }),
     profileToMetadata: (p) => ({ first_name: p.firstName }),
   },
-
-  // Optional CRDT collaborative editing
-  crdt: true,  // or { persistIntervalMs: 60000, maxOfflineDocuments: 50 }
 
   // Optional demo mode
   demo: {
@@ -269,41 +265,7 @@ import { remoteChangeAnimation, trackEditing } from 'stellar-drive/actions';
 // Signals the engine a field is being actively edited (suppresses incoming overwrites).
 ```
 
-### 7. CRDT collaborative editing
-
-```ts
-import {
-  openDocument,
-  closeDocument,
-  createSharedText,
-  createBlockDocument,
-  updateCursor,
-  getCollaborators,
-  onCollaboratorsChange,
-} from 'stellar-drive/crdt';
-
-// Open a collaborative document (uses Supabase Broadcast -- zero DB writes per keystroke)
-const provider = await openDocument('doc-1', 'page-1', {
-  offlineEnabled: true,
-  initialPresence: { name: 'Alice' },
-});
-
-// Use with any Yjs-compatible editor (Tiptap, BlockNote, etc.)
-const { content, meta } = createBlockDocument(provider.doc);
-meta.set('title', 'My Page');
-
-// Shared text for simpler use cases
-const text = createSharedText(provider.doc);
-
-// Track collaborator cursors and presence
-const unsub = onCollaboratorsChange('doc-1', (collaborators) => {
-  // Update avatar list, cursor positions, etc.
-});
-
-await closeDocument('doc-1');
-```
-
-### 8. Demo mode
+### 7. Demo mode
 
 ```ts
 import { setDemoMode, isDemoMode } from 'stellar-drive';
@@ -322,7 +284,7 @@ setDemoMode(true);
 window.location.href = '/';
 ```
 
-### 9. SQL and TypeScript generation
+### 8. SQL and TypeScript generation
 
 ```ts
 import { generateSupabaseSQL, generateTypeScript } from 'stellar-drive/utils';
@@ -337,7 +299,7 @@ const sql = generateSupabaseSQL(config.schema!, { prefix: config.prefix });
 const ts = generateTypeScript(config.schema!);
 ```
 
-### 10. Diagnostics and debug
+### 9. Diagnostics and debug
 
 ```ts
 import { setDebugMode, isDebugMode } from 'stellar-drive/utils';
@@ -488,7 +450,6 @@ Import only what you need:
 | `stellar-drive/config` | Runtime config management (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
 | `stellar-drive/vite` | Vite plugin (`stellarPWA`) for service worker builds, asset manifests, and schema auto-generation |
 | `stellar-drive/kit` | SvelteKit helpers: server route factories, layout loaders, email confirmation, SW lifecycle, auth hydration |
-| `stellar-drive/crdt` | CRDT collaborative editing: document lifecycle, shared types, presence/cursors, offline persistence |
 | `stellar-drive/components/*` | Svelte components: `SyncStatus`, `DeferredChangesBanner`, `DemoBanner` |
 
 ### Key categories at a glance
@@ -553,7 +514,6 @@ Given `prefix: 'stellar'` and schema key `goals`, the Supabase table becomes `st
 **Shared across apps (unprefixed, per-app rows):**
 - `auth.users` (Supabase Auth) -- same user account works in every app
 - `trusted_devices` -- single table with an `app_prefix` column (default `'stellar'`). The unique constraint is `(user_id, device_id, app_prefix)`, so trusting a device in one app does not grant trust in another. All device verification queries filter by prefix automatically.
-- `crdt_documents` (CRDT collaborative editing)
 - Helper functions: `set_user_id()`, `update_updated_at_column()`
 
 **Isolated per app (prefixed tables):**

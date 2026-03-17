@@ -25,7 +25,6 @@ import { _setClientPrefix } from './supabase/client';
 import { _setConfigPrefix } from './runtime/runtimeConfig';
 import { registerDemoConfig, _setDemoPrefix, isDemoMode } from './demo';
 import { createDatabase, SYSTEM_INDEXES, computeSchemaVersion } from './database';
-import { _initCRDT } from './crdt/config';
 import { snakeToCamel } from './utils';
 // =============================================================================
 // Module State
@@ -39,10 +38,6 @@ export function initEngine(config) {
     if (_engineInitialized)
         return;
     _engineInitialized = true;
-    /* Normalize `crdt: true` shorthand to `crdt: {}`. */
-    if (config.crdt === true) {
-        config.crdt = {};
-    }
     /* Normalize flat auth config to the nested structure used internally. */
     if (config.auth) {
         config.auth = normalizeAuthConfig(config.auth);
@@ -57,7 +52,7 @@ export function initEngine(config) {
                 'Use either the schema-driven API or the manual API, not both.');
         }
         config.tables = generateTablesFromSchema(config.schema, config.prefix);
-        config.database = generateDatabaseFromSchema(config.schema, config.prefix, config.databaseName, !!config.crdt);
+        config.database = generateDatabaseFromSchema(config.schema, config.prefix, config.databaseName);
     }
     /* Validate that tables are configured (either manually or via schema).
      * Schema-driven mode may have 0 entity tables (app uses only auth/system features),
@@ -83,18 +78,13 @@ export function initEngine(config) {
     if (config.demo) {
         registerDemoConfig(config.demo);
     }
-    /* Initialize CRDT subsystem if configured. */
-    if (config.crdt) {
-        _initCRDT(config.crdt, config.prefix);
-    }
     /* If demo mode is active, switch to a separate sandboxed database. */
     if (isDemoMode() && config.database) {
         config.database = { ...config.database, name: config.database.name + '_demo' };
     }
-    /* Create the Dexie database and store the instance on config for engine.ts access.
-     * Pass crdtEnabled flag so CRDT IndexedDB tables are conditionally included. */
+    /* Create the Dexie database and store the instance on config for engine.ts access. */
     if (config.database) {
-        _dbReady = createDatabase(config.database, !!config.crdt).then((db) => {
+        _dbReady = createDatabase(config.database).then((db) => {
             config.db = db;
         });
     }
@@ -294,22 +284,19 @@ function generateTablesFromSchema(schema, prefix) {
  * @param schema - The declarative schema definition.
  * @param prefix - Application prefix for database naming and versioning.
  * @param databaseName - Optional override for the database name.
- * @param crdtEnabled - Whether the CRDT subsystem is enabled.
  * @returns A `DatabaseConfig` ready for `createDatabase()`.
  *
  * @example
  * generateDatabaseFromSchema(
  *   { goals: 'goal_list_id, order' },
- *   'stellar',
- *   undefined,
- *   false
+ *   'stellar'
  * );
  * // → {
  * //   name: 'stellarDB',
  * //   versions: [{ version: 1, stores: { goals: 'id, user_id, ..., goal_list_id, order' } }]
  * // }
  */
-function generateDatabaseFromSchema(schema, prefix, databaseName, crdtEnabled = false) {
+function generateDatabaseFromSchema(schema, prefix, databaseName) {
     const stores = {};
     for (const [tableName, definition] of Object.entries(schema)) {
         const config = typeof definition === 'string' ? { indexes: definition } : definition;
@@ -319,11 +306,8 @@ function generateDatabaseFromSchema(schema, prefix, databaseName, crdtEnabled = 
         const appIndexes = (config.indexes || '').trim();
         stores[dexieName] = appIndexes ? `${SYSTEM_INDEXES}, ${appIndexes}` : SYSTEM_INDEXES;
     }
-    /* Compute auto-version based on the merged store schema.
-     * The CRDT flag affects the schema hash because CRDT system tables are merged
-     * by buildDexie() — if CRDT is toggled, the version should bump. */
-    const hashInput = crdtEnabled ? { ...stores, __crdt: 'enabled' } : stores;
-    const result = computeSchemaVersion(prefix, hashInput);
+    /* Compute auto-version based on the merged store schema. */
+    const result = computeSchemaVersion(prefix, stores);
     /*
      * Build the versions array. When an upgrade is detected, declare BOTH
      * the previous version and the current version so Dexie has a proper

@@ -17,17 +17,16 @@
 7. [Three-Tier Conflict Resolution](#7-three-tier-conflict-resolution)
 8. [Realtime Subscriptions](#8-realtime-subscriptions)
 9. [Authentication System](#9-authentication-system)
-10. [CRDT Collaborative Editing System](#10-crdt-collaborative-editing-system)
-11. [Data Operations](#11-data-operations)
-12. [Reactive Stores](#12-reactive-stores)
-13. [Svelte Actions](#13-svelte-actions)
-14. [Demo Mode](#14-demo-mode)
-15. [SQL & TypeScript Generation](#15-sql--typescript-generation)
-16. [Diagnostics](#16-diagnostics)
-17. [SvelteKit Integration](#17-sveltekit-integration)
-18. [CLI Tool](#18-cli-tool)
-19. [Vite Plugin Schema Processing](#19-vite-plugin-schema-processing)
-20. [File Map](#20-file-map)
+10. [Data Operations](#10-data-operations)
+11. [Reactive Stores](#11-reactive-stores)
+12. [Svelte Actions](#12-svelte-actions)
+13. [Demo Mode](#13-demo-mode)
+14. [SQL & TypeScript Generation](#14-sql--typescript-generation)
+15. [Diagnostics](#15-diagnostics)
+16. [SvelteKit Integration](#16-sveltekit-integration)
+17. [CLI Tool](#17-cli-tool)
+18. [Vite Plugin Schema Processing](#18-vite-plugin-schema-processing)
+19. [File Map](#19-file-map)
 
 ---
 
@@ -119,8 +118,7 @@ Every consuming application calls `initEngine()` once at startup before using an
 
 1. Validates and normalizes the configuration
 2. Propagates the `prefix` to all internal modules (debug logging, deviceId, Supabase client, runtime config, demo mode, Supabase table name prefixing)
-3. Initializes the CRDT subsystem if configured
-4. Creates or registers the Dexie database instance
+3. Creates or registers the Dexie database instance
 5. Registers demo mode configuration if provided
 
 ```typescript
@@ -137,7 +135,6 @@ initEngine({
     emailConfirmation: true,
     deviceVerification: true,
   },
-  crdt: true,
   demo: { seedData: seedDemoData, mockProfile: { email: 'demo@example.com', firstName: 'Demo', lastName: 'User' } },
 });
 ```
@@ -251,7 +248,7 @@ When `initEngine({ schema: {...} })` is called, two internal functions run:
 - `ownershipFilter` = `'user_id'` (default)
 - Plus optional `isSingleton`, `excludeFromConflict`, `numericMergeFields`, `onRemoteChange` from the object form
 
-**`generateDatabaseFromSchema(schema, prefix, databaseName?, crdtEnabled?)`** produces a `DatabaseConfig` by:
+**`generateDatabaseFromSchema(schema, prefix, databaseName?)`** produces a `DatabaseConfig` by:
 1. Building Dexie store schemas (system indexes + app indexes for each table, camelCase Dexie names)
 2. Computing the auto-version via `computeSchemaVersion()`
 3. Declaring both old and new versions for proper upgrade path
@@ -285,16 +282,7 @@ These internal tables are auto-merged into every version declaration. They power
 | `offlineSession` | `id` | Offline session tokens |
 | `singleUserConfig` | `id` | Single-user mode gate configuration (PIN/password settings) |
 
-### 3.3 Conditional CRDT Tables
-
-When `crdt` config is provided to `initEngine()`, two additional tables are created for collaborative editing support (see [Section 10](#10-crdt-collaborative-editing-system)):
-
-| Table | Indexes | Purpose |
-|-------|---------|---------|
-| `crdtDocuments` | `documentId, pageId, offlineEnabled` | Full Yjs document state snapshots |
-| `crdtPendingUpdates` | `++id, documentId, timestamp` | Incremental Yjs update deltas for crash recovery |
-
-### 3.4 Recovery Strategy
+### 3.3 Recovery Strategy
 
 If the database fails to open (blocked by another tab, corrupted schema, stale service worker), the engine follows a recovery flow:
 
@@ -1334,246 +1322,9 @@ When the device comes back online after offline usage, the engine takes a cautio
 
 ---
 
-For use cases that require finer granularity than row/field-level sync -- such as collaborative rich text editing -- the engine includes an optional CRDT subsystem.
-
-## 10. CRDT Collaborative Editing System
-
-**Files**: `src/crdt/`
-
-An optional Yjs-based CRDT (Conflict-free Replicated Data Type) subsystem for real-time collaborative document editing. CRDTs are data structures that can be edited independently on multiple devices and always merge to the same result, with mathematical guarantees -- no merge dialogs, no data loss. Enabled by adding `crdt: true` (shorthand for `crdt: {}`) to `initEngine()`.
-
-### 10.1 Architecture
-
-```
-User types in editor
-  |
-  v
-Y.Doc mutation
-  |
-  v
-doc.on('update') fires
-  |
-  +---> crdtPendingUpdates (IndexedDB)    -- immediate, crash-safe delta
-  +---> BroadcastChannel (same-device)     -- immediate, zero network cost
-  +---> Supabase Broadcast (remote)        -- debounced 100ms, binary->base64
-  +---> crdtDocuments full state (IDB)     -- debounced 5s, full snapshot
-  +---> Supabase crdt_documents (REST)     -- periodic 30s, if dirty + online
-
-
-  Y.Doc (in memory) <----> CRDTChannel (Supabase Broadcast) <----> Remote peers
-         |                        |
-         v                        v
-    IndexedDB               Supabase REST
-    (crash recovery)        (durable persistence)
-```
-
-### 10.2 Module Structure
-
-```
-src/crdt/
-  types.ts         -- All CRDT TypeScript interfaces
-  config.ts        -- Config singleton, defaults, accessors
-  store.ts         -- Dexie persistence (crdtDocuments + crdtPendingUpdates)
-  provider.ts      -- CRDTProvider: per-document lifecycle orchestrator
-  channel.ts       -- Supabase Broadcast channel (update distribution, sync protocol)
-  awareness.ts     -- Presence/cursor management (Supabase Presence bridge)
-  persistence.ts   -- Periodic Supabase DB writes, delta checks
-  offline.ts       -- Offline-enabled toggle, max document limits
-  helpers.ts       -- Document type factories + Yjs re-exports
-
-src/entries/crdt.ts -- Subpath barrel export for stellar-drive/crdt
-```
-
-### 10.3 Document Lifecycle (CRDTProvider)
-
-**File**: `src/crdt/provider.ts`
-
-The `CRDTProvider` is the central orchestrator for a single collaborative document. A module-level `Map<string, CRDTProviderImpl>` tracks all active providers. Factory functions `openDocument()` / `closeDocument()` manage the lifecycle.
-
-`openDocument()` is idempotent -- if a provider already exists for the given documentId, it returns the existing one.
-
-**Phase 1: Open**
-1. Create a new `Y.Doc` instance
-2. Subscribe to online/offline state for automatic reconnection
-3. Load initial state:
-   - First try IndexedDB (`loadDocumentState`)
-   - If IndexedDB has pending updates (from a crash), replay them into the doc
-   - If not found and online, fetch from Supabase (`fetchRemoteState`)
-   - If neither available, start with empty document
-4. Wire the `doc.on('update')` handler:
-   - Skip updates originating from remote peers (`origin === 'remote'`)
-   - Append delta to `crdtPendingUpdates` (crash-safe)
-   - Broadcast update to remote peers via CRDTChannel (debounced 100ms)
-   - Schedule debounced full-state save to IndexedDB (5s)
-5. Create and join the CRDTChannel (Supabase Broadcast) if online
-6. Run the sync protocol (exchange state vectors with peers)
-   - If no peers respond within timeout, fetch from Supabase REST
-7. Join Supabase Presence (for cursor tracking) if initial presence provided
-8. Start the periodic Supabase persist timer
-9. Record initial state vector for dirty detection
-
-**Phase 2: Edit**
-- Local Yjs mutations trigger `doc.on('update')`
-- Delta is persisted to IndexedDB immediately (crash safety)
-- Delta is broadcast to local tabs and remote peers (debounced)
-- Every 5s: full state snapshot saved to IndexedDB (clears pending updates)
-- Periodic timer: if dirty and online, upsert full state to Supabase (with state vector comparison to skip no-ops)
-
-**Phase 3: Sync (on peer join or reconnect)**
-- Exchange state vectors via sync-step-1/sync-step-2 messages
-- After exchange, both peers have identical document state
-
-**Phase 4: Persist**
-- Periodic timer checks if document is dirty by comparing current state vector against last persisted
-- If dirty and online: serialize full Y.Doc state, upsert to Supabase `crdt_documents`
-- On success: update `lastPersistedAt` in local record, clear dirty flag
-
-**Phase 5: Reconnect (online after offline)**
-- Load and replay any pending updates from IndexedDB
-- Rejoin the CRDTChannel
-- Run sync protocol to exchange missing updates with peers
-- Broadcast full state to peers
-- Immediately persist if dirty
-- Clear pending updates (captured in full state)
-
-**Phase 6: Close (destroy)**
-- Stop persist timer and local save timer
-- Unwire update handler
-- Unsubscribe from online store
-- Save final state to IndexedDB
-- Persist to Supabase if dirty and online
-- Leave Supabase Presence
-- Leave the CRDTChannel
-- Destroy the Y.Doc instance
-- Remove from active providers registry
-
-### 10.4 CRDTChannel (Supabase Broadcast)
-
-**File**: `src/crdt/channel.ts`
-
-Manages one Supabase Broadcast + Presence channel per open CRDT document. Channel naming convention: `crdt:${prefix}:${documentId}`.
-
-**Binary <-> Base64 Encoding:**
-Yjs updates are binary `Uint8Array` data, but Supabase Broadcast payloads are JSON. Binary data is encoded to base64 strings for transport using `btoa()` / `atob()` via binary string intermediaries.
-
-**Debounced Update Broadcasting (100ms):**
-Multiple rapid Yjs updates are collected in `pendingUpdates[]`, then merged using `Y.mergeUpdates()` before sending as a single Broadcast message. This prevents flooding the channel during fast typing while keeping latency under 100ms.
-
-**Sync Protocol (3-way handshake):**
-```
-Device A joins channel
-  |
-  v
-Step 1: A sends sync-step-1 { stateVector: A's current state vector }
-  --> "Here's what I have"
-  |
-  v
-Step 2: B receives sync-step-1, computes diff
-  B sends sync-step-2 { update: delta B has that A is missing }
-  --> "Here's what you're missing"
-  |
-  v
-Step 3: A applies the delta, now both are synchronized
-
-Timeout (syncPeerTimeoutMs, default 3s): If no sync-step-2 arrives,
-  fall back to Supabase REST fetch (fetchRemoteState)
-  --> Handles case where no other peers are online
-```
-
-**Chunking for Large Payloads:**
-When a Broadcast payload exceeds `maxBroadcastPayloadBytes` (default ~250KB), the channel splits it into multiple chunk messages with a shared `chunkId`. The receiving side buffers chunks in a `chunkBuffers` Map and reassembles when all parts arrive, then applies the full update.
-
-**Cross-Tab Sync (BroadcastChannel API):**
-Same-device tabs use the browser's native `BroadcastChannel` API instead of Supabase. This provides instant cross-tab sync with zero network bandwidth. Updates are broadcast immediately (no debounce) to the local channel.
-
-**Echo Suppression:**
-Every Broadcast message includes a `deviceId` field. Messages from the same device are silently discarded by the receiver. The Supabase channel is configured with `{ broadcast: { self: false } }` to prevent self-echoes.
-
-**Reconnection:**
-On channel disconnect, exponential backoff reconnection is attempted up to `maxReconnectAttempts` (configurable). On each reconnect, the old channel is cleaned up and a fresh `join()` is performed.
-
-### 10.5 Awareness/Presence
-
-**File**: `src/crdt/awareness.ts`
-
-Uses Supabase Presence (on the same channel as Broadcast) for cursor and selection sync -- showing where each collaborator is typing in real time.
-
-**Deterministic Color Assignment:**
-Each collaborator gets a consistent color from a 12-color palette, assigned by hashing their userId:
-
-```typescript
-const COLLABORATOR_COLORS = [
-  '#E57373', '#81C784', '#64B5F6', '#FFD54F', '#BA68C8', '#4DB6AC',
-  '#FF8A65', '#A1887F', '#90A4AE', '#F06292', '#AED581', '#4FC3F7'
-];
-
-function assignColor(userId: string): string {
-  let hash = 0;
-  for (const char of userId) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return COLLABORATOR_COLORS[Math.abs(hash) % COLLABORATOR_COLORS.length];
-}
-```
-
-**Debounced Cursor Updates (50ms):**
-Cursor position changes are debounced to avoid flooding the Presence channel during rapid cursor movement.
-
-**Multi-Tab Dedup:**
-Multiple tabs from the same user on the same device share a deviceId. The awareness system deduplicates to show one cursor per user, not one per tab.
-
-### 10.6 Persistence
-
-**IndexedDB (crash recovery):**
-
-| Table | Key | Content |
-|-------|-----|---------|
-| `crdtDocuments` | `documentId` | Full Yjs state snapshot, `pageId`, `offlineEnabled`, `stateSize`, `lastPersistedAt` |
-| `crdtPendingUpdates` | `++id` | Individual Yjs update deltas, `documentId`, `timestamp` |
-
-Full snapshots are saved every 5 seconds (debounced). Pending updates are appended on every `doc.on('update')` for crash recovery. On successful full save, pending updates are cleared.
-
-**Supabase (durable persistence):**
-
-Table: `crdt_documents` with columns:
-- `document_id` (text, primary key)
-- `page_id` (text)
-- `state` (text, base64-encoded Yjs state)
-- `state_size` (integer)
-- `user_id` (uuid, RLS)
-- `device_id` (text)
-- `updated_at` (timestamptz)
-
-Periodic persist every `persistIntervalMs` (default 30s). Skips unchanged documents by comparing state vectors.
-
-### 10.7 Offline Support
-
-**File**: `src/crdt/offline.ts`
-
-Documents can be marked as "offline-enabled" to persist their full state to IndexedDB for offline editing:
-
-- `enableOffline(pageId, documentId)`: If currently open, saves live state. If not open but online, fetches from Supabase and saves. If not open and offline, returns error.
-- `disableOffline(documentId)`: Removes document from IndexedDB offline storage.
-- Enforces `maxOfflineDocuments` limit (default: 50).
-- On reconnect: replay pending updates, run sync protocol, broadcast full state.
-
-### 10.8 Why CRDT vs Classic Sync
-
-The engine provides two sync mechanisms because they solve fundamentally different problems:
-
-| Aspect | Classic Sync Engine | CRDT (Yjs) |
-|--------|-------------------|------------|
-| Conflict resolution | 3-tier, field-level, requires strategy configuration | Mathematically guaranteed convergence, zero merge dialogs |
-| Granularity | Row/field level | Character level (for text) |
-| Use case | Structured data (rows/columns/entities) | Rich text, collaborative editing |
-| Merge correctness | Heuristic (last-write-wins, local-pending) | Provably correct (CRDT math) |
-| Offline support | Queue + coalesce + push | State vector exchange + delta replay |
-
-Use the classic engine for structured entity data (goals, tasks, settings). Use CRDT for rich text or any content where multiple users may edit the same content simultaneously.
-
----
-
 With sync and auth covered, the next sections describe the application-facing APIs: how apps read and write data, subscribe to changes, and handle UI animations.
 
-## 11. Data Operations
+## 10. Data Operations
 
 **File**: `src/data.ts`
 
@@ -1621,17 +1372,17 @@ All write operations follow the same transactional pattern:
 
 ---
 
-## 12. Reactive Stores
+## 11. Reactive Stores
 
 **Files**: `src/stores/`
 
 Reactive stores bridge the gap between the sync engine and the UI. They expose engine state as Svelte-compatible stores that automatically update when sync completes, remote changes arrive, or network state changes.
 
-### 12.1 Auth State Store (`authState.ts`)
+### 11.1 Auth State Store (`authState.ts`)
 
 Object store tracking the current authentication mode and session. See [Section 9.2](#92-auth-state-store).
 
-### 12.2 Sync Status Store (`sync.ts`)
+### 11.2 Sync Status Store (`sync.ts`)
 
 Tracks sync progress for UI indicators (e.g., a spinning sync icon):
 
@@ -1654,7 +1405,7 @@ interface SyncState {
 
 Setter methods: `setStatus()`, `setPendingCount()`, `setError()`, `setRealtimeState()`, `setSyncMessage()`, `addSyncError()`.
 
-### 12.3 Remote Changes Store (`remoteChanges.ts`)
+### 11.3 Remote Changes Store (`remoteChanges.ts`)
 
 Manages incoming realtime changes and active editing state for UI animations and deferred change handling.
 
@@ -1681,7 +1432,7 @@ Since Supabase Realtime only sends INSERT/UPDATE/DELETE events (no semantic acti
 - `createRecentChangeIndicator(entityId)` -- reactive per-entity subscription for animation triggers
 - `createPendingDeleteIndicator(entityId)` -- reactive indicator for pending soft deletes
 
-### 12.4 Network Store (`network.ts`)
+### 11.4 Network Store (`network.ts`)
 
 **File**: `src/stores/network.ts`
 
@@ -1715,7 +1466,7 @@ Tracks online/offline state with a workaround for iOS PWA quirks:
 
 **Sequential Callback Execution:** Reconnect callbacks are executed sequentially with async/await (not concurrently). This ensures auth validation completes before sync is triggered.
 
-### 12.5 Store Factories (`factories.ts`)
+### 11.5 Store Factories (`factories.ts`)
 
 Consumer apps typically create many collection stores and detail stores. The store factories extract the common pattern:
 
@@ -1732,13 +1483,13 @@ Consumer apps typically create many collection stores and detail stores. The sto
 
 ---
 
-## 13. Svelte Actions
+## 12. Svelte Actions
 
 **File**: `src/actions/remoteChange.ts`
 
 Svelte actions are reusable behaviors attached to DOM elements. These actions handle the visual feedback when remote changes arrive or local actions occur.
 
-### 13.1 `remoteChangeAnimation`
+### 12.1 `remoteChangeAnimation`
 
 A Svelte action that automatically adds CSS animation classes to elements when remote changes arrive:
 
@@ -1760,44 +1511,44 @@ Features:
 - Custom CSS class override
 - `onAction` callback for component-specific handling beyond CSS
 
-### 13.2 `trackEditing`
+### 12.2 `trackEditing`
 
 Tracks whether the user is currently editing an entity in a form. When a form is open:
 - Auto-save forms: remote changes apply immediately
 - Manual-save forms: remote changes are deferred until the form closes
 
-### 13.3 `triggerLocalAnimation`
+### 12.3 `triggerLocalAnimation`
 
 Programmatic animation trigger for locally initiated actions (not remote). Supports rapid-fire animations (e.g., quickly tapping increment/decrement).
 
 ---
 
-## 14. Demo Mode
+## 13. Demo Mode
 
 **File**: `src/demo.ts`
 
 Demo mode provides a completely isolated sandbox at the engine level, allowing users to try the app without creating an account or connecting to a server. Every layer of the engine participates in the isolation to ensure zero risk of data contamination.
 
-### 14.1 Database Isolation
+### 13.1 Database Isolation
 
 - `initEngine()` detects `isDemoMode()` and appends `_demo` to the database name
 - The real database is never opened -- zero risk of data contamination
 - On page refresh, the demo DB is re-seeded with fresh mock data via the consumer's `seedData(db)` function
 
-### 14.2 Auth Isolation
+### 13.2 Auth Isolation
 
 - `resolveAuthState()` short-circuits and returns `authMode: 'demo'`
 - No Supabase session is created or validated
 - `authState` store uses `setDemoAuth()` with a mock profile from `DemoConfig`
 
-### 14.3 Network Isolation
+### 13.3 Network Isolation
 
 All sync/queue/realtime entry points guard against demo mode:
 - `startSyncEngine()`, `runFullSync()`, `scheduleSyncPush()` -- return early
 - `queueSyncOperation()`, `queueCreateOperation()`, `queueDeleteOperation()` -- return early
 - `startRealtimeSubscriptions()` -- return early
 
-### 14.4 Data Flow
+### 13.4 Data Flow
 
 ```
 User -> setDemoMode(true) + page reload
@@ -1808,7 +1559,7 @@ User -> setDemoMode(true) + page reload
   -> Sync/queue/realtime guards prevent any server traffic
 ```
 
-### 14.5 Security Model
+### 13.5 Security Model
 
 - Demo mode does NOT bypass auth -- it replaces the entire data layer
 - If someone manually sets the localStorage flag, they see an empty/seeded demo DB
@@ -1817,13 +1568,13 @@ User -> setDemoMode(true) + page reload
 
 ---
 
-## 15. SQL & TypeScript Generation
+## 14. SQL & TypeScript Generation
 
 **File**: `src/schema.ts`
 
 The schema module generates both the Supabase SQL DDL (Data Definition Language -- the SQL statements that create tables, indexes, and policies) and TypeScript interfaces from the same schema definition. This ensures the database structure and TypeScript types never drift apart.
 
-### 15.1 `generateSupabaseSQL(schema, options)`
+### 14.1 `generateSupabaseSQL(schema, options)`
 
 Generates complete Supabase SQL from a declarative schema. Accepts a `prefix` option which causes all generated `CREATE TABLE` names, RLS policy names, trigger names, and index names to be prefixed with `${prefix}_`. Auto-migration SQL is also generated to rename legacy unprefixed tables (e.g., `ALTER TABLE goals RENAME TO stellar_goals`) for backward compatibility.
 
@@ -1834,9 +1585,9 @@ Generated output includes:
 - `set_user_id` trigger (auto-set `user_id` from `auth.uid()`)
 - Indexes for common query patterns
 - Realtime subscription enablement
-- Optional: `crdt_documents` table, `trusted_devices` table, helper functions
+- Optional: `trusted_devices` table, helper functions
 
-### 15.2 Column Type Inference
+### 14.2 Column Type Inference
 
 Types are inferred from field naming conventions, so you rarely need to specify SQL types explicitly:
 
@@ -1852,28 +1603,28 @@ Types are inferred from field naming conventions, so you rarely need to specify 
 
 SQL reserved words (`order`, `type`, `section`, `status`, `date`, `name`, `value`) are automatically double-quoted in generated DDL/DML.
 
-### 15.3 `generateMigrationSQL(oldSchema, newSchema)`
+### 14.3 `generateMigrationSQL(oldSchema, newSchema)`
 
 Generates `ALTER TABLE` statements for:
 - Table renames (via `renamedFrom`)
 - Column renames (via `renamedColumns`)
 - New columns added in the new schema
 
-### 15.4 `generateTypeScript(schema, options)`
+### 14.4 `generateTypeScript(schema, options)`
 
 Generates TypeScript interfaces from schema field definitions. Each table gets an interface with typed fields. System columns (`id`, `user_id`, `created_at`, etc.) are optionally included.
 
 ---
 
-## 16. Diagnostics
+## 15. Diagnostics
 
 **File**: `src/diagnostics.ts`
 
 The diagnostics system provides full observability into the engine's internal state. This is invaluable for debugging sync issues, understanding egress costs, and monitoring conflict resolution in production.
 
-### 16.1 `getDiagnostics()`
+### 15.1 `getDiagnostics()`
 
-Returns a comprehensive `DiagnosticsSnapshot` -- a single JSON-serializable object with all observable engine state. Each call returns a point-in-time snapshot covering: sync cycles, egress stats, queue state, realtime connection, network status, conflict history, errors, configuration, and optionally CRDT document state.
+Returns a comprehensive `DiagnosticsSnapshot` -- a single JSON-serializable object with all observable engine state. Each call returns a point-in-time snapshot covering: sync cycles, egress stats, queue state, realtime connection, network status, conflict history, errors, and configuration.
 
 ```json
 {
@@ -1919,7 +1670,7 @@ Returns a comprehensive `DiagnosticsSnapshot` -- a single JSON-serializable obje
 }
 ```
 
-### 16.2 Sub-Category Functions
+### 15.2 Sub-Category Functions
 
 Lightweight access to specific sections without fetching the full snapshot:
 
@@ -1934,7 +1685,7 @@ Lightweight access to specific sections without fetching the full snapshot:
 | `getNetworkDiagnostics()` | No | Online/offline status |
 | `getErrorDiagnostics()` | No | Recent errors |
 
-### 16.3 Console Debug Functions
+### 15.3 Console Debug Functions
 
 Available in debug mode via the browser console (toggle: `localStorage.setItem('{prefix}_debug_mode', 'true')`):
 
@@ -1947,7 +1698,7 @@ Available in debug mode via the browser console (toggle: `localStorage.setItem('
 | `window.__{prefix}Sync.forceFullSync()` | Reset cursor + full re-sync |
 | `window.__{prefix}Sync.resetSyncCursor()` | Clear cursor (next sync = full) |
 
-### 16.4 Debug Logging
+### 15.4 Debug Logging
 
 **File**: `src/debug.ts`
 
@@ -1962,20 +1713,19 @@ All log messages use structured prefixes for filtering in the browser console:
 | `[Tombstone]` | Cleanup system | Local/server cleanup counts |
 | `[Auth]` | Auth layer | Login, credential caching, session validation |
 | `[Network]` | Network store | Reconnect/disconnect callbacks |
-| `[CRDT]` | CRDT subsystem | Document lifecycle, persistence, sync protocol |
 | `[DB]` | Database | Object store validation, recovery |
 
 When debug mode is disabled, all `debugLog()`, `debugWarn()`, and `debugError()` calls are no-ops (zero overhead).
 
 ---
 
-## 17. SvelteKit Integration
+## 16. SvelteKit Integration
 
 **Files**: `src/kit/`
 
 While the core engine is framework-agnostic, these modules provide first-class SvelteKit integration for common patterns like layout load functions, server-side config, email confirmation, and service worker management.
 
-### 17.1 Load Function Helpers (`kit/loads.ts`)
+### 16.1 Load Function Helpers (`kit/loads.ts`)
 
 **`resolveRootLayout()`**: Full app initialization sequence for the root `+layout.ts`:
 1. Initialize runtime config (`initConfig`) -- fetches Supabase credentials from `/api/config`
@@ -1990,7 +1740,7 @@ While the core engine is framework-agnostic, these modules provide first-class S
 - Allows access when no config exists (first-time setup)
 - Requires authentication for reconfiguration
 
-### 17.2 Server Handlers (`kit/server.ts`)
+### 16.2 Server Handlers (`kit/server.ts`)
 
 **`getServerConfig()`**: Returns runtime Supabase config for client hydration. Reads from environment variables.
 
@@ -2000,17 +1750,17 @@ While the core engine is framework-agnostic, these modules provide first-class S
 
 **`createValidateHandler()`**: Creates a request handler that validates Supabase credentials and schema against the database.
 
-### 17.3 Email Confirmation (`kit/confirm.ts`)
+### 16.3 Email Confirmation (`kit/confirm.ts`)
 
 **`handleEmailConfirmation(url)`**: Processes email confirmation links (signup, device verification, email change). Calls `supabase.auth.verifyOtp()` with the token hash from the URL.
 
 **`broadcastAuthConfirmed(verificationType)`**: Sends an `AUTH_CONFIRMED` message via the browser's `BroadcastChannel` API. The original tab listens for this message and calls the appropriate completion function.
 
-### 17.4 Auth Hydration (`kit/auth.ts`)
+### 16.4 Auth Hydration (`kit/auth.ts`)
 
 **`hydrateAuthState(data)`**: Bridge function that takes layout data and sets the appropriate auth state in the `authState` store. Called in `+layout.svelte` to synchronize the store with the load function's results.
 
-### 17.5 Service Worker (`kit/sw.ts`)
+### 16.5 Service Worker (`kit/sw.ts`)
 
 **`pollForNewServiceWorker(options)`**: Active polling for a new SW after deployment. Configurable interval (default 5s) and max attempts (default 60, ~5 minutes).
 
@@ -2029,13 +1779,13 @@ All functions include SSR guards (`typeof navigator === 'undefined'`) for univer
 
 ---
 
-## 18. CLI Tool
+## 17. CLI Tool
 
 **File**: `src/bin/commands.ts`
 
 The CLI provides a scaffolding command that generates a complete SvelteKit project pre-wired for stellar-drive.
 
-### 18.1 `stellar-drive install pwa`
+### 17.1 `stellar-drive install pwa`
 
 Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkthrough:
 
@@ -2052,7 +1802,7 @@ Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkt
 +--------------------------------------------------------------------+
 ```
 
-### 18.2 File Categories
+### 17.2 File Categories
 
 | Category | Count | Examples |
 |----------|-------|---------|
@@ -2065,7 +1815,7 @@ Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkt
 | Library | 1 | `src/lib/types.ts` |
 | Git hooks | 1 | `.husky/pre-commit` |
 
-### 18.3 Route File Ownership Model
+### 17.3 Route File Ownership Model
 
 Each generated route file follows a strict separation:
 - **Engine-managed code**: All imports, load functions, API handlers, auth logic, and state management are fully implemented using stellar-drive exports
@@ -2079,14 +1829,14 @@ Three API routes are fully managed with zero app-specific code:
 | `/api/setup/deploy` | `deployToVercel()` | Deploy env vars to Vercel project |
 | `/api/setup/validate` | `createValidateHandler()` | Validate Supabase credentials + schema |
 
-### 18.4 Skip-If-Exists Safety
+### 17.4 Skip-If-Exists Safety
 
 The scaffolder uses `writeIfMissing()` -- files are only created if they don't already exist:
 - Running the command twice is safe (existing files are skipped)
 - Developers can modify generated files without fear of overwriting
 - The summary output shows which files were created vs skipped
 
-### 18.5 Schema Workflow Integration
+### 17.5 Schema Workflow Integration
 
 The scaffolded project is fully wired for the schema auto-generation workflow:
 
@@ -2098,13 +1848,13 @@ The scaffolded project is fully wired for the schema auto-generation workflow:
 
 ---
 
-## 19. Vite Plugin Schema Processing
+## 18. Vite Plugin Schema Processing
 
 **File**: `src/sw/build/vite-plugin.ts`
 
 The `stellarPWA` Vite plugin handles service worker builds, asset manifest generation, and (when `schema` is enabled) automatic TypeScript type generation and Supabase migration pushing. This creates a "save schema file -> types + database update automatically" developer experience.
 
-### 19.1 Schema Processing Flow
+### 18.1 Schema Processing Flow
 
 ```
 Schema file changes (src/lib/schema.ts)
@@ -2132,7 +1882,7 @@ Schema file changes (src/lib/schema.ts)
 [Save snapshot] -- .stellar/schema-snapshot.json (only on success)
 ```
 
-### 19.2 Dev vs Build Behavior
+### 18.2 Dev vs Build Behavior
 
 **Development** (`npm run dev`):
 - `configureServer` hook loads the schema via Vite's `ssrLoadModule()` (live transpilation)
@@ -2144,7 +1894,7 @@ Schema file changes (src/lib/schema.ts)
 - Schema is processed **once** during build (ensures CI/CD still migrates)
 - Temp file is cleaned up after import
 
-### 19.3 Environment Variables
+### 18.3 Environment Variables
 
 | Variable | Required For | Description |
 |---|---|---|
@@ -2152,7 +1902,7 @@ Schema file changes (src/lib/schema.ts)
 
 If `DATABASE_URL` is not set, TypeScript types are still generated but migration push is **skipped** with a console warning. This allows local development without database credentials.
 
-### 19.4 Direct Postgres Migration
+### 18.4 Direct Postgres Migration
 
 Migrations are pushed via a **direct Postgres connection** using the `DATABASE_URL` environment variable and the `postgres` npm package. This approach:
 
@@ -2161,14 +1911,14 @@ Migrations are pushed via a **direct Postgres connection** using the `DATABASE_U
 - **Retries on failure** -- the schema snapshot is only saved after a successful push, so the next build retries automatically
 - **Short-lived connections** -- one connection per migration push, closed immediately after
 
-### 19.5 Migration Safety
+### 18.5 Migration Safety
 
 - **Additive operations** (new tables, new columns) are applied automatically.
 - **Destructive operations** (DROP TABLE, DROP COLUMN) are generated as **comments**, requiring manual review and execution.
 - **Type changes** (e.g., `text` -> `integer`) are not detected and require manual migration.
 - **Renames** (via `renamedFrom` and `renamedColumns`) produce proper `ALTER TABLE ... RENAME` statements.
 
-### 19.6 Generated Files
+### 18.6 Generated Files
 
 | File | Purpose | Git-tracked? |
 |---|---|---|
@@ -2179,7 +1929,7 @@ Migrations are pushed via a **direct Postgres connection** using the `DATABASE_U
 
 ---
 
-## 20. File Map
+## 19. File Map
 
 This is a complete reference of every source file and its purpose. Use it to quickly locate the code for any concept discussed above.
 
@@ -2222,16 +1972,6 @@ This is a complete reference of every source file and its purpose. Use it to qui
 | **Actions** | | |
 | Remote Change | `src/actions/remoteChange.ts` | Animation action, editing tracker, local animation trigger |
 | Truncate Tooltip | `src/actions/truncateTooltip.ts` | Text truncation with tooltip |
-| **CRDT** | | |
-| Provider | `src/crdt/provider.ts` | Per-document lifecycle orchestrator |
-| Channel | `src/crdt/channel.ts` | Supabase Broadcast (sync protocol, chunking, cross-tab) |
-| Awareness | `src/crdt/awareness.ts` | Presence/cursor management, color assignment |
-| Persistence | `src/crdt/persistence.ts` | Periodic Supabase REST persistence |
-| Store | `src/crdt/store.ts` | IndexedDB CRUD for CRDT tables |
-| Offline | `src/crdt/offline.ts` | Offline document management, max limit enforcement |
-| Config | `src/crdt/config.ts` | CRDT config singleton and defaults |
-| Helpers | `src/crdt/helpers.ts` | Document type factories + Yjs re-exports |
-| Types | `src/crdt/types.ts` | All CRDT TypeScript interfaces |
 | **SvelteKit** | | |
 | Loads | `src/kit/loads.ts` | Root/protected layout load helpers |
 | Server | `src/kit/server.ts` | Server-side handlers (config, deploy, validate) |
@@ -2248,7 +1988,6 @@ This is a complete reference of every source file and its purpose. Use it to qui
 | Install PWA | `src/bin/install-pwa.ts` | PWA scaffolding implementation |
 | **Entry Points** | | |
 | Main | `src/index.ts` | Public API barrel export |
-| CRDT Entry | `src/entries/crdt.ts` | Subpath export for `stellar-drive/crdt` |
 | Auth Entry | `src/entries/auth.ts` | Subpath export for auth utilities |
 | Stores Entry | `src/entries/stores.ts` | Subpath export for stores |
 | Actions Entry | `src/entries/actions.ts` | Subpath export for actions |

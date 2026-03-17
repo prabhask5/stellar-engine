@@ -96,13 +96,6 @@ export interface SchemaConfig {
   autoMigrate?: boolean;
 
   /**
-   * Whether to include the `crdt_documents` table in auto-generated SQL.
-   * Set to `true` if the app uses CRDT collaborative editing.
-   * @default false
-   */
-  includeCRDT?: boolean;
-
-  /**
    * Path(s) to custom `.sql` files that are appended to the generated schema
    * SQL and executed on every build alongside it. Useful for app-specific RPC
    * functions, views, or triggers that stellar-drive doesn't generate.
@@ -245,7 +238,6 @@ function resolveSchemaOpts(schema: boolean | SchemaConfig): ResolvedSchemaConfig
       path: schema.path || 'src/lib/schema.ts',
       typesOutput: schema.typesOutput || 'src/lib/types.generated.ts',
       autoMigrate: schema.autoMigrate !== false,
-      includeCRDT: schema.includeCRDT === true,
       customSQL: schema.customSQL
     };
   }
@@ -253,7 +245,6 @@ function resolveSchemaOpts(schema: boolean | SchemaConfig): ResolvedSchemaConfig
     path: 'src/lib/schema.ts',
     typesOutput: 'src/lib/types.generated.ts',
     autoMigrate: true,
-    includeCRDT: false,
     customSQL: undefined
   };
 }
@@ -378,7 +369,6 @@ async function processLoadedSchema(
     appName,
     prefix,
     includeHelperFunctions: true,
-    includeCRDT: schemaOpts.includeCRDT,
     previousTables
   });
 

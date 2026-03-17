@@ -71,7 +71,4 @@ export { generateSupabaseSQL, inferColumnType, generateTypeScript } from './sche
 export type { SQLGenerationOptions, TypeScriptGenerationOptions } from './schema';
 export type { Session, SupabaseClient } from '@supabase/supabase-js';
 export { validateSupabaseCredentials, validateSchema } from './supabase/validate';
-export { isCRDTEnabled } from './crdt/config';
-export type { CRDTConfig } from './crdt/types';
-export type { UserPresenceState } from './crdt/types';
 //# sourceMappingURL=index.d.ts.map

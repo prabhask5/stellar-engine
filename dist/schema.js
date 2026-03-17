@@ -595,7 +595,6 @@ function generateTableSQL(tableName, config, options) {
  *   2. Helper functions (`set_user_id`, `update_updated_at_column`)
  *   3. One `CREATE TABLE` block per schema table
  *   4. `trusted_devices` table (unless `includeDeviceVerification` is `false`)
- *   5. `crdt_documents` table (only if `includeCRDT` is `true`)
  *
  * @param schema - The declarative schema definition.
  * @param options - Optional generation options.
@@ -619,7 +618,6 @@ export function generateSupabaseSQL(schema, options) {
     const appName = options?.appName || 'App';
     const includeHelpers = options?.includeHelperFunctions !== false;
     const includeDeviceVerification = options?.includeDeviceVerification !== false;
-    const includeCRDT = options?.includeCRDT === true;
     /* ---- Header ---- */
     parts.push(`-- ${appName} Database Schema for Supabase`);
     parts.push('-- Copy and paste this entire file into your Supabase SQL Editor');
@@ -743,58 +741,6 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('create index if not exists idx_trusted_devices_app_prefix on trusted_devices(app_prefix);');
         parts.push('');
         parts.push('do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;');
-        parts.push('');
-    }
-    /* ---- CRDT Documents ---- */
-    if (includeCRDT) {
-        parts.push('-- ============================================================');
-        parts.push('-- CRDT DOCUMENT STORAGE (optional — only needed for collaborative editing)');
-        parts.push('-- ============================================================');
-        parts.push('-- Stores Yjs CRDT document state for collaborative real-time editing.');
-        parts.push('-- Each row represents the latest merged state of a single collaborative document.');
-        parts.push('-- The engine persists full Yjs binary state periodically (every ~30s), not per keystroke.');
-        parts.push('-- Real-time updates between clients are distributed via Supabase Broadcast (WebSocket),');
-        parts.push('-- so this table is only for durable persistence and offline-to-online reconciliation.');
-        parts.push('--');
-        parts.push('-- Key columns:');
-        parts.push('--   state        — Full Yjs document state (Y.encodeStateAsUpdate), base64 encoded');
-        parts.push('--   state_vector — Yjs state vector (Y.encodeStateVector) for efficient delta computation');
-        parts.push('--   state_size   — Byte size of state column, used for monitoring and compaction decisions');
-        parts.push('--   device_id    — Identifies which device last persisted, used for echo suppression');
-        parts.push('');
-        parts.push('create table if not exists crdt_documents (');
-        parts.push('  id uuid primary key default gen_random_uuid(),');
-        parts.push('  page_id uuid not null,');
-        parts.push('  state text not null,');
-        parts.push('  state_vector text not null,');
-        parts.push('  state_size integer not null default 0,');
-        parts.push('  user_id uuid not null references auth.users(id),');
-        parts.push('  device_id text not null,');
-        parts.push('  updated_at timestamptz not null default now(),');
-        parts.push('  created_at timestamptz not null default now()');
-        parts.push(');');
-        parts.push('');
-        parts.push('alter table crdt_documents enable row level security;');
-        parts.push('');
-        parts.push('do $$ begin create policy "Users can manage own CRDT documents"');
-        parts.push('  on crdt_documents for all');
-        parts.push('  using (auth.uid() = user_id); exception when duplicate_object then null; end $$;');
-        parts.push('');
-        parts.push('drop trigger if exists set_crdt_documents_user_id on crdt_documents;');
-        parts.push('create trigger set_crdt_documents_user_id');
-        parts.push('  before insert on crdt_documents');
-        parts.push('  for each row execute function set_user_id();');
-        parts.push('');
-        parts.push('drop trigger if exists update_crdt_documents_updated_at on crdt_documents;');
-        parts.push('create trigger update_crdt_documents_updated_at');
-        parts.push('  before update on crdt_documents');
-        parts.push('  for each row execute function update_updated_at_column();');
-        parts.push('');
-        parts.push('create index if not exists idx_crdt_documents_page_id on crdt_documents(page_id);');
-        parts.push('create index if not exists idx_crdt_documents_user_id on crdt_documents(user_id);');
-        parts.push('');
-        parts.push('-- Unique constraint per page per user (upsert target for persistence)');
-        parts.push('create unique index if not exists idx_crdt_documents_page_user on crdt_documents(page_id, user_id);');
         parts.push('');
     }
     /* ---- Storage Buckets ---- */

@@ -24,7 +24,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 import type Dexie from 'dexie';
 import type { SingleUserGateType, SchemaDefinition, SchemaTableConfig, AuthConfig } from './types';
-import type { CRDTConfig } from './crdt/types';
 import type { DemoConfig } from './demo';
 import { _setDebugPrefix } from './debug';
 import { _setDeviceIdPrefix } from './deviceId';
@@ -37,7 +36,6 @@ import {
   computeSchemaVersion,
   type DatabaseConfig
 } from './database';
-import { _initCRDT } from './crdt/config';
 import { snakeToCamel } from './utils';
 
 // =============================================================================
@@ -157,19 +155,6 @@ export interface SyncEngineConfig {
    * @see {@link DemoConfig} for the configuration shape
    */
   demo?: DemoConfig;
-
-  /**
-   * CRDT collaborative editing configuration.
-   *
-   * When provided, enables the CRDT subsystem — creates IndexedDB tables for
-   * CRDT document storage and allows use of the `stellar-drive/crdt` API.
-   * When omitted, no CRDT tables are created and CRDT imports will throw.
-   *
-   * Pass `true` as shorthand for `{}` (all defaults).
-   *
-   * @see {@link CRDTConfig} for available configuration options
-   */
-  crdt?: CRDTConfig | true;
 }
 
 /**
@@ -258,11 +243,6 @@ export function initEngine(config: InitEngineInput): void {
   if (_engineInitialized) return;
   _engineInitialized = true;
 
-  /* Normalize `crdt: true` shorthand to `crdt: {}`. */
-  if (config.crdt === true) {
-    config.crdt = {};
-  }
-
   /* Normalize flat auth config to the nested structure used internally. */
   if (config.auth) {
     config.auth = normalizeAuthConfig(config.auth);
@@ -280,12 +260,7 @@ export function initEngine(config: InitEngineInput): void {
       );
     }
     config.tables = generateTablesFromSchema(config.schema, config.prefix);
-    config.database = generateDatabaseFromSchema(
-      config.schema,
-      config.prefix,
-      config.databaseName,
-      !!config.crdt
-    );
+    config.database = generateDatabaseFromSchema(config.schema, config.prefix, config.databaseName);
   }
 
   /* Validate that tables are configured (either manually or via schema).
@@ -316,20 +291,14 @@ export function initEngine(config: InitEngineInput): void {
     registerDemoConfig(config.demo);
   }
 
-  /* Initialize CRDT subsystem if configured. */
-  if (config.crdt) {
-    _initCRDT(config.crdt, config.prefix);
-  }
-
   /* If demo mode is active, switch to a separate sandboxed database. */
   if (isDemoMode() && config.database) {
     config.database = { ...config.database, name: config.database.name + '_demo' };
   }
 
-  /* Create the Dexie database and store the instance on config for engine.ts access.
-   * Pass crdtEnabled flag so CRDT IndexedDB tables are conditionally included. */
+  /* Create the Dexie database and store the instance on config for engine.ts access. */
   if (config.database) {
-    _dbReady = createDatabase(config.database, !!config.crdt).then((db) => {
+    _dbReady = createDatabase(config.database).then((db) => {
       (config as { db: Dexie }).db = db;
     });
   }
@@ -546,15 +515,12 @@ function generateTablesFromSchema(schema: SchemaDefinition, prefix: string): Tab
  * @param schema - The declarative schema definition.
  * @param prefix - Application prefix for database naming and versioning.
  * @param databaseName - Optional override for the database name.
- * @param crdtEnabled - Whether the CRDT subsystem is enabled.
  * @returns A `DatabaseConfig` ready for `createDatabase()`.
  *
  * @example
  * generateDatabaseFromSchema(
  *   { goals: 'goal_list_id, order' },
- *   'stellar',
- *   undefined,
- *   false
+ *   'stellar'
  * );
  * // → {
  * //   name: 'stellarDB',
@@ -564,8 +530,7 @@ function generateTablesFromSchema(schema: SchemaDefinition, prefix: string): Tab
 function generateDatabaseFromSchema(
   schema: SchemaDefinition,
   prefix: string,
-  databaseName?: string,
-  crdtEnabled = false
+  databaseName?: string
 ): DatabaseConfig {
   const stores: Record<string, string> = {};
 
@@ -581,11 +546,8 @@ function generateDatabaseFromSchema(
     stores[dexieName] = appIndexes ? `${SYSTEM_INDEXES}, ${appIndexes}` : SYSTEM_INDEXES;
   }
 
-  /* Compute auto-version based on the merged store schema.
-   * The CRDT flag affects the schema hash because CRDT system tables are merged
-   * by buildDexie() — if CRDT is toggled, the version should bump. */
-  const hashInput = crdtEnabled ? { ...stores, __crdt: 'enabled' } : stores;
-  const result = computeSchemaVersion(prefix, hashInput);
+  /* Compute auto-version based on the merged store schema. */
+  const result = computeSchemaVersion(prefix, stores);
 
   /*
    * Build the versions array. When an upgrade is detected, declare BOTH

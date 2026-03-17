@@ -32,7 +32,6 @@ import type { SchemaDefinition } from './types';
  * @example
  * generateSupabaseSQL(schema, {
  *   appName: 'Stellar',
- *   includeCRDT: true,
  *   includeDeviceVerification: true,
  * });
  */
@@ -58,11 +57,9 @@ export interface SQLGenerationOptions {
     /**
      * App prefix for multi-tenant table name prefixing.
      * When set, all app tables are prefixed (e.g., `stellar_goals`).
-     * Shared tables (`trusted_devices`, `crdt_documents`) remain unprefixed.
+     * Shared tables (`trusted_devices`) remain unprefixed.
      */
     prefix?: string;
-    /** Include CRDT document storage table. @default false */
-    includeCRDT?: boolean;
     /** Include trusted_devices table. @default true */
     includeDeviceVerification?: boolean;
     /** Include helper trigger functions (set_user_id, update_updated_at_column). @default true */
@@ -136,7 +133,6 @@ export declare function generateTypeScript(schema: SchemaDefinition, options?: T
  *   2. Helper functions (`set_user_id`, `update_updated_at_column`)
  *   3. One `CREATE TABLE` block per schema table
  *   4. `trusted_devices` table (unless `includeDeviceVerification` is `false`)
- *   5. `crdt_documents` table (only if `includeCRDT` is `true`)
  *
  * @param schema - The declarative schema definition.
  * @param options - Optional generation options.

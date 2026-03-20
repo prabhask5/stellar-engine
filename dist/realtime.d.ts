@@ -274,4 +274,34 @@ export declare function stopRealtimeSubscriptions(): Promise<void>;
  * @see {@link ./engine.ts} -- calls this from the `offline` event handler
  */
 export declare function pauseRealtime(): void;
+/**
+ * Suspend the realtime channel to prevent egress during large batch pushes.
+ *
+ * When the sync engine pushes hundreds of records to Supabase, each INSERT/UPDATE
+ * triggers a CDC event that flows back through the WebSocket. Even though echo
+ * suppression discards them (own device), the WebSocket messages still consume
+ * Supabase egress bandwidth. For a 1,000-row CSV import, this means 1,000
+ * wasted WebSocket messages.
+ *
+ * This function removes the channel entirely so Supabase does not generate
+ * CDC events for this client during the push. After the push completes,
+ * {@link resumeRealtimeAfterBatchPush} re-subscribes.
+ *
+ * **Safety:** The userId is preserved so resumption can reconnect seamlessly.
+ * Any changes from other devices during the suspension window are caught by
+ * the pull phase that runs after push.
+ *
+ * @see {@link resumeRealtimeAfterBatchPush} to re-establish the channel
+ */
+export declare function suspendRealtimeForBatchPush(): Promise<void>;
+/**
+ * Resume the realtime channel after a batch push completes.
+ *
+ * Re-subscribes to the Supabase Realtime channel using the preserved userId.
+ * Must be called after {@link suspendRealtimeForBatchPush}, even if the push
+ * fails, to restore realtime functionality.
+ *
+ * @see {@link suspendRealtimeForBatchPush}
+ */
+export declare function resumeRealtimeAfterBatchPush(): Promise<void>;
 //# sourceMappingURL=realtime.d.ts.map

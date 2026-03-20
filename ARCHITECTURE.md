@@ -623,7 +623,9 @@ acquireSyncLock()  ------> Lock held? Check stale (>60s) -> force release or ski
 
 **Error Classification**: Errors are classified as transient (network timeout, rate-limit, 5xx, RLS policy violations) or persistent (auth failure, validation). Transient errors suppress UI error indicators until retry #3 to avoid alarming users during brief network hiccups. RLS violations are classified as transient because they are often caused by parent-child ordering issues (the parent record hasn't synced yet) and resolve on retry.
 
-**Batch Creates**: Create operations are grouped by table and sent as a single `supabase.from(table).upsert([...])` call (up to 500 rows per batch). This is critical for bulk operations like CSV imports — hundreds of transactions push in 1-2 HTTP calls instead of hundreds of individual round trips. `upsert` (INSERT ON CONFLICT UPDATE) is used instead of `insert` so that duplicate records are handled in one round-trip without error fallback. If the batch fails (e.g., RLS on child tables), the engine falls back to individual `processSyncItem` calls to identify the problem row.
+**Batch Creates**: Create operations are grouped by table and sent as a single `supabase.from(table).upsert([...])` call (up to 500 rows per batch). This is critical for bulk operations like CSV imports — hundreds of transactions push in 1-2 HTTP calls instead of hundreds of individual round trips. `upsert` (INSERT ON CONFLICT UPDATE) is used instead of `insert` so that duplicate records are handled in one round-trip without error fallback. The grouping phase uses `bulkGet` to verify items are still in the sync queue in a single IndexedDB read (instead of per-item sequential reads), which eliminates O(N) IndexedDB overhead for large batches.
+
+**Secondary Unique Constraint Handling (23505 Retry)**: When a batch create fails with Postgres error code `23505` (duplicate key), it indicates a secondary unique constraint violation (e.g., `csv_import_hash`, `teller_transaction_id`) rather than a primary `id` conflict. Instead of falling back to expensive per-item HTTP requests (which caused timeouts on 500+ row batches), the engine retries the batch with `ignoreDuplicates: true` (ON CONFLICT DO NOTHING). This skips conflicting rows in a single round-trip while successfully inserting the non-conflicting ones. Individual fallback is reserved for non-duplicate errors (RLS, schema violations).
 
 **Parent-Before-Child Table Ordering**: When the schema defines child tables via `ownership: { parent, fk }`, the push phase sorts batch creates so parent tables are processed before child tables. This is essential because child table RLS policies validate that the parent FK exists with a matching `user_id`. Without this ordering, a batch of child creates would fail RLS because the parent records haven't been inserted yet.
 
@@ -631,7 +633,7 @@ acquireSyncLock()  ------> Lock held? Check stale (>60s) -> force release or ski
 
 ### 6.5 Pull Phase Details
 
-All table queries run in parallel via `Promise.all()` wrapped in a `withTimeout()` (30s timeout). Results are applied inside a single Dexie transaction spanning all entity tables + syncQueue + conflictHistory.
+All table queries run in parallel via `Promise.all()` wrapped in a `withTimeout()` (dynamic timeout based on pending operation count: 45s base + 30s per 500 items, capped at 5 minutes). Results are applied inside a single Dexie transaction spanning all entity tables + syncQueue + conflictHistory.
 
 The per-record application logic:
 1. Skip if recently modified locally (2s TTL protection)
@@ -703,6 +705,7 @@ The engine aggressively minimizes Supabase bandwidth consumption. This matters b
 | **Parallel table queries** | Reduces wall-clock time | All tables are fetched concurrently via `Promise.all()`. |
 | **Batch upserts** | N creates → 1 request | Create operations are grouped by table and sent as a single `upsert([...])`. Handles duplicates without fallback round-trips. |
 | **Parent-first ordering** | Prevents RLS retry storms | Child table batches wait until parent batches succeed, avoiding failed inserts that waste bandwidth on retries. |
+| **Realtime suspension during batch push** | Eliminates echo egress | When ≥50 ops are pending, the realtime channel is removed before pushing. Supabase generates no CDC events for this client during the push. Channel is re-subscribed after push completes. Any missed remote changes are caught by the pull phase. |
 
 ### 6.9 Egress Tracking
 
@@ -1081,11 +1084,38 @@ A `reconnectScheduled` flag prevents duplicate reconnect attempts when both `CHA
 - **Pause when offline**: `pauseRealtime()` is called when the network goes down. No reconnect timers fire. The userId is preserved for seamless resumption.
 - **Resume on online**: When the `online` event fires, realtime subscriptions are re-established with the same userId.
 
-### 8.9 Debounced Notification Batching
+### 8.9 Realtime Suspension During Batch Push
 
-When a batch push writes N records, Supabase emits N individual CDC events. Without batching, each event triggers a separate `notifyDataUpdate` call, causing N store refreshes (e.g., 500 transactions = 500 UI re-renders).
+When the sync engine detects ≥50 pending operations (the `BATCH_SUSPEND_THRESHOLD`), it **suspends the realtime channel entirely** before pushing. This is the primary egress optimization for large batch operations like CSV imports:
 
-The realtime module coalesces these into a single notification per table using a **50ms debounce window**:
+```
+1. Engine detects 1,119 pending ops (e.g., CSV import)
+2. suspendRealtimeForBatchPush()
+   --> Sets batchSuspended = true (blocks reconnection + drops stale events)
+   --> removeChannel() — Supabase stops sending CDC events
+3. pushPendingOps() — batch upserts to Supabase
+   --> 0 CDC events arrive (channel is gone)
+   --> Any stale buffered events are dropped by batchSuspended guard
+4. resumeRealtimeAfterBatchPush()
+   --> Clears batchSuspended flag
+   --> startRealtimeSubscriptions(userId) — re-subscribe
+5. Pull phase catches any changes from other devices
+```
+
+**Without suspension:** A 1,119-row CSV import would generate 1,119 WebSocket CDC events, all discarded as own-device echoes — pure wasted egress.
+
+**With suspension:** Zero CDC events during push. The pull phase (cursor-based incremental fetch) handles any missed remote changes.
+
+**Three-layer defense:**
+1. `batchSuspended` flag — set unconditionally regardless of channel state, prevents reconnection during push
+2. Channel teardown — removes the WebSocket channel so Supabase generates no CDC events
+3. `handleRealtimeChange` guard — drops any stale events that arrive from WebSocket buffers after the channel was removed but before the connection fully closed
+
+**Safety:** The `userId` is preserved across suspend/resume. The `finally` block ensures resumption even if the push fails. The `batchSuspended` guard in `startRealtimeSubscriptions` prevents premature reconnection (e.g., from network-online events during the push window).
+
+### 8.10 Debounced Notification Batching
+
+For smaller batch operations (below the suspension threshold), or for CDC events from other devices, notifications are coalesced into a single per-table refresh using a **50ms debounce window**:
 
 ```
 CDC Event 1 (table: transactions, id: abc)
@@ -1104,7 +1134,7 @@ flushPendingNotifications()
   --> UI refreshes once per table, not once per record
 ```
 
-This reduces store refresh count from O(N) to O(tables) for batch operations, eliminating the timeout/flooding issue when importing large datasets.
+This reduces store refresh count from O(N) to O(tables) for batch operations.
 - **Connection state tracking**: The `RealtimeConnectionState` type tracks `'disconnected' | 'connecting' | 'connected' | 'error'`, exposed via `syncStatusStore.setRealtimeState()` for UI display.
 
 ---

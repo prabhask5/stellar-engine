@@ -66,7 +66,7 @@ import { getPendingSync, removeSyncItem, bulkRemoveSyncItems, incrementRetry, ge
 import { getDeviceId } from './deviceId';
 import { syncStatusStore } from './stores/sync';
 import { resolveConflicts, storeConflictHistory, cleanupConflictHistory, getPendingOpsForEntity } from './conflicts';
-import { startRealtimeSubscriptions, stopRealtimeSubscriptions, onRealtimeDataUpdate, onConnectionStateChange, cleanupRealtimeTracking, isRealtimeHealthy, pauseRealtime, wasRecentlyProcessedByRealtime } from './realtime';
+import { startRealtimeSubscriptions, stopRealtimeSubscriptions, onRealtimeDataUpdate, onConnectionStateChange, cleanupRealtimeTracking, isRealtimeHealthy, pauseRealtime, wasRecentlyProcessedByRealtime, suspendRealtimeForBatchPush, resumeRealtimeAfterBatchPush } from './realtime';
 import { isOnline } from './stores/network';
 import { getSession } from './supabase/auth';
 import { supabase as supabaseProxy } from './supabase/client';
@@ -508,8 +508,18 @@ let handleVisibilityChangeRef = null;
 let watchdogInterval = null;
 /** How often the watchdog checks for stuck locks */
 const WATCHDOG_INTERVAL_MS = 15000;
-/** Maximum time allowed for individual push/pull operations before abort */
-const SYNC_OPERATION_TIMEOUT_MS = 45000;
+/** Base timeout for individual push/pull operations before abort */
+const SYNC_OPERATION_TIMEOUT_BASE_MS = 45000;
+/**
+ * Calculate dynamic timeout based on pending operation count.
+ * Large batch operations (e.g., 1000+ CSV rows) need more time than the
+ * base 45s, especially when individual fallback processing is required.
+ * Scales: 45s base + 30s per 500 items, capped at 5 minutes.
+ */
+function getSyncOperationTimeout(pendingCount = 0) {
+    const extra = Math.ceil(pendingCount / 500) * 30000;
+    return Math.min(SYNC_OPERATION_TIMEOUT_BASE_MS + extra, 300000);
+}
 /**
  * Attempt to acquire the sync lock (non-blocking).
  *
@@ -1118,15 +1128,18 @@ async function pushPendingOps() {
         const createItems = pendingItems.filter((item) => item.operationType === 'create');
         const nonCreateItems = pendingItems.filter((item) => item.operationType !== 'create');
         if (createItems.length > 0) {
-            // Group creates by table, preserving queue order within each group
+            // Group creates by table, preserving queue order within each group.
+            // Bulk-read all sync queue IDs in one IndexedDB call instead of
+            // per-item reads (N sequential reads → 1 bulk read).
+            const createQueueIds = createItems.filter((item) => item.id).map((item) => item.id);
+            const queuedRows = await db.table('syncQueue').bulkGet(createQueueIds);
+            const stillQueuedIds = new Set(queuedRows
+                .map((row, i) => (row ? createQueueIds[i] : null))
+                .filter((id) => id !== null));
             const createsByTable = new Map();
             for (const item of createItems) {
-                // Verify item is still in queue (may have been purged by reconciliation)
-                if (item.id) {
-                    const stillQueued = await db.table('syncQueue').get(item.id);
-                    if (!stillQueued)
-                        continue;
-                }
+                if (item.id && !stillQueuedIds.has(item.id))
+                    continue;
                 const existing = createsByTable.get(item.table) || [];
                 existing.push(item);
                 createsByTable.set(item.table, existing);
@@ -1165,29 +1178,64 @@ async function pushPendingOps() {
                     const batchItems = items.slice(i, i + BATCH_SIZE);
                     try {
                         debugLog(`[SYNC] Batch upsert ${batch.length} rows into ${tableName}`);
-                        // Use upsert (INSERT ... ON CONFLICT DO UPDATE) instead of insert.
-                        // This handles duplicates in a single round-trip — no fallback needed.
-                        // Records that already exist in Supabase are updated (no-op if data is same),
-                        // records that don't exist are inserted. Critical for repair scenarios where
-                        // we can't distinguish "never synced" from "already synced".
                         const { error } = await supabase
                             .from(tableName)
                             .upsert(batch, { onConflict: 'id', ignoreDuplicates: false });
                         if (error) {
-                            // Batch failed — fall back to individual to identify the problem row(s).
-                            // Common cause: RLS on child tables when parent hasn't synced yet.
-                            debugError(`[SYNC] Batch upsert failed for ${tableName}:`, error);
-                            for (const item of batchItems) {
-                                try {
-                                    await processSyncItem(item);
-                                    if (item.id) {
-                                        await removeSyncItem(item.id);
+                            if (error.code === '23505') {
+                                // Duplicate key on a SECONDARY unique constraint (e.g., csv_import_hash,
+                                // teller_transaction_id). The primary `id` column is unique by UUID
+                                // generation, so this means another row with a different id already has
+                                // the same value for a secondary unique field. Retry with ignoreDuplicates
+                                // to skip conflicting rows in a single round-trip, avoiding the expensive
+                                // per-item fallback that caused timeouts on large batches.
+                                debugLog(`[SYNC] Batch create hit secondary unique constraint for ${tableName} — retrying with ignoreDuplicates`);
+                                const { error: retryError } = await supabase
+                                    .from(tableName)
+                                    .upsert(batch, { onConflict: 'id', ignoreDuplicates: true });
+                                if (!retryError) {
+                                    const idsToRemove = batchItems.filter((item) => item.id).map((item) => item.id);
+                                    if (idsToRemove.length > 0) {
+                                        await bulkRemoveSyncItems(idsToRemove);
                                         processedAny = true;
-                                        actualPushed++;
+                                        actualPushed += idsToRemove.length;
+                                    }
+                                    debugLog(`[SYNC] Batch create retry success: ${batch.length} rows into ${tableName} (duplicates skipped)`);
+                                }
+                                else {
+                                    // Retry also failed — fall back to individual processing
+                                    debugError(`[SYNC] Batch create retry also failed for ${tableName}:`, retryError);
+                                    for (const item of batchItems) {
+                                        try {
+                                            await processSyncItem(item);
+                                            if (item.id) {
+                                                await removeSyncItem(item.id);
+                                                processedAny = true;
+                                                actualPushed++;
+                                            }
+                                        }
+                                        catch (itemError) {
+                                            handleSyncItemError(item, itemError);
+                                        }
                                     }
                                 }
-                                catch (itemError) {
-                                    handleSyncItemError(item, itemError);
+                            }
+                            else {
+                                // Non-duplicate error — fall back to individual to identify the problem row(s).
+                                // Common cause: RLS on child tables when parent hasn't synced yet.
+                                debugError(`[SYNC] Batch upsert failed for ${tableName}:`, error);
+                                for (const item of batchItems) {
+                                    try {
+                                        await processSyncItem(item);
+                                        if (item.id) {
+                                            await removeSyncItem(item.id);
+                                            processedAny = true;
+                                            actualPushed++;
+                                        }
+                                    }
+                                    catch (itemError) {
+                                        handleSyncItemError(item, itemError);
+                                    }
                                 }
                             }
                         }
@@ -1230,14 +1278,17 @@ async function pushPendingOps() {
         const batchableItems = nonCreateItems.filter((item) => !isSingletonTable(item.table));
         const individualItems = nonCreateItems.filter((item) => isSingletonTable(item.table));
         if (batchableItems.length > 0) {
+            // Bulk-read sync queue IDs for the still-queued check (same optimization as creates)
+            const batchQueueIds = batchableItems.filter((item) => item.id).map((item) => item.id);
+            const batchQueuedRows = await db.table('syncQueue').bulkGet(batchQueueIds);
+            const batchStillQueuedIds = new Set(batchQueuedRows
+                .map((row, i) => (row ? batchQueueIds[i] : null))
+                .filter((id) => id !== null));
             // Group by table
             const itemsByTable = new Map();
             for (const item of batchableItems) {
-                if (item.id) {
-                    const stillQueued = await db.table('syncQueue').get(item.id);
-                    if (!stillQueued)
-                        continue;
-                }
+                if (item.id && !batchStillQueuedIds.has(item.id))
+                    continue;
                 const existing = itemsByTable.get(item.table) || [];
                 existing.push(item);
                 itemsByTable.set(item.table, existing);
@@ -1247,13 +1298,18 @@ async function pushPendingOps() {
                 const deviceId = getDeviceId();
                 const dexieTable = getDexieTableName(tableName);
                 // Build batch payload from local IndexedDB state (full entity rows).
-                // For deletes, the local entity already has `deleted: true`.
-                // For increments, the local entity already has the final computed value.
-                // For sets, the local entity already has the updated fields.
+                // Bulk-read all entities in one IndexedDB call instead of per-item reads.
+                const entityIds = items.map((item) => item.entityId);
+                const localEntities = await db.table(dexieTable).bulkGet(entityIds);
+                const entityMap = new Map();
+                localEntities.forEach((entity, i) => {
+                    if (entity)
+                        entityMap.set(entityIds[i], entity);
+                });
                 const payloads = [];
                 const validItems = [];
                 for (const item of items) {
-                    const localEntity = await db.table(dexieTable).get(item.entityId);
+                    const localEntity = entityMap.get(item.entityId);
                     if (!localEntity) {
                         // Entity deleted locally — for delete ops this is expected (already gone),
                         // for others skip it
@@ -1873,11 +1929,31 @@ export async function runFullSync(quiet = false, skipPull = false) {
             syncStatusStore.setStatus('syncing');
             syncStatusStore.setSyncMessage('Preparing changes...');
         }
+        // EGRESS OPTIMIZATION: Suspend realtime channel during large batch pushes.
+        // When pushing hundreds of records, each triggers a CDC event that comes back
+        // through the WebSocket — all discarded as own-device echoes, but still costing
+        // Supabase egress bandwidth. Suspending the channel eliminates this entirely.
+        const BATCH_SUSPEND_THRESHOLD = 50;
+        const preflightItems = await getPendingSync();
+        const shouldSuspendRealtime = preflightItems.length >= BATCH_SUSPEND_THRESHOLD;
+        if (shouldSuspendRealtime) {
+            debugLog(`[SYNC] ${preflightItems.length} pending ops — suspending realtime to prevent egress flood`);
+            await suspendRealtimeForBatchPush();
+        }
         // Push first so local changes are persisted
         // Note: pushPendingOps coalesces before pushing, so actual requests are lower
-        const pushStats = await withTimeout(pushPendingOps(), SYNC_OPERATION_TIMEOUT_MS, 'Push pending ops');
-        pushedItems = pushStats.actualPushed;
-        pushSucceeded = true;
+        const pushTimeout = getSyncOperationTimeout(preflightItems.length);
+        try {
+            const pushStats = await withTimeout(pushPendingOps(), pushTimeout, 'Push pending ops');
+            pushedItems = pushStats.actualPushed;
+            pushSucceeded = true;
+        }
+        finally {
+            // Always resume realtime, even if push fails
+            if (shouldSuspendRealtime) {
+                await resumeRealtimeAfterBatchPush();
+            }
+        }
         // EGRESS OPTIMIZATION: Skip pull when realtime is healthy and this is a push-triggered sync
         let pullEgress = { bytes: 0, records: 0 };
         if (skipPull) {
@@ -1898,7 +1974,7 @@ export async function runFullSync(quiet = false, skipPull = false) {
                 try {
                     // Don't pass postPushCursor - we want ALL changes since stored cursor
                     // The conflict resolution handles our own pushed changes via device_id check
-                    pullEgress = await withTimeout(pullRemoteChanges(), SYNC_OPERATION_TIMEOUT_MS, 'Pull remote changes');
+                    pullEgress = await withTimeout(pullRemoteChanges(), getSyncOperationTimeout(preflightItems.length), 'Pull remote changes');
                     pullSucceeded = true;
                 }
                 catch (pullError) {
@@ -2067,7 +2143,7 @@ async function fullReconciliation() {
     let totalRemoved = 0;
     try {
         // Fetch all non-deleted IDs from each table on the server
-        const results = await withTimeout(Promise.all(config.tables.map((table) => supabase.from(table.supabaseName).select('id').or('deleted.is.null,deleted.eq.false'))), SYNC_OPERATION_TIMEOUT_MS, 'Full reconciliation');
+        const results = await withTimeout(Promise.all(config.tables.map((table) => supabase.from(table.supabaseName).select('id').or('deleted.is.null,deleted.eq.false'))), getSyncOperationTimeout(), 'Full reconciliation');
         // Check for errors
         for (let i = 0; i < results.length; i++) {
             if (results[i].error) {

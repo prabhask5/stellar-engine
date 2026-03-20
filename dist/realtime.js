@@ -520,6 +520,14 @@ async function handleRealtimeChange(table, payload) {
         debugWarn('[Realtime] Change without entity ID:', table, eventType);
         return;
     }
+    /* ---- Batch suspension guard ----
+       During large batch pushes, the channel should be torn down. But if a stale
+       event arrives (e.g., from a WebSocket buffer before the channel was fully
+       removed), discard it to prevent wasted processing and egress. */
+    if (batchSuspended) {
+        debugLog(`[Realtime] Dropping event during batch suspension: ${table}/${entityId}`);
+        return;
+    }
     /* ---- Echo suppression ----
        Skip events that originated from this device. Without this check, every
        local write would be processed a second time when the CDC event arrives
@@ -882,6 +890,13 @@ export async function startRealtimeSubscriptions(userId) {
         debugLog('[Realtime] Offline - skipping subscription start');
         return;
     }
+    /* Don't reconnect while a batch push is in progress. The channel was
+       intentionally suspended to prevent CDC echo egress. Resume will
+       call us again after the push completes. */
+    if (batchSuspended) {
+        debugLog('[Realtime] Batch push in progress - skipping subscription start');
+        return;
+    }
     /* Idempotency: skip if already connected for this user. This prevents
        unnecessary channel teardown/recreation when the caller doesn't track
        whether we're already connected. */
@@ -1069,5 +1084,70 @@ export function pauseRealtime() {
     state.reconnectAttempts = 0;
     setConnectionState('disconnected');
     debugLog('[Realtime] Paused - waiting for online event');
+}
+// =============================================================================
+// BATCH PUSH SUSPENSION -- Eliminate egress during large batch pushes
+// =============================================================================
+/**
+ * Whether realtime is currently suspended for a batch push.
+ * While suspended, the channel is removed to prevent Supabase from sending
+ * CDC events for records we just wrote ourselves.
+ */
+let batchSuspended = false;
+/**
+ * Suspend the realtime channel to prevent egress during large batch pushes.
+ *
+ * When the sync engine pushes hundreds of records to Supabase, each INSERT/UPDATE
+ * triggers a CDC event that flows back through the WebSocket. Even though echo
+ * suppression discards them (own device), the WebSocket messages still consume
+ * Supabase egress bandwidth. For a 1,000-row CSV import, this means 1,000
+ * wasted WebSocket messages.
+ *
+ * This function removes the channel entirely so Supabase does not generate
+ * CDC events for this client during the push. After the push completes,
+ * {@link resumeRealtimeAfterBatchPush} re-subscribes.
+ *
+ * **Safety:** The userId is preserved so resumption can reconnect seamlessly.
+ * Any changes from other devices during the suspension window are caught by
+ * the pull phase that runs after push.
+ *
+ * @see {@link resumeRealtimeAfterBatchPush} to re-establish the channel
+ */
+export async function suspendRealtimeForBatchPush() {
+    if (batchSuspended)
+        return;
+    batchSuspended = true;
+    debugLog('[Realtime] Suspending channel for batch push (egress optimization)');
+    // Tear down the channel regardless of connection state. Even if the channel
+    // is 'connecting' (not yet 'connected'), we must remove it to prevent CDC
+    // events from flowing once the connection completes during the push.
+    if (state.channel) {
+        await stopRealtimeSubscriptionsInternal();
+    }
+    debugLog('[Realtime] Channel suspended — no CDC events will be received during push');
+}
+/**
+ * Resume the realtime channel after a batch push completes.
+ *
+ * Re-subscribes to the Supabase Realtime channel using the preserved userId.
+ * Must be called after {@link suspendRealtimeForBatchPush}, even if the push
+ * fails, to restore realtime functionality.
+ *
+ * @see {@link suspendRealtimeForBatchPush}
+ */
+export async function resumeRealtimeAfterBatchPush() {
+    if (!batchSuspended)
+        return;
+    batchSuspended = false;
+    const userId = state.userId;
+    if (!userId) {
+        debugLog('[Realtime] Cannot resume — no userId preserved');
+        return;
+    }
+    debugLog('[Realtime] Resuming channel after batch push');
+    /* startRealtimeSubscriptions checks operationInProgress, so we
+       need to make sure it's not set from the stopInternal call. */
+    await startRealtimeSubscriptions(userId);
+    debugLog('[Realtime] Channel resumed — CDC events flowing again');
 }
 //# sourceMappingURL=realtime.js.map

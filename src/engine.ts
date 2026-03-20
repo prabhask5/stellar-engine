@@ -1451,40 +1451,95 @@ async function pushPendingOps(): Promise<PushStats> {
                 // Duplicate key on a SECONDARY unique constraint (e.g., csv_import_hash,
                 // teller_transaction_id). The primary `id` column is unique by UUID
                 // generation, so this means another row with a different id already has
-                // the same value for a secondary unique field. Retry with ignoreDuplicates
-                // to skip conflicting rows in a single round-trip, avoiding the expensive
-                // per-item fallback that caused timeouts on large batches.
+                // the same value for a secondary unique field.
+                //
+                // Strategy: query Supabase for which entity IDs already exist, remove those
+                // from the queue (they're true duplicates), then retry with only the new ones.
+                // This avoids the catastrophic individual fallback (500 sequential HTTP requests).
                 debugLog(
-                  `[SYNC] Batch create hit secondary unique constraint for ${tableName} — retrying with ignoreDuplicates`
+                  `[SYNC] Batch create hit secondary unique constraint for ${tableName} — filtering duplicates`
                 );
-                const { error: retryError } = await supabase
-                  .from(tableName)
-                  .upsert(batch, { onConflict: 'id', ignoreDuplicates: true });
 
-                if (!retryError) {
-                  const idsToRemove = batchItems.filter((item) => item.id).map((item) => item.id!);
-                  if (idsToRemove.length > 0) {
-                    await bulkRemoveSyncItems(idsToRemove);
-                    processedAny = true;
-                    actualPushed += idsToRemove.length;
-                  }
-                  debugLog(
-                    `[SYNC] Batch create retry success: ${batch.length} rows into ${tableName} (duplicates skipped)`
+                try {
+                  // Query which IDs from this batch already exist in Supabase
+                  const batchEntityIds = batchItems.map((item) => item.entityId);
+                  const { data: existingRows } = await supabase
+                    .from(tableName)
+                    .select('id')
+                    .in('id', batchEntityIds);
+
+                  const existingIds = new Set(
+                    (existingRows || []).map((r: { id: string }) => r.id)
                   );
-                } else {
-                  // Retry also failed — fall back to individual processing
-                  debugError(`[SYNC] Batch create retry also failed for ${tableName}:`, retryError);
-                  for (const item of batchItems) {
-                    try {
-                      await processSyncItem(item);
-                      if (item.id) {
-                        await removeSyncItem(item.id);
+
+                  // Remove already-synced items from queue
+                  const duplicateQueueIds = batchItems
+                    .filter((item) => existingIds.has(item.entityId) && item.id)
+                    .map((item) => item.id!);
+                  if (duplicateQueueIds.length > 0) {
+                    await bulkRemoveSyncItems(duplicateQueueIds);
+                    processedAny = true;
+                    actualPushed += duplicateQueueIds.length;
+                    debugLog(
+                      `[SYNC] Removed ${duplicateQueueIds.length} already-synced items from queue`
+                    );
+                  }
+
+                  // Retry with only the truly new items
+                  const newBatch = batch.filter(
+                    (row) => !existingIds.has((row as Record<string, unknown>).id as string)
+                  );
+                  const newBatchItems = batchItems.filter(
+                    (item) => !existingIds.has(item.entityId)
+                  );
+
+                  if (newBatch.length > 0) {
+                    const { error: retryError } = await supabase
+                      .from(tableName)
+                      .upsert(newBatch, { onConflict: 'id', ignoreDuplicates: false });
+
+                    if (!retryError) {
+                      const idsToRemove = newBatchItems
+                        .filter((item) => item.id)
+                        .map((item) => item.id!);
+                      if (idsToRemove.length > 0) {
+                        await bulkRemoveSyncItems(idsToRemove);
                         processedAny = true;
-                        actualPushed++;
+                        actualPushed += idsToRemove.length;
                       }
-                    } catch (itemError) {
-                      handleSyncItemError(item, itemError);
+                      debugLog(
+                        `[SYNC] Batch create retry success: ${newBatch.length} new rows into ${tableName}`
+                      );
+                    } else {
+                      // Retry still failed — likely another secondary constraint issue.
+                      // Remove all items from queue to prevent infinite retry loops.
+                      debugError(
+                        `[SYNC] Batch create retry failed for ${tableName} — removing from queue to prevent retry storm:`,
+                        retryError
+                      );
+                      const allQueueIds = newBatchItems
+                        .filter((item) => item.id)
+                        .map((item) => item.id!);
+                      if (allQueueIds.length > 0) {
+                        await bulkRemoveSyncItems(allQueueIds);
+                        processedAny = true;
+                      }
                     }
+                  } else {
+                    debugLog(
+                      `[SYNC] All ${batch.length} items were duplicates — batch fully resolved`
+                    );
+                  }
+                } catch (filterError) {
+                  // If the filter query itself fails, remove items to prevent retry storm
+                  debugError(
+                    `[SYNC] Duplicate filter query failed for ${tableName} — removing from queue:`,
+                    filterError
+                  );
+                  const allQueueIds = batchItems.filter((item) => item.id).map((item) => item.id!);
+                  if (allQueueIds.length > 0) {
+                    await bulkRemoveSyncItems(allQueueIds);
+                    processedAny = true;
                   }
                 }
               } else {

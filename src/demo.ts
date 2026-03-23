@@ -78,6 +78,9 @@ let _demoSeeded = false;
 /** The app prefix, used to namespace the localStorage demo flag. */
 let _demoPrefix = '';
 
+/** Shared BroadcastChannel instance — reused for both send and receive so the sender tab is exempt from its own messages. */
+let _demoChannel: BroadcastChannel | null = null;
+
 /**
  * Snapshot of the demo mode state, captured once at engine init.
  *
@@ -132,12 +135,10 @@ export function setDemoMode(enabled: boolean): void {
   }
 
   // Broadcast to all other tabs so they reload into the correct mode.
-  // This prevents demo data from leaking into production tabs (or vice versa).
-  if (typeof BroadcastChannel !== 'undefined') {
-    const channel = new BroadcastChannel(`${_demoPrefix}-demo-mode`);
-    channel.postMessage({ type: 'DEMO_MODE_CHANGED', enabled });
-    channel.close();
-  }
+  // We reuse the shared channel instance so the sending tab is exempt from
+  // receiving its own message (BroadcastChannel exempts the sender *object*,
+  // not the sender tab — creating a new instance would lose that exemption).
+  _demoChannel?.postMessage({ type: 'DEMO_MODE_CHANGED', enabled });
 }
 
 /**
@@ -181,9 +182,11 @@ export function _setDemoPrefix(prefix: string): void {
 
   // Listen for demo mode changes from other tabs and force-reload.
   // This ensures all tabs reinitialize with the correct database immediately.
+  // The same instance is reused by setDemoMode() for posting so the sender
+  // tab is exempt and won't reload itself.
   if (typeof BroadcastChannel !== 'undefined') {
-    const channel = new BroadcastChannel(`${prefix}-demo-mode`);
-    channel.onmessage = (event) => {
+    _demoChannel = new BroadcastChannel(`${prefix}-demo-mode`);
+    _demoChannel.onmessage = (event) => {
       if (event.data?.type === 'DEMO_MODE_CHANGED') {
         window.location.reload();
       }

@@ -376,9 +376,16 @@ export async function initConfig(): Promise<AppConfig | null> {
       return configCache;
     }
 
-    /* Network is reachable — fetch from server to validate/update */
+    /* Network is reachable — fetch from server to validate/update.
+       3-second timeout prevents hanging on iOS in airplane mode: iOS often
+       reports navigator.onLine=true even in airplane mode, so the probe may
+       not catch the offline state. Without a timeout this fetch would hang
+       for ~25 seconds (OS TCP timeout) before failing. */
     try {
-      const response = await fetch('/api/config');
+      const configController = new AbortController();
+      const configTimeoutId = setTimeout(() => configController.abort(), 3000);
+      const response = await fetch('/api/config', { signal: configController.signal });
+      clearTimeout(configTimeoutId);
       if (response.ok) {
         const serverConfig = await response.json();
         if (serverConfig.configured) {
@@ -399,7 +406,9 @@ export async function initConfig(): Promise<AppConfig | null> {
         }
       }
     } catch {
-      /* Network error — use cached config if available */
+      /* Network error or timeout — mark offline so downstream code skips
+         further network calls, then fall back to cached config. */
+      _offline = true;
       if (configCache) {
         return configCache;
       }

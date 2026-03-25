@@ -350,15 +350,25 @@ async function handleNavigationRequest(request: Request): Promise<Response> {
           checks this before making its own HEAD request. Works even when
           no page client exists yet (SW is serving the HTML that will
           create the client).
+          IMPORTANT: This write is AWAITED before we serve the cached HTML.
+          Previously it was fire-and-forget, causing a race where the page
+          JS started executing before the write completed — probeNetworkReachability()
+          found no entry, fell through to a HEAD fetch, and if that also missed
+          (iOS lying about navigator.onLine), initConfig() called fetch('/api/config')
+          with no timeout and hung for ~25 seconds (OS TCP timeout).
 
        2. postMessage (for warm reloads): If a page is already open,
           the inline listener in app.html catches this and sets
           window.__stellarOffline immediately. */
-    caches
-      .open('stellar-network')
-      .then((c) =>
-        c.put('/__status', new Response('', { headers: { 'x-ts': Date.now().toString() } }))
+    try {
+      const netCache = await caches.open('stellar-network');
+      await netCache.put(
+        '/__status',
+        new Response('', { headers: { 'x-ts': Date.now().toString() } })
       );
+    } catch {
+      /* Cache API unavailable — postMessage bridge is the fallback */
+    }
     notifyClients({ type: 'NETWORK_UNREACHABLE' });
 
     const cached = await cache.match('/');

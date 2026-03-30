@@ -176,6 +176,37 @@ function getColumns(name: string): string {
 }
 
 /**
+ * Filter a payload to only include columns defined in the schema.
+ *
+ * IndexedDB rows may contain stale fields from older schema versions that no
+ * longer exist in Supabase. Pushing them causes PGRST204 errors ("Could not
+ * find column X in the schema cache"). This function strips any field not in
+ * the table's column list.
+ *
+ * @param tableName - The Supabase table name
+ * @param payload - The raw payload from IndexedDB
+ * @returns A new object containing only schema-defined fields
+ */
+function filterPayloadToSchema(
+  tableName: string,
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const columns = getColumns(tableName);
+  // If no explicit column list, pass through unchanged
+  if (columns === '*') return payload;
+  const allowed = new Set(columns.split(','));
+  const filtered: Record<string, unknown> = {};
+  for (const key of Object.keys(payload)) {
+    if (allowed.has(key)) {
+      filtered[key] = payload[key];
+    } else {
+      debugLog(`[SYNC] Stripping stale field '${key}' from ${tableName} payload`);
+    }
+  }
+  return filtered;
+}
+
+/**
  * Check if a Supabase table is configured as a singleton (one row per user).
  *
  * Singleton tables have special handling during sync: when a duplicate key
@@ -1427,12 +1458,14 @@ async function pushPendingOps(): Promise<PushStats> {
         const supabase = getSupabase();
         const deviceId = getDeviceId();
 
-        // Build batch payload
-        const payloads = items.map((item) => ({
-          id: item.entityId,
-          ...(item.value as Record<string, unknown>),
-          device_id: deviceId
-        }));
+        // Build batch payload — filter to schema-defined columns only
+        const payloads = items.map((item) =>
+          filterPayloadToSchema(tableName, {
+            id: item.entityId,
+            ...(item.value as Record<string, unknown>),
+            device_id: deviceId
+          })
+        );
 
         // Batch insert (up to 500 at a time to stay within Supabase limits)
         const BATCH_SIZE = 500;
@@ -1652,10 +1685,10 @@ async function pushPendingOps(): Promise<PushStats> {
             }
             continue;
           }
-          // Strip internal Dexie fields, add device_id
-          const payload = { ...localEntity, device_id: deviceId };
-          delete (payload as Record<string, unknown>)._version;
-          payloads.push(payload);
+          // Strip internal Dexie fields, add device_id, filter to schema columns
+          const rawPayload = { ...localEntity, device_id: deviceId };
+          delete (rawPayload as Record<string, unknown>)._version;
+          payloads.push(filterPayloadToSchema(tableName, rawPayload));
           validItems.push(item);
         }
 
@@ -1884,12 +1917,12 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
       // INSERT the full entity payload with the originating device_id.
       // Uses .select('id').maybeSingle() to verify the row was actually created
       // (RLS can silently block inserts, returning success with no data).
-      const payload = value as Record<string, unknown>;
-      const { data, error } = await supabase
-        .from(table)
-        .insert({ id: entityId, ...payload, device_id: deviceId })
-        .select('id')
-        .maybeSingle();
+      const payload = filterPayloadToSchema(table, {
+        id: entityId,
+        ...(value as Record<string, unknown>),
+        device_id: deviceId
+      });
+      const { data, error } = await supabase.from(table).insert(payload).select('id').maybeSingle();
       // Duplicate key = another device already created this entity.
       // For regular tables, this is a no-op (the entity exists, which is what we wanted).
       // For singleton tables, we need to reconcile: the local UUID was generated offline
@@ -1997,8 +2030,9 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
         const localInc = await db.table(dexieTable).get(entityId);
         if (localInc) {
           debugLog(`[SYNC] Increment fallback to insert for missing row: ${table}/${entityId}`);
-          const insertPayload = { ...localInc, device_id: deviceId };
-          delete (insertPayload as Record<string, unknown>)._version;
+          const rawInsertPayload = { ...localInc, device_id: deviceId };
+          delete (rawInsertPayload as Record<string, unknown>)._version;
+          const insertPayload = filterPayloadToSchema(table, rawInsertPayload);
           const { error: insertError } = await supabase
             .from(table)
             .insert(insertPayload)
@@ -2083,9 +2117,10 @@ async function processSyncItem(item: SyncOperationItem): Promise<void> {
         const localEntity = await db.table(dexieTable).get(entityId);
         if (localEntity) {
           debugLog(`[SYNC] Set fallback to insert for missing row: ${table}/${entityId}`);
-          const insertPayload = { ...localEntity, device_id: deviceId };
+          const rawSetPayload = { ...localEntity, device_id: deviceId };
           // Remove Dexie internal keys
-          delete (insertPayload as Record<string, unknown>)._version;
+          delete (rawSetPayload as Record<string, unknown>)._version;
+          const insertPayload = filterPayloadToSchema(table, rawSetPayload);
           const { data: inserted, error: insertError } = await supabase
             .from(table)
             .insert(insertPayload)

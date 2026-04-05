@@ -302,7 +302,8 @@ export function _getRealtimeDiagnostics() {
         deviceId: state.deviceId,
         recentlyProcessedCount: recentlyProcessedByRealtime.size,
         operationInProgress,
-        reconnectScheduled
+        reconnectScheduled,
+        batchSuspended
     };
 }
 /**

@@ -175,6 +175,7 @@ export declare function _getRealtimeDiagnostics(): {
     recentlyProcessedCount: number;
     operationInProgress: boolean;
     reconnectScheduled: boolean;
+    batchSuspended: boolean;
 };
 /**
  * Remove expired entries from the recently-processed tracking map.

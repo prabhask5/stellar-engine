@@ -94,6 +94,14 @@ export interface DiagnosticsSnapshot {
         recentlyProcessedCount: number;
         operationInProgress: boolean;
         reconnectScheduled: boolean;
+        /**
+         * True when the channel has been intentionally torn down during a large
+         * batch push to eliminate CDC echo egress. While true, `connectionState`
+         * will read as 'disconnected' and `healthy` as false — but this is by
+         * design, not a failure. The channel resumes automatically once the push
+         * completes.
+         */
+        batchSuspended: boolean;
     };
     /** Browser network connectivity */
     network: {
@@ -166,6 +174,7 @@ export declare function getRealtimeDiagnostics(): {
     recentlyProcessedCount: number;
     operationInProgress: boolean;
     reconnectScheduled: boolean;
+    batchSuspended: boolean;
 };
 /**
  * Get pending sync queue diagnostics (async — reads IndexedDB).

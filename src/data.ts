@@ -117,6 +117,7 @@ export async function engineCreate(
   const payload = {
     created_at: timestamp,
     updated_at: timestamp,
+    deleted: false,
     ...data,
     id: entityId
   };
@@ -343,6 +344,7 @@ export async function engineBatchWrite(operations: BatchOperation[]): Promise<vo
             const payload = {
               created_at: timestamp,
               updated_at: timestamp,
+              deleted: false,
               ...op.data,
               id: entityId
             };

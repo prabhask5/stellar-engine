@@ -103,6 +103,7 @@ export async function engineCreate(table, data) {
     const payload = {
         created_at: timestamp,
         updated_at: timestamp,
+        deleted: false,
         ...data,
         id: entityId
     };
@@ -267,6 +268,7 @@ export async function engineBatchWrite(operations) {
                         const payload = {
                             created_at: timestamp,
                             updated_at: timestamp,
+                            deleted: false,
                             ...op.data,
                             id: entityId
                         };

@@ -79,7 +79,8 @@ function createSyncStatusStore() {
         lastSyncTime: null,
         syncMessage: null,
         isTabVisible: true,
-        realtimeState: 'disconnected'
+        realtimeState: 'disconnected',
+        progress: null
     });
     // ---------------------------------------------------------------------------
     // Anti-Flicker Timing State
@@ -235,6 +236,40 @@ function createSyncStatusStore() {
          */
         setRealtimeState: (realtimeState) => update((state) => ({ ...state, realtimeState })),
         /**
+         * Begin tracking a high-volume batch push. Populates the `progress` field
+         * with an initial snapshot so the UI can render a progress bar instead of
+         * just an indeterminate spinner.
+         *
+         * @param total - Queue size at the start of the push (the denominator)
+         */
+        startProgress: (total) => update((state) => ({
+            ...state,
+            progress: { total, completed: 0, failed: 0, currentTable: null }
+        })),
+        /**
+         * Advance the batch-push progress counters. Called after each batch or
+         * individual item finishes so the UI can reflect real-time throughput.
+         *
+         * @param delta - How many items finished since the last update
+         * @param failed - How many of those items failed (defaults to 0)
+         * @param currentTable - Optional table name currently being processed
+         */
+        advanceProgress: (delta, failed = 0, currentTable) => update((state) => {
+            if (!state.progress)
+                return state;
+            return {
+                ...state,
+                progress: {
+                    total: state.progress.total,
+                    completed: state.progress.completed + delta,
+                    failed: state.progress.failed + failed,
+                    currentTable: currentTable !== undefined ? currentTable : state.progress.currentTable
+                }
+            };
+        }),
+        /** Clear progress tracking — call when a large push completes (or aborts). */
+        clearProgress: () => update((state) => ({ ...state, progress: null })),
+        /**
          * Reset the entire store to its initial default state.
          *
          * Cleans up any pending delayed status transitions and resets all closure
@@ -258,7 +293,8 @@ function createSyncStatusStore() {
                 lastSyncTime: null,
                 syncMessage: null,
                 isTabVisible: true,
-                realtimeState: 'disconnected'
+                realtimeState: 'disconnected',
+                progress: null
             });
         }
     };

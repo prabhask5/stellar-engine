@@ -59,6 +59,26 @@ export interface SyncError {
 export type RealtimeState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 /**
+ * Real-time progress for a large batch push.
+ *
+ * Populated by the push loop when the initial queue size exceeds
+ * `BATCH_PROGRESS_THRESHOLD`. Reset to `null` when the push completes or the
+ * queue is small enough that per-item progress is redundant.
+ *
+ * `total` is the queue size at the start of the push (the denominator).
+ * `completed` counts items that have been successfully pushed to Supabase.
+ * `failed` counts items that errored during this push (still in queue for retry).
+ * `currentTable` is the Supabase table whose batch is currently in flight —
+ * useful so the UI can surface "Syncing transactions… 1,200 / 2,500".
+ */
+export interface SyncProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  currentTable: string | null;
+}
+
+/**
  * Complete internal state shape for the sync status store.
  */
 interface SyncState {
@@ -95,6 +115,13 @@ interface SyncState {
    * independently of the push/pull sync cycle.
    */
   realtimeState: RealtimeState;
+
+  /**
+   * Real-time progress for a large batch push. `null` when no high-volume
+   * push is in flight (the ordinary `pendingCount` badge is sufficient).
+   * See {@link SyncProgress}.
+   */
+  progress: SyncProgress | null;
 }
 
 // =============================================================================
@@ -156,7 +183,8 @@ function createSyncStatusStore() {
     lastSyncTime: null,
     syncMessage: null,
     isTabVisible: true,
-    realtimeState: 'disconnected'
+    realtimeState: 'disconnected',
+    progress: null
   });
 
   // ---------------------------------------------------------------------------
@@ -333,6 +361,44 @@ function createSyncStatusStore() {
       update((state) => ({ ...state, realtimeState })),
 
     /**
+     * Begin tracking a high-volume batch push. Populates the `progress` field
+     * with an initial snapshot so the UI can render a progress bar instead of
+     * just an indeterminate spinner.
+     *
+     * @param total - Queue size at the start of the push (the denominator)
+     */
+    startProgress: (total: number) =>
+      update((state) => ({
+        ...state,
+        progress: { total, completed: 0, failed: 0, currentTable: null }
+      })),
+
+    /**
+     * Advance the batch-push progress counters. Called after each batch or
+     * individual item finishes so the UI can reflect real-time throughput.
+     *
+     * @param delta - How many items finished since the last update
+     * @param failed - How many of those items failed (defaults to 0)
+     * @param currentTable - Optional table name currently being processed
+     */
+    advanceProgress: (delta: number, failed: number = 0, currentTable?: string | null) =>
+      update((state) => {
+        if (!state.progress) return state;
+        return {
+          ...state,
+          progress: {
+            total: state.progress.total,
+            completed: state.progress.completed + delta,
+            failed: state.progress.failed + failed,
+            currentTable: currentTable !== undefined ? currentTable : state.progress.currentTable
+          }
+        };
+      }),
+
+    /** Clear progress tracking — call when a large push completes (or aborts). */
+    clearProgress: () => update((state) => ({ ...state, progress: null })),
+
+    /**
      * Reset the entire store to its initial default state.
      *
      * Cleans up any pending delayed status transitions and resets all closure
@@ -356,7 +422,8 @@ function createSyncStatusStore() {
         lastSyncTime: null,
         syncMessage: null,
         isTabVisible: true,
-        realtimeState: 'disconnected'
+        realtimeState: 'disconnected',
+        progress: null
       });
     }
   };

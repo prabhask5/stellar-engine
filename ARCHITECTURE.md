@@ -1454,10 +1454,20 @@ interface SyncState {
   lastSyncTime: string | null; // ISO 8601
   realtimeState: 'disconnected' | 'connecting' | 'connected' | 'error';
   isTabVisible: boolean;
+  progress: SyncProgress | null; // Real-time batch-push progress (null when idle)
+}
+
+interface SyncProgress {
+  total: number;           // Queue size at start of push (denominator)
+  completed: number;       // Items successfully pushed
+  failed: number;          // Items that errored (still in queue for retry)
+  currentTable: string | null; // Table currently being pushed
 }
 ```
 
 **Anti-Flicker Logic:** The store enforces a minimum 500ms display time for the `'syncing'` state. If a sync cycle completes faster than 500ms, the status change to `'idle'` is deferred until the minimum time elapses. This prevents the sync indicator from rapidly flashing on and off.
+
+**Batch-Push Progress:** When a push cycle begins with `>= 50` queued items, `pushPendingOps()` calls `startProgress(total)` and polls IndexedDB every 400ms to update `progress.completed` and `pendingCount`. This powers the `SyncStatus` component's `'catching-up'` state — a determinate progress ring and shimmer bar that surfaces to users during high-volume sync operations (e.g., 2500-item first-login fetches or mass category deletions). The progress field clears on push completion via a `try/finally` block to guarantee cleanup even on error.
 
 **Offline Cold Start:** When `startSyncEngine()` detects the device is offline at startup, it immediately sets status to `'offline'` with a user-friendly message. Without this, `syncStatusStore.reset()` would leave the status as `'idle'`, and the sync indicator would not show the offline state until the first online→offline transition.
 

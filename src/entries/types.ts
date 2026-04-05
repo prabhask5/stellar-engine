@@ -85,7 +85,7 @@ export type {
 // - `RealtimeState` — Supabase Realtime connection state union.
 // - `RemoteActionType` — the kind of remote change (insert, update, delete).
 
-export type { SyncError, RealtimeState } from '../stores/sync';
+export type { SyncError, RealtimeState, SyncProgress } from '../stores/sync';
 export type { RemoteActionType } from '../stores/remoteChanges';
 
 // =============================================================================

@@ -4566,6 +4566,21 @@ function generateProfilePage(opts: InstallOptions): string {
     - Manage trusted devices (view, revoke)
     - Toggle debug mode
     - Reset local database (destructive — requires confirmation)
+
+  Diagnostics surface (available via \`getDiagnostics()\` from stellar-drive):
+    - \`sync.status\` — 'idle' | 'syncing' | 'error'
+    - \`sync.progress\` — \`{ total, completed, failed, currentTable }\` | null
+        Populated during high-volume batch pushes so the UI can render a
+        determinate progress bar ("Catching up 1,200 / 2,500"). The
+        \`<SyncStatus>\` component already renders this as a 'catching-up'
+        state with progress ring — no extra wiring needed.
+    - \`realtime.batchSuspended\` — true while the realtime channel is
+        intentionally torn down during a large batch push (egress
+        optimization — not a failure). Surface this in any "connection
+        state" UI so users don't mistake it for a disconnect.
+    - \`queue.pendingOperations\` / \`queue.itemsInBackoff\` — live queue depth.
+    - \`egress.totalFormatted\` — human-readable session bandwidth usage.
+    - \`errors.recentErrors\` — rolling per-entity sync error history.
 -->
 <script lang="ts">
   // =============================================================================

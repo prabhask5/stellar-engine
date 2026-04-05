@@ -21,7 +21,7 @@
    */
 
   import { syncStatusStore, isOnline } from 'stellar-drive/stores';
-  import type { SyncError, RealtimeState } from 'stellar-drive/types';
+  import type { SyncError, RealtimeState, SyncProgress } from 'stellar-drive/types';
   import { runFullSync } from 'stellar-drive';
   import type { SyncStatus } from 'stellar-drive/types';
 
@@ -49,6 +49,8 @@
   let syncMessage = $state<string | null>(null);
   /** Supabase Realtime connection state */
   let realtimeState = $state<RealtimeState>('disconnected');
+  /** Live progress for a high-volume batch push (null outside of one). */
+  let progress = $state<SyncProgress | null>(null);
   /** Whether the tooltip is visible */
   let showTooltip = $state(false);
   /** Whether the error-details panel inside the tooltip is expanded */
@@ -89,6 +91,7 @@
       syncErrors = value.syncErrors;
       lastSyncTime = value.lastSyncTime;
       syncMessage = value.syncMessage;
+      progress = value.progress;
 
       // Track realtime state changes for smooth animation
       if (value.realtimeState !== prevRealtimeState) {
@@ -125,13 +128,20 @@
   // =============================================================================
 
   /**
-   * Trigger a full manual sync when the indicator is clicked (only if online
-   * and not already syncing).
+   * Trigger a full manual sync when the indicator is clicked.
+   *
+   * Clickable whenever online — during `catching-up` the user can still
+   * click to queue another sync pass (it will coalesce harmlessly), which
+   * gives the user a sense of agency during long batch pushes instead of
+   * staring at a disabled button. During `syncing` we still block to avoid
+   * stacking concurrent short-cycle syncs.
    */
   function handleSyncClick() {
-    if (online && status !== 'syncing') {
-      runFullSync(false);
-    }
+    if (!online) return;
+    // Allow clicks during catching-up so the user has an escape hatch;
+    // runFullSync is idempotent via the internal sync lock.
+    if (status === 'syncing' && !progress) return;
+    runFullSync(false);
   }
 
   /**
@@ -180,15 +190,28 @@
   // =============================================================================
 
   /**
-   * Map the raw sync status + online flag into one of five display states:
-   * `offline` | `syncing` | `error` | `pending` | `synced`.
+   * Map the raw sync status + online flag into one of six display states:
+   * `offline` | `catching-up` | `syncing` | `error` | `pending` | `synced`.
+   *
+   * `catching-up` is distinct from `syncing` — it surfaces *during* a
+   * high-volume batch push where the progress monitor is populating
+   * `progress`. The UI shows a determinate ring (with percentage) instead
+   * of an opaque spinner, and the button is clickable so the user knows
+   * work is in flight AND can still force-resync if they get impatient.
    */
   const displayState = $derived(() => {
     if (!online) return 'offline';
+    if (progress && progress.total > 0) return 'catching-up';
     if (status === 'syncing') return 'syncing';
     if (status === 'error') return 'error';
     if (pendingCount > 0) return 'pending';
     return 'synced';
+  });
+
+  /** Percentage completed for the catching-up progress ring (0–100). */
+  const progressPct = $derived(() => {
+    if (!progress || progress.total === 0) return 0;
+    return Math.min(100, Math.round((progress.completed / progress.total) * 100));
   });
 
   // =============================================================================
@@ -243,6 +266,8 @@
     switch (state) {
       case 'offline':
         return 'Offline';
+      case 'catching-up':
+        return 'Catching Up';
       case 'syncing':
         return 'Syncing';
       case 'error':
@@ -277,6 +302,13 @@
     switch (state) {
       case 'offline':
         return "Changes will sync when you're back online.";
+      case 'catching-up': {
+        const prog = progress;
+        if (!prog) return 'Syncing a large batch…';
+        const pct = progressPct();
+        const remaining = Math.max(0, prog.total - prog.completed);
+        return `${prog.completed.toLocaleString()} of ${prog.total.toLocaleString()} synced · ${remaining.toLocaleString()} to go (${pct}%)`;
+      }
       case 'syncing':
         return 'Syncing your data...';
       case 'error':
@@ -384,16 +416,50 @@
     <button
       class="sync-indicator"
       class:offline={displayState() === 'offline'}
+      class:catching-up={displayState() === 'catching-up'}
       class:syncing={displayState() === 'syncing'}
       class:error={displayState() === 'error'}
       class:pending={displayState() === 'pending'}
       class:synced={displayState() === 'synced'}
       onclick={handleSyncClick}
-      disabled={!online || status === 'syncing'}
+      disabled={!online || (status === 'syncing' && !progress)}
       aria-label={statusLabel()}
     >
       <!-- Animated ring around the button -->
       <span class="indicator-ring"></span>
+
+      <!-- ═══ Catching-Up Progress Ring (determinate SVG circle) ═══ -->
+      {#if displayState() === 'catching-up'}
+        <svg
+          class="progress-ring"
+          width="36"
+          height="36"
+          viewBox="0 0 36 36"
+          aria-hidden="true"
+        >
+          <!-- Background track -->
+          <circle
+            class="progress-ring-track"
+            cx="18"
+            cy="18"
+            r="15.5"
+            fill="none"
+            stroke-width="2.25"
+          />
+          <!-- Foreground arc — stroke-dasharray driven by progressPct -->
+          <circle
+            class="progress-ring-arc"
+            cx="18"
+            cy="18"
+            r="15.5"
+            fill="none"
+            stroke-width="2.25"
+            stroke-linecap="round"
+            style:stroke-dasharray={`${(progressPct() / 100) * 97.39} 97.39`}
+            transform="rotate(-90 18 18)"
+          />
+        </svg>
+      {/if}
 
       <!-- ═══ Morphing Icon Container ═══ -->
       <span class="indicator-core" class:transitioning={isTransitioning}>
@@ -487,6 +553,11 @@
             d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"
           />
         </svg>
+
+        <!-- Catching-Up Percentage (sits inside the progress ring) -->
+        {#if displayState() === 'catching-up'}
+          <span class="progress-pct">{progressPct()}</span>
+        {/if}
       </span>
 
       <!-- Pending count badge -->
@@ -520,12 +591,18 @@
             <div
               class="status-dot"
               class:offline={displayState() === 'offline'}
+              class:catching-up={displayState() === 'catching-up'}
               class:syncing={displayState() === 'syncing'}
               class:error={displayState() === 'error'}
               class:pending={displayState() === 'pending'}
               class:synced={displayState() === 'synced'}
             ></div>
             <span class="status-label">{statusLabel()}</span>
+            {#if displayState() === 'catching-up' && progress}
+              <span class="progress-count">
+                {progress.completed.toLocaleString()} / {progress.total.toLocaleString()}
+              </span>
+            {/if}
             {#if realtimeLabel() && displayState() !== 'offline'}
               <span
                 class="realtime-badge"
@@ -538,8 +615,16 @@
                 {realtimeLabel()}
               </span>
             {/if}
-            {#if formattedLastSync() && displayState() !== 'syncing'}
+            {#if formattedLastSync() && displayState() !== 'syncing' && displayState() !== 'catching-up'}
               <span class="last-sync">{formattedLastSync()}</span>
+            {/if}
+
+            <!-- ── In-Tooltip Progress Bar (shown while catching up) ── -->
+            {#if displayState() === 'catching-up'}
+              <div class="catching-up-bar" role="progressbar" aria-valuenow={progressPct()} aria-valuemin="0" aria-valuemax="100">
+                <span class="catching-up-bar-fill" style:width={`${progressPct()}%`}></span>
+                <span class="catching-up-bar-shimmer"></span>
+              </div>
             {/if}
           </div>
 
@@ -1034,6 +1119,115 @@
     }
   }
 
+  /* ═══ Catching-Up State (high-volume batch push in flight) ═══ */
+
+  .sync-indicator.catching-up {
+    /* Sapphire → primary gradient border communicates "work flowing in" */
+    border-color: rgba(108, 92, 231, 0.5);
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-primary) 10%, transparent) 0%,
+      color-mix(in srgb, var(--color-primary) 3%, transparent) 100%
+    );
+  }
+
+  .sync-indicator.catching-up:not(:disabled):hover {
+    box-shadow: 0 0 28px var(--color-primary-glow);
+  }
+
+  /* Determinate progress ring — scaled to sit over the button's border */
+  .progress-ring {
+    position: absolute;
+    inset: -4px;
+    width: calc(100% + 8px);
+    height: calc(100% + 8px);
+    pointer-events: none;
+  }
+
+  .progress-ring-track {
+    stroke: rgba(108, 92, 231, 0.15);
+  }
+
+  .progress-ring-arc {
+    stroke: var(--color-primary-light, #a29bfe);
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-primary) 55%, transparent));
+    transition: stroke-dasharray 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Percentage text sitting inside the ring */
+  .progress-pct {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-primary-light, #a29bfe);
+    letter-spacing: -0.02em;
+  }
+
+  .progress-pct::after {
+    content: '%';
+    font-size: 7px;
+    font-weight: 600;
+    margin-left: 1px;
+    opacity: 0.7;
+  }
+
+  /* Running count chip shown in tooltip header */
+  .progress-count {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-primary-light, #a29bfe);
+    letter-spacing: -0.01em;
+  }
+
+  /* In-tooltip progress bar with shimmer */
+  .catching-up-bar {
+    position: relative;
+    width: 100%;
+    height: 4px;
+    margin-top: 4px;
+    background: rgba(108, 92, 231, 0.12);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .catching-up-bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(
+      90deg,
+      var(--color-primary, #6c5ce7) 0%,
+      var(--color-primary-light, #a29bfe) 100%
+    );
+    border-radius: 2px;
+    transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .catching-up-bar-shimmer {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.22) 50%,
+      transparent 100%
+    );
+    transform: translateX(-100%);
+    animation: catching-up-shimmer 1.6s ease-in-out infinite;
+  }
+
+  @keyframes catching-up-shimmer {
+    to {
+      transform: translateX(100%);
+    }
+  }
+
   /* ═══ Pending State ═══ */
 
   .sync-indicator.pending {
@@ -1327,6 +1521,12 @@
     background: var(--color-primary);
     box-shadow: 0 0 8px var(--color-primary-glow);
     animation: dotPulse 1s ease-in-out infinite;
+  }
+
+  .status-dot.catching-up {
+    background: var(--color-primary-light, #a29bfe);
+    box-shadow: 0 0 10px var(--color-primary-glow);
+    animation: dotPulse 1.4s ease-in-out infinite;
   }
 
   @keyframes dotPulse {

@@ -143,10 +143,11 @@ export declare function handleSwUpdate(): Promise<void>;
  *      from the SW itself, posted after the `install` event completes
  *   4. **`updatefound` + `statechange` tracking** — monitors the standard
  *      SW lifecycle events for newly installing workers
- *   5. **`visibilitychange` re-check** — triggers an update check when the
- *      app resumes from the background (critical for iOS PWA resume)
- *   6. **2-minute polling interval** — periodic fallback for long-running
- *      sessions where none of the event-based strategies would fire
+ *   5. **Foreground resume hooks** — triggers an update check when the
+ *      document becomes visible, the window regains focus, or the page is
+ *      restored from the back-forward cache
+ *   6. **2-minute polling interval** — periodic fallback that now re-checks
+ *      for a waiting worker after each forced update probe
  *
  * @param callbacks - Object containing the `onUpdateAvailable` callback,
  *                    which fires whenever any strategy detects a waiting

@@ -4602,47 +4602,25 @@ export const POST: RequestHandler = createValidateHandler();
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a catch-all route that redirects unknown paths to the home page.
+ * Generate a server-only catch-all route that redirects unknown paths to the
+ * home page before any bad-route UI mounts.
  *
- * @returns The TypeScript source for `src/routes/[...catchall]/+page.ts`.
+ * @returns The TypeScript source for `src/routes/[...catchall]/+page.server.ts`.
  */
 function generateCatchallPage(): string {
   return `/**
- * Catch-All Route Handler — \`[...catchall]/+page.ts\`
+ * Catch-All Route Handler — \`[...catchall]/+page.server.ts\`
  *
- * Unknown URLs should still end up at \`/\`, but a soft client-side redirect
- * after hydration can leave the shell in an inconsistent state. On first
- * document request we let the server issue a normal redirect; on client-side
- * catch-all entry the paired page component performs a hard browser redirect.
+ * Unknown URLs should redirect to \`/\` before any bad-route page renders.
+ * A server-only redirect keeps the app shell out of the invalid route,
+ * avoiding stale UI state and intermediate-screen flicker.
  */
 
-import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 
 export function load() {
-  if (!browser) {
-    redirect(302, '/');
-  }
-
-  return {};
+  redirect(302, '/');
 }
-`;
-}
-
-/**
- * Generate the catch-all page component that performs a hard browser redirect
- * when an invalid route is reached through the client router.
- *
- * @returns The Svelte source for `src/routes/[...catchall]/+page.svelte`.
- */
-function generateCatchallPageSvelte(): string {
-  return `<script lang="ts">
-  import { onMount } from 'svelte';
-
-  onMount(() => {
-    window.location.replace('/');
-  });
-</script>
 `;
 }
 
@@ -5317,8 +5295,9 @@ function generateUpdatePromptComponent(): string {
    *   1. \`statechange\` on the installing SW → catches updates during the visit
    *   2. \`updatefound\` on the registration → catches background installs
    *   3. \`visibilitychange\` → re-checks when the tab becomes visible
-   *   4. \`online\` event → re-checks when connectivity is restored
-   *   5. Periodic interval → fallback for iOS standalone mode
+   *   4. \`focus\` / \`pageshow\` → catches deployments that land while the
+   *      browser window is merely unfocused
+   *   5. Periodic interval → fallback for long-running sessions
    *   6. Initial check on mount → catches SWs that installed before this component
    *
    * Uses \`monitorSwLifecycle()\` from stellar-drive to wire up all six, and
@@ -6304,8 +6283,7 @@ export async function run(): Promise<void> {
         ['src/routes/api/config/+server.ts', generateConfigServer()],
         ['src/routes/api/setup/deploy/+server.ts', generateDeployServer(opts)],
         ['src/routes/api/setup/validate/+server.ts', generateValidateServer()],
-        ['src/routes/[...catchall]/+page.ts', generateCatchallPage()],
-        ['src/routes/[...catchall]/+page.svelte', generateCatchallPageSvelte()],
+        ['src/routes/[...catchall]/+page.server.ts', generateCatchallPage()],
         ['src/routes/profile/+page.svelte', generateProfilePage(opts)],
         ['src/routes/demo/+page.svelte', generateDemoPage(opts)]
       ]

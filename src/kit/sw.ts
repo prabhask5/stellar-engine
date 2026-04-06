@@ -249,10 +249,11 @@ export async function handleSwUpdate(): Promise<void> {
  *      from the SW itself, posted after the `install` event completes
  *   4. **`updatefound` + `statechange` tracking** — monitors the standard
  *      SW lifecycle events for newly installing workers
- *   5. **`visibilitychange` re-check** — triggers an update check when the
- *      app resumes from the background (critical for iOS PWA resume)
- *   6. **2-minute polling interval** — periodic fallback for long-running
- *      sessions where none of the event-based strategies would fire
+ *   5. **Foreground resume hooks** — triggers an update check when the
+ *      document becomes visible, the window regains focus, or the page is
+ *      restored from the back-forward cache
+ *   6. **2-minute polling interval** — periodic fallback that now re-checks
+ *      for a waiting worker after each forced update probe
  *
  * @param callbacks - Object containing the `onUpdateAvailable` callback,
  *                    which fires whenever any strategy detects a waiting
@@ -296,13 +297,23 @@ export function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): () => void 
    *
    * This is the core detection primitive used by multiple strategies.
    */
-  function checkForWaitingWorker() {
-    navigator.serviceWorker.getRegistration().then((registration) => {
-      if (registration?.waiting) {
-        debug('log', '[SW] Found waiting service worker');
-        callbacks.onUpdateAvailable();
+  async function checkForWaitingWorker(options?: { updateFirst?: boolean }) {
+    let registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) return;
+
+    if (options?.updateFirst) {
+      try {
+        await registration.update();
+      } catch {
+        /* update() can throw while offline or during browser resume. */
       }
-    });
+      registration = await navigator.serviceWorker.getRegistration();
+    }
+
+    if (registration?.waiting) {
+      debug('log', '[SW] Found waiting service worker');
+      callbacks.onUpdateAvailable();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -330,7 +341,7 @@ export function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): () => void 
       /* Small delay to ensure the SW has transitioned to 'waiting' state
          before we check — the message fires during install, but the
          waiting state is set shortly after. */
-      timeouts.push(setTimeout(checkForWaitingWorker, 500));
+      timeouts.push(setTimeout(() => void checkForWaitingWorker(), 500));
     }
   };
   navigator.serviceWorker.addEventListener('message', onMessage);
@@ -372,17 +383,29 @@ export function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): () => void 
   // ---------------------------------------------------------------------------
   /* When the app resumes from the background (especially on iOS PWA where
      the SW may have been terminated), trigger a fresh update check. */
+  const checkForUpdateOnResume = () => {
+    debug('log', '[SW] App resumed, checking for updates');
+    void checkForWaitingWorker({ updateFirst: true });
+  };
+
   const onVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
-      debug('log', '[SW] App became visible, checking for updates');
-      navigator.serviceWorker.ready.then((registration) => {
-        registration.update();
-      });
-      timeouts.push(setTimeout(checkForWaitingWorker, 1000));
+      checkForUpdateOnResume();
     }
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
   cleanups.push(() => document.removeEventListener('visibilitychange', onVisibilityChange));
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', checkForUpdateOnResume);
+    cleanups.push(() => window.removeEventListener('focus', checkForUpdateOnResume));
+
+    const onPageShow = () => {
+      checkForUpdateOnResume();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    cleanups.push(() => window.removeEventListener('pageshow', onPageShow));
+  }
 
   // ---------------------------------------------------------------------------
   //  Strategy 6 — Periodic polling (2-minute interval)
@@ -391,9 +414,7 @@ export function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): () => void 
      navigates or switches tabs. A 2-minute poll is a lightweight fallback. */
   const pollInterval = setInterval(
     () => {
-      navigator.serviceWorker.ready.then((registration) => {
-        registration.update();
-      });
+      void checkForWaitingWorker({ updateFirst: true });
     },
     2 * 60 * 1000
   );
@@ -401,9 +422,7 @@ export function monitorSwLifecycle(callbacks: SwLifecycleCallbacks): () => void 
 
   /* Force an update check on initial setup — ensures the browser has the
      latest SW script knowledge from the very start of monitoring. */
-  navigator.serviceWorker.ready.then((registration) => {
-    registration.update();
-  });
+  void checkForWaitingWorker({ updateFirst: true });
 
   // ---------------------------------------------------------------------------
   //  Cleanup — tear down all listeners, intervals, and timeouts

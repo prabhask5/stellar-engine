@@ -1599,7 +1599,7 @@ function generateRootLayoutSvelte(opts) {
   /* ── SvelteKit Utilities ── */
   import { page } from '$app/stores';
   import { browser } from '$app/environment';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
 
   /* ── Stellar Engine — Auth & Stores ── */
   import { lockSingleUser } from 'stellar-drive/auth';
@@ -1689,6 +1689,11 @@ function generateRootLayoutSvelte(opts) {
    */
   $effect(() => {
     hydrateAuthState(data);
+  });
+
+  // Scroll to top after every navigation so the new page always starts at the top.
+  afterNavigate(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   });
 
   /**
@@ -5140,7 +5145,68 @@ function generateProfilePage(opts) {
   <title>Profile - ${opts.name}</title>
 </svelte:head>
 
+<!-- Demo Link (Mobile only — desktop has access via nav) -->
+<div class="mobile-demo-link">
+  <a href="/demo" class="demo-link-btn">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+    Try Demo Mode
+  </a>
+</div>
+
 <!-- TODO: Add profile page template (forms, cards, device list, debug tools) -->
+
+<style>
+  .mobile-demo-link {
+    display: none;
+  }
+
+  @media (max-width: 640px) {
+    .mobile-demo-link {
+      display: flex;
+      justify-content: center;
+      padding-top: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+  }
+
+  .demo-link-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.875rem 1.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-primary-light, #a78bfa);
+    background: rgba(108, 92, 231, 0.08);
+    border: 1px solid rgba(108, 92, 231, 0.2);
+    border-radius: var(--radius-lg, 12px);
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .demo-link-btn:hover {
+    background: rgba(108, 92, 231, 0.15);
+    border-color: rgba(108, 92, 231, 0.35);
+  }
+
+  .demo-link-btn:active {
+    transform: scale(0.98);
+  }
+</style>
 `;
 }
 // ---------------------------------------------------------------------------

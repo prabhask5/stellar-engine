@@ -1692,8 +1692,10 @@ function generateRootLayoutSvelte(opts) {
   });
 
   // Scroll to top after every navigation so the new page always starts at the top.
+  // Must target document.body directly — html has overflow:hidden so window.scrollTo
+  // targets document.documentElement which cannot scroll and is a guaranteed no-op.
   afterNavigate(() => {
-    window.scrollTo(0, 0);
+    document.body.scrollTop = 0;
   });
 
   /**

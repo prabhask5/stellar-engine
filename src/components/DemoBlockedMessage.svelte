@@ -10,12 +10,9 @@
   - z-index 9950 — above page content and DemoBanner (9000), below sign-out overlay (9998).
   - App-neutral styling — works in both Stellar and Radiant themes.
 
-  @example
-  ```svelte
-  <!-- In +layout.svelte -->
-  import DemoBlockedMessage from 'stellar-drive/components/DemoBlockedMessage';
-  <DemoBlockedMessage />
-  ```
+  Example mount in `+layout.svelte`:
+  `import DemoBlockedMessage from 'stellar-drive/components/DemoBlockedMessage';`
+  `<DemoBlockedMessage />`
 -->
 <script lang="ts">
   import { _demoBlockedStore } from 'stellar-drive/demo';

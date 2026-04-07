@@ -18,7 +18,7 @@
   ```
 -->
 <script lang="ts">
-  import { _demoBlockedStore } from '../demo';
+  import { _demoBlockedStore } from 'stellar-drive/demo';
   import { fade, scale } from 'svelte/transition';
 
   const message = $derived($_demoBlockedStore);

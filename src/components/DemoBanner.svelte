@@ -20,7 +20,7 @@
 
 {#if visible}
   <div class="demo-banner" role="status" aria-live="polite">
-    <span class="demo-banner-text">Demo Mode<span class="demo-banner-subtitle"> — Changes reset on refresh</span></span>
+    <span class="demo-banner-text">Demo Mode<span class="demo-banner-subtitle">&ensp;—&ensp;Changes reset on refresh</span></span>
     <a class="demo-banner-link" href="/demo">Demo Page</a>
     <button
       class="demo-banner-close"

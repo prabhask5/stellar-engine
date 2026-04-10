@@ -4058,7 +4058,7 @@ function generateLoginPage(opts: InstallOptions): string {
           clearInterval(retryTimer);
           retryTimer = null;
         }
-        tick().then(() => { unlockInputs[0]?.focus(); });
+        setTimeout(() => { unlockInputs[0]?.focus(); }, 50);
       }
     }, 1000);
   }

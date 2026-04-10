@@ -3935,7 +3935,7 @@ function generateLoginPage(opts) {
           clearInterval(retryTimer);
           retryTimer = null;
         }
-        tick().then(() => { unlockInputs[0]?.focus(); });
+        setTimeout(() => { unlockInputs[0]?.focus(); }, 50);
       }
     }, 1000);
   }

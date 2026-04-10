@@ -1509,7 +1509,15 @@ if (browser) {
     auth: { gateType: 'code' },
     demo: demoConfig,
     onAuthStateChange: (event, session) => {
-      // TODO: Handle auth events (e.g., analytics, logging)
+      if (event === 'SIGNED_IN' && session) {
+        const path = window.location.pathname;
+        /* Skip /login (handles its own post-auth flow) and /confirm
+           (verifyOtp fires SIGNED_IN inside the confirm tab — navigating
+           away would interrupt the broadcast-then-close flow mid-flight). */
+        if (!path.startsWith('/login') && !path.startsWith('/confirm')) {
+          goto(path, { invalidateAll: true });
+        }
+      }
     },
     onAuthKicked: async () => {
       await lockSingleUser();
@@ -3579,7 +3587,8 @@ function generateLoginPage(opts) {
     completeDeviceVerification,
     pollDeviceVerification,
     fetchRemoteGateConfig,
-    linkSingleUserDevice
+    linkSingleUserDevice,
+    checkPersistentLockout
   } from 'stellar-drive/auth';
   import { sendDeviceVerification, isDemoMode } from 'stellar-drive';
   import { isSafeRedirect } from 'stellar-drive/utils';
@@ -3788,6 +3797,12 @@ function generateLoginPage(opts) {
     /* ── Initial resolution complete — show the appropriate card ──── */
     resolving = false;
 
+    /* ── Check for a persistent PIN lockout from a previous session ──── */
+    const lockoutMs = await checkPersistentLockout();
+    if (lockoutMs > 0) {
+      startRetryCountdown(lockoutMs);
+    }
+
     /* ── Listen for auth confirmation from the \`/confirm\` page ──── */
     try {
       authChannel = new BroadcastChannel('${opts.prefix}-auth-channel');
@@ -3921,6 +3936,22 @@ function generateLoginPage(opts) {
         }
       }
     }, 1000);
+  }
+
+  /**
+   * Format a lockout countdown in seconds as a human-readable string.
+   * Short lockouts show seconds only; longer ones show minutes/hours.
+   *
+   * @param totalSeconds - Remaining seconds to display
+   * @returns e.g. "45s", "2m 5s", "1h 4m 3s"
+   */
+  function formatCountdown(totalSeconds: number): string {
+    if (totalSeconds < 60) return \`\${totalSeconds}s\`;
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    if (h > 0) return s > 0 ? \`\${h}h \${m}m \${s}s\` : \`\${h}h \${m}m\`;
+    return \`\${m}m \${s}s\`;
   }
 
   // =============================================================================
@@ -4309,7 +4340,30 @@ function generateLoginPage(opts) {
   <title>Login - ${opts.name}</title>
 </svelte:head>
 
-<!-- TODO: Add login page template (PIN inputs, setup wizard, device verification modal) -->
+<!--
+  TODO: Add login page template with PIN inputs, setup wizard, and device verification modal.
+  Required UI patterns for each PIN-entry section (unlock + link modes):
+
+  1. Disable PIN inputs during lockout:
+       disabled={loading || retryCountdown > 0}
+
+  2. Show lockout banner when rate-limited (takes precedence over error):
+       {#if retryCountdown > 0}
+         <div class="lockout-banner">
+           <!-- lock icon -->
+           <span>Too many attempts — try again in {formatCountdown(retryCountdown)}</span>
+         </div>
+       {:else if error}
+         <div class="error-banner">
+           <!-- info icon -->
+           <span>{error}</span>
+         </div>
+       {/if}
+
+  Style \`.lockout-banner\` with amber/warning tones distinct from the regular
+  error style so users immediately understand they are temporarily locked out
+  rather than seeing a generic failure.
+-->
 `;
 }
 /**
@@ -4374,8 +4428,10 @@ function generateConfirmPage(opts) {
       }
 
       status = 'success';
-      /* Brief pause so the user sees the success state */
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      /* Hand off immediately — broadcastAuthConfirmed has a 500 ms internal
+         delay before attempting window.close(), so the user briefly sees the
+         "success" state.  Skip the extra 800 ms delay: it creates a race
+         window where the SIGNED_IN auth-state change can interrupt the flow. */
     }
 
     /* ── Notify the originating tab and decide next action ── */

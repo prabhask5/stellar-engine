@@ -27,7 +27,7 @@
  *
  * @module auth/offlineSession
  */
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -66,6 +66,7 @@ const SESSION_ID = 'current_session';
  * @see {@link clearOfflineSession} to revoke the session on logout.
  */
 export async function createOfflineSession(userId) {
+    await waitForDb();
     const now = new Date();
     const db = getEngineConfig().db;
     const session = {
@@ -95,6 +96,7 @@ export async function createOfflineSession(userId) {
  * @returns The current offline session, or `null` if none exists.
  */
 async function getOfflineSession() {
+    await waitForDb();
     const db = getEngineConfig().db;
     const session = await db.table('offlineSession').get(SESSION_ID);
     return session || null;
@@ -139,6 +141,7 @@ export async function getValidOfflineSession() {
  * @see {@link createOfflineSession} for session creation.
  */
 export async function clearOfflineSession() {
+    await waitForDb();
     const db = getEngineConfig().db;
     await db.table('offlineSession').delete(SESSION_ID);
 }

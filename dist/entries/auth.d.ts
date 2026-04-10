@@ -16,6 +16,6 @@ export { resolveAuthState } from '../auth/resolveAuthState';
 export type { AuthStateResult } from '../auth/resolveAuthState';
 export { resolveFirstName, resolveUserId, resolveAvatarInitial } from '../auth/displayUtils';
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from '../auth/singleUser';
-export { resetLoginGuard } from '../auth/loginGuard';
+export { resetLoginGuard, checkPersistentLockout } from '../auth/loginGuard';
 export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from '../auth/deviceVerification';
 //# sourceMappingURL=auth.d.ts.map

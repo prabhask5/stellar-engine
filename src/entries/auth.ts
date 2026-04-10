@@ -87,7 +87,7 @@ export {
 // =============================================================================
 // Prevents duplicate login attempts by maintaining a transient lock.
 
-export { resetLoginGuard } from '../auth/loginGuard';
+export { resetLoginGuard, checkPersistentLockout } from '../auth/loginGuard';
 
 // =============================================================================
 //  Device Verification

@@ -175,8 +175,8 @@ export async function signOut(options?: {
     // Ignore storage errors
   }
 
-  // 8. Reset login guard state
-  resetLoginGuard();
+  // 8. Reset login guard state (fire-and-forget — non-critical)
+  resetLoginGuard().catch(() => {});
 
   // 9. Reset sync status store
   syncStatusStore.reset();

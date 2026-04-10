@@ -6,8 +6,13 @@
  * local hash exists (with rate limiting).
  *
  * Architecture:
- * - Maintains **in-memory-only** state (resets on page refresh) for failure
- *   counters and rate-limit timers.
+ * - Maintains **in-memory** state for fast local-hash failure counters and
+ *   ephemeral backoff timers (resets on page refresh by design — these are
+ *   UX-level optimisations, not security boundaries).
+ * - Maintains **persistent** lockout state in IndexedDB (`singleUserConfig`
+ *   table, key `'pin_lockout'`).  This survives page refreshes and tab
+ *   closes, preventing brute-force attacks that rely on reloading to reset
+ *   counters.
  * - Two operational strategies:
  *   1. `local-match`: A cached hash exists and the user's input matches it.
  *      Proceed to Supabase for authoritative verification.
@@ -17,13 +22,25 @@
  *   is invalidated (it may be stale from a server-side password change) and the
  *   guard falls back to rate-limited Supabase mode.
  *
+ * ## Lockout Tiers (persistent, survives page refresh)
+ *
+ * | Total failures | Lockout duration |
+ * |---------------|-----------------|
+ * |  5            |  5 minutes      |
+ * | 10            | 30 minutes      |
+ * | 15            |  2 hours        |
+ * | 20+           | 24 hours        |
+ *
+ * Counters reset to zero after any successful Supabase authentication.
+ *
  * Security considerations:
- * - The guard is a **client-side optimization**, not a security boundary. It
+ * - The guard is a **client-side optimisation**, not a security boundary. It
  *   reduces unnecessary network calls and provides a better UX (instant
  *   rejection for wrong passwords) but Supabase remains the authoritative
  *   verifier.
- * - Rate limiting is in-memory only and resets on page refresh; server-side rate
- *   limits in Supabase are still the primary defense against brute-force.
+ * - Persistent lockout counters are stored in IndexedDB. An attacker with
+ *   physical device access can clear IndexedDB, but Supabase's own server-side
+ *   rate limiting is then the next line of defence.
  * - Cached hashes are SHA-256 digests stored in IndexedDB. They are invalidated
  *   when stale-hash scenarios are detected (local match but Supabase rejects).
  *
@@ -55,6 +72,26 @@ export type PreCheckResult = {
     retryAfterMs?: number;
 };
 /**
+ * Check whether a persistent PIN lockout is currently active, without
+ * requiring the user to submit a PIN attempt.
+ *
+ * Call this on page/component mount to pre-populate the retry countdown so
+ * the UI immediately shows how long the user must wait rather than waiting
+ * for a failed submit to reveal the lockout.
+ *
+ * @returns Milliseconds remaining in the active lockout, or `0` if there is
+ *   no active lockout.
+ *
+ * @example
+ * ```ts
+ * onMount(async () => {
+ *   const remainingMs = await checkPersistentLockout();
+ *   if (remainingMs > 0) startRetryCountdown(remainingMs);
+ * });
+ * ```
+ */
+export declare function checkPersistentLockout(): Promise<number>;
+/**
  * Pre-check login credentials locally before calling Supabase.
  *
  * Reads `singleUserConfig.gateHash`, hashes input, and compares.
@@ -85,7 +122,8 @@ export declare function preCheckLogin(input: string): Promise<PreCheckResult>;
  * Called after a successful Supabase login.
  *
  * Resets all login guard counters (local failure count, rate-limit attempts,
- * and the next-allowed-attempt timestamp) so the user starts fresh.
+ * and the next-allowed-attempt timestamp) and clears the persistent lockout
+ * record from IndexedDB so the user starts fresh.
  *
  * @example
  * ```ts
@@ -93,7 +131,7 @@ export declare function preCheckLogin(input: string): Promise<PreCheckResult>;
  * if (!error) onLoginSuccess();
  * ```
  */
-export declare function onLoginSuccess(): void;
+export declare function onLoginSuccess(): Promise<void>;
 /**
  * Called after a failed Supabase login.
  *
@@ -103,7 +141,9 @@ export declare function onLoginSuccess(): void;
  *   cached hash is **stale** (password changed server-side). The cached hash is
  *   invalidated so future attempts go through rate-limited Supabase mode.
  * - `'no-cache'`: Increment the rate-limit counter and apply exponential
- *   backoff (base * 2^(n-1), capped at MAX_DELAY_MS).
+ *   backoff (base * 2^(n-1), capped at MAX_DELAY_MS).  Also increments the
+ *   persistent failure counter and applies a tier-based lockout if the
+ *   threshold is reached.
  *
  * @param strategy - The {@link PreCheckStrategy} that was returned by
  *                   {@link preCheckLogin} for this attempt.
@@ -127,8 +167,8 @@ export declare function onLoginFailure(strategy: PreCheckStrategy): Promise<void
  * @example
  * ```ts
  * await supabase.auth.signOut();
- * resetLoginGuard();
+ * await resetLoginGuard();
  * ```
  */
-export declare function resetLoginGuard(): void;
+export declare function resetLoginGuard(): Promise<void>;
 //# sourceMappingURL=loginGuard.d.ts.map

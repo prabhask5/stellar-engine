@@ -48,7 +48,7 @@
  * @see {@link offlineSession} for synthetic offline session creation
  * @see {@link loginGuard} for pre-check rate limiting
  */
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { hashValue } from './crypto';
 import { cacheOfflineCredentials } from './offlineCredentials';
@@ -135,6 +135,7 @@ function getConfirmRedirectUrl() {
  * @returns The stored config, or `null` if no config exists (not yet set up).
  */
 async function readConfig() {
+    await waitForDb();
     const db = getDb();
     const record = await db.table('singleUserConfig').get(CONFIG_ID);
     return record;
@@ -528,7 +529,7 @@ export async function unlockSingleUser(gate) {
                 return { error: 'Incorrect code' };
             }
             /* Successful Supabase login — reset rate-limit counters */
-            onLoginSuccess();
+            await onLoginSuccess();
             const session = data.session;
             const user = data.user;
             /* Sync the Supabase user ID into local config if it changed
@@ -1267,7 +1268,7 @@ export async function linkSingleUserDevice(email, pin) {
             return { error: 'Incorrect code' };
         }
         /* Successful Supabase login — reset rate-limit counters */
-        onLoginSuccess();
+        await onLoginSuccess();
         const session = data.session;
         const user = data.user;
         /* Build profile from user_metadata using the host app's reverse

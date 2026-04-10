@@ -50,7 +50,7 @@
  */
 
 import type { SingleUserConfig } from '../types';
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import { supabase } from '../supabase/client';
 import { hashValue } from './crypto';
 import { cacheOfflineCredentials } from './offlineCredentials';
@@ -150,6 +150,7 @@ function getConfirmRedirectUrl(): string {
  * @returns The stored config, or `null` if no config exists (not yet set up).
  */
 async function readConfig(): Promise<SingleUserConfig | null> {
+  await waitForDb();
   const db = getDb();
   const record = await db.table('singleUserConfig').get(CONFIG_ID);
   return record as SingleUserConfig | null;
@@ -591,7 +592,7 @@ export async function unlockSingleUser(gate: string): Promise<{
       }
 
       /* Successful Supabase login — reset rate-limit counters */
-      onLoginSuccess();
+      await onLoginSuccess();
 
       const session = data.session!;
       const user = data.user!;
@@ -1399,7 +1400,7 @@ export async function linkSingleUserDevice(
     }
 
     /* Successful Supabase login — reset rate-limit counters */
-    onLoginSuccess();
+    await onLoginSuccess();
 
     const session = data.session!;
     const user = data.user!;

@@ -138,7 +138,7 @@ export type { AuthStateResult } from './auth/resolveAuthState';
 // Prevents duplicate login attempts by maintaining a transient lock.
 // `resetLoginGuard` clears the lock (e.g. after a failed attempt).
 
-export { resetLoginGuard } from './auth/loginGuard';
+export { resetLoginGuard, checkPersistentLockout } from './auth/loginGuard';
 
 // =============================================================================
 //  Single-User Auth (PIN/Password Gate)

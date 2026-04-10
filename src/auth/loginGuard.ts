@@ -6,8 +6,13 @@
  * local hash exists (with rate limiting).
  *
  * Architecture:
- * - Maintains **in-memory-only** state (resets on page refresh) for failure
- *   counters and rate-limit timers.
+ * - Maintains **in-memory** state for fast local-hash failure counters and
+ *   ephemeral backoff timers (resets on page refresh by design — these are
+ *   UX-level optimisations, not security boundaries).
+ * - Maintains **persistent** lockout state in IndexedDB (`singleUserConfig`
+ *   table, key `'pin_lockout'`).  This survives page refreshes and tab
+ *   closes, preventing brute-force attacks that rely on reloading to reset
+ *   counters.
  * - Two operational strategies:
  *   1. `local-match`: A cached hash exists and the user's input matches it.
  *      Proceed to Supabase for authoritative verification.
@@ -17,13 +22,25 @@
  *   is invalidated (it may be stale from a server-side password change) and the
  *   guard falls back to rate-limited Supabase mode.
  *
+ * ## Lockout Tiers (persistent, survives page refresh)
+ *
+ * | Total failures | Lockout duration |
+ * |---------------|-----------------|
+ * |  5            |  5 minutes      |
+ * | 10            | 30 minutes      |
+ * | 15            |  2 hours        |
+ * | 20+           | 24 hours        |
+ *
+ * Counters reset to zero after any successful Supabase authentication.
+ *
  * Security considerations:
- * - The guard is a **client-side optimization**, not a security boundary. It
+ * - The guard is a **client-side optimisation**, not a security boundary. It
  *   reduces unnecessary network calls and provides a better UX (instant
  *   rejection for wrong passwords) but Supabase remains the authoritative
  *   verifier.
- * - Rate limiting is in-memory only and resets on page refresh; server-side rate
- *   limits in Supabase are still the primary defense against brute-force.
+ * - Persistent lockout counters are stored in IndexedDB. An attacker with
+ *   physical device access can clear IndexedDB, but Supabase's own server-side
+ *   rate limiting is then the next line of defence.
  * - Cached hashes are SHA-256 digests stored in IndexedDB. They are invalidated
  *   when stale-hash scenarios are detected (local match but Supabase rejects).
  *
@@ -31,7 +48,7 @@
  */
 
 import { hashValue } from './crypto';
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import { debugLog, debugWarn } from '../debug';
 
 // =============================================================================
@@ -52,6 +69,23 @@ const MAX_DELAY_MS = 30000;
 
 /** Multiplier for exponential backoff between rate-limited attempts. */
 const BACKOFF_MULTIPLIER = 2;
+
+/**
+ * Progressive persistent-lockout tiers.
+ *
+ * After `failures` total failed Supabase login attempts (across page
+ * refreshes), the user is locked out for `durationMs` milliseconds.
+ * The tiers are checked in order — the **highest** matching tier wins.
+ */
+const PERSISTENT_LOCKOUT_TIERS: Array<{ failures: number; durationMs: number }> = [
+  { failures: 5, durationMs: 5 * 60_000 }, //  5 min  after  5 failures
+  { failures: 10, durationMs: 30 * 60_000 }, // 30 min  after 10 failures
+  { failures: 15, durationMs: 2 * 60 * 60_000 }, //  2 hr   after 15 failures
+  { failures: 20, durationMs: 24 * 60 * 60_000 } // 24 hr   after 20+ failures
+];
+
+/** IndexedDB record key for the persistent lockout state. */
+const PIN_LOCKOUT_KEY = 'pin_lockout';
 
 // =============================================================================
 // IN-MEMORY STATE
@@ -101,6 +135,23 @@ export type PreCheckResult =
   | { proceed: true; strategy: PreCheckStrategy }
   | { proceed: false; error: string; retryAfterMs?: number };
 
+/**
+ * Persistent lockout record stored in IndexedDB.
+ */
+interface PinLockoutRecord {
+  /** Constant key (`'pin_lockout'`). */
+  id: typeof PIN_LOCKOUT_KEY;
+  /** Total failed Supabase login attempts since last success. */
+  failureCount: number;
+  /**
+   * Epoch ms timestamp until which new attempts are blocked.
+   * Zero means no active lockout.
+   */
+  lockoutUntil: number;
+  /** ISO timestamp of the last write (for debugging). */
+  updatedAt: string;
+}
+
 // =============================================================================
 // INTERNAL HELPERS
 // =============================================================================
@@ -147,9 +198,93 @@ async function invalidateCachedHash(): Promise<void> {
   }
 }
 
+/**
+ * Read the persistent lockout record from IndexedDB.
+ *
+ * Returns a zeroed default record when none exists or on any read error.
+ */
+async function readPersistentLockout(): Promise<PinLockoutRecord> {
+  const zero: PinLockoutRecord = {
+    id: PIN_LOCKOUT_KEY,
+    failureCount: 0,
+    lockoutUntil: 0,
+    updatedAt: new Date().toISOString()
+  };
+  try {
+    await waitForDb();
+    const db = getEngineConfig().db;
+    if (!db) return zero;
+    const record = await db.table('singleUserConfig').get(PIN_LOCKOUT_KEY);
+    return (record as PinLockoutRecord | undefined) ?? zero;
+  } catch {
+    return zero;
+  }
+}
+
+/**
+ * Write a persistent lockout record to IndexedDB.
+ *
+ * Errors are swallowed — a failed write degrades gracefully to in-memory-only
+ * protection; Supabase server-side limits remain the primary defence.
+ */
+async function writePersistentLockout(record: PinLockoutRecord): Promise<void> {
+  try {
+    const db = getEngineConfig().db;
+    if (db) {
+      await db.table('singleUserConfig').put(record);
+    }
+  } catch (e) {
+    debugWarn('[LoginGuard] Failed to write persistent lockout:', e);
+  }
+}
+
+/**
+ * Compute the lockout duration for a given failure count.
+ *
+ * Returns 0 when the count has not yet reached the first tier.
+ */
+function getLockoutDurationMs(failureCount: number): number {
+  let duration = 0;
+  for (const tier of PERSISTENT_LOCKOUT_TIERS) {
+    if (failureCount >= tier.failures) {
+      duration = tier.durationMs;
+    }
+  }
+  return duration;
+}
+
 // =============================================================================
 // PUBLIC API
 // =============================================================================
+
+/**
+ * Check whether a persistent PIN lockout is currently active, without
+ * requiring the user to submit a PIN attempt.
+ *
+ * Call this on page/component mount to pre-populate the retry countdown so
+ * the UI immediately shows how long the user must wait rather than waiting
+ * for a failed submit to reveal the lockout.
+ *
+ * @returns Milliseconds remaining in the active lockout, or `0` if there is
+ *   no active lockout.
+ *
+ * @example
+ * ```ts
+ * onMount(async () => {
+ *   const remainingMs = await checkPersistentLockout();
+ *   if (remainingMs > 0) startRetryCountdown(remainingMs);
+ * });
+ * ```
+ */
+export async function checkPersistentLockout(): Promise<number> {
+  try {
+    const record = await readPersistentLockout();
+    const remaining = record.lockoutUntil - Date.now();
+    return remaining > 0 ? remaining : 0;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Pre-check login credentials locally before calling Supabase.
@@ -179,6 +314,22 @@ async function invalidateCachedHash(): Promise<void> {
  */
 export async function preCheckLogin(input: string): Promise<PreCheckResult> {
   try {
+    /* ── Persistent lockout check (survives page refresh) ── */
+    const lockoutRecord = await readPersistentLockout();
+    const persistentRemaining = lockoutRecord.lockoutUntil - Date.now();
+    if (persistentRemaining > 0) {
+      const mins = Math.ceil(persistentRemaining / 60_000);
+      const timeDesc =
+        persistentRemaining >= 60 * 60_000
+          ? `${Math.ceil(persistentRemaining / (60 * 60_000))} hour${Math.ceil(persistentRemaining / (60 * 60_000)) !== 1 ? 's' : ''}`
+          : `${mins} minute${mins !== 1 ? 's' : ''}`;
+      return {
+        proceed: false,
+        error: `Too many failed attempts. Please wait ${timeDesc} before trying again.`,
+        retryAfterMs: persistentRemaining
+      };
+    }
+
     let cachedHash: string | undefined;
 
     const config = getEngineConfig();
@@ -254,7 +405,8 @@ export async function preCheckLogin(input: string): Promise<PreCheckResult> {
  * Called after a successful Supabase login.
  *
  * Resets all login guard counters (local failure count, rate-limit attempts,
- * and the next-allowed-attempt timestamp) so the user starts fresh.
+ * and the next-allowed-attempt timestamp) and clears the persistent lockout
+ * record from IndexedDB so the user starts fresh.
  *
  * @example
  * ```ts
@@ -262,10 +414,17 @@ export async function preCheckLogin(input: string): Promise<PreCheckResult> {
  * if (!error) onLoginSuccess();
  * ```
  */
-export function onLoginSuccess(): void {
+export async function onLoginSuccess(): Promise<void> {
   consecutiveLocalFailures = 0;
   rateLimitAttempts = 0;
   nextAllowedAttempt = 0;
+  /* Clear persistent failure counter and lockout */
+  await writePersistentLockout({
+    id: PIN_LOCKOUT_KEY,
+    failureCount: 0,
+    lockoutUntil: 0,
+    updatedAt: new Date().toISOString()
+  });
   debugLog('[LoginGuard] Login success, counters reset');
 }
 
@@ -278,7 +437,9 @@ export function onLoginSuccess(): void {
  *   cached hash is **stale** (password changed server-side). The cached hash is
  *   invalidated so future attempts go through rate-limited Supabase mode.
  * - `'no-cache'`: Increment the rate-limit counter and apply exponential
- *   backoff (base * 2^(n-1), capped at MAX_DELAY_MS).
+ *   backoff (base * 2^(n-1), capped at MAX_DELAY_MS).  Also increments the
+ *   persistent failure counter and applies a tier-based lockout if the
+ *   threshold is reached.
  *
  * @param strategy - The {@link PreCheckStrategy} that was returned by
  *                   {@link preCheckLogin} for this attempt.
@@ -308,6 +469,30 @@ export async function onLoginFailure(strategy: PreCheckStrategy): Promise<void> 
     );
     nextAllowedAttempt = Date.now() + delay;
     debugWarn(`[LoginGuard] Rate limit applied: ${delay}ms delay (attempt ${rateLimitAttempts})`);
+
+    /* Update persistent failure counter and apply tier-based lockout. */
+    try {
+      const record = await readPersistentLockout();
+      const newCount = record.failureCount + 1;
+      const lockoutDuration = getLockoutDurationMs(newCount);
+      const lockoutUntil = lockoutDuration > 0 ? Date.now() + lockoutDuration : 0;
+
+      if (lockoutUntil > 0) {
+        const mins = Math.ceil(lockoutDuration / 60_000);
+        debugWarn(
+          `[LoginGuard] Persistent lockout applied: ${mins} min (${newCount} total failures)`
+        );
+      }
+
+      await writePersistentLockout({
+        id: PIN_LOCKOUT_KEY,
+        failureCount: newCount,
+        lockoutUntil,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (e) {
+      debugWarn('[LoginGuard] Failed to update persistent lockout:', e);
+    }
   }
 }
 
@@ -320,12 +505,18 @@ export async function onLoginFailure(strategy: PreCheckStrategy): Promise<void> 
  * @example
  * ```ts
  * await supabase.auth.signOut();
- * resetLoginGuard();
+ * await resetLoginGuard();
  * ```
  */
-export function resetLoginGuard(): void {
+export async function resetLoginGuard(): Promise<void> {
   consecutiveLocalFailures = 0;
   rateLimitAttempts = 0;
   nextAllowedAttempt = 0;
+  await writePersistentLockout({
+    id: PIN_LOCKOUT_KEY,
+    failureCount: 0,
+    lockoutUntil: 0,
+    updatedAt: new Date().toISOString()
+  });
   debugLog('[LoginGuard] Guard reset');
 }

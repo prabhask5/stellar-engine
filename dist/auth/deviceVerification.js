@@ -54,7 +54,7 @@
  */
 import { getEngineConfig } from '../config';
 import { supabase } from '../supabase/client';
-import { getDeviceId } from '../deviceId';
+import { getDeviceId, waitForDeviceId } from '../deviceId';
 import { debugLog, debugWarn, debugError } from '../debug';
 import { isDemoMode } from '../demo';
 /** Default number of days a device remains trusted before requiring re-verification. */
@@ -225,6 +225,9 @@ export async function isDeviceTrusted(userId) {
     if (isDemoMode())
         return true;
     try {
+        /* Ensure the IDB recovery attempt has completed so that a localStorage-
+           cleared device ID is restored before we look it up in trusted_devices. */
+        await waitForDeviceId();
         const deviceId = getDeviceId();
         const trustDays = getTrustDurationDays();
         /* Calculate the cutoff date — devices not used within this window
@@ -427,6 +430,9 @@ export async function sendDeviceVerification(email) {
     if (isDemoMode())
         return { error: null };
     try {
+        /* Ensure the IDB recovery attempt has completed so the device ID we
+           embed in user_metadata is the recovered UUID, not a fresh one. */
+        await waitForDeviceId();
         /* Store the pending device info in user_metadata so the confirm page
            can trust THIS device even if the link is opened on a different one.
            This enables the cross-device verification pattern. */

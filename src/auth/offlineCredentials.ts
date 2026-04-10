@@ -25,7 +25,7 @@
  * @module auth/offlineCredentials
  */
 
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import type { OfflineCredentials } from '../types';
 import type { User, Session } from '@supabase/supabase-js';
 import { debugError } from '../debug';
@@ -86,6 +86,7 @@ export async function cacheOfflineCredentials(
     throw new Error('Cannot cache credentials: email or password is empty');
   }
 
+  await waitForDb();
   const config = getEngineConfig();
   const db = config.db!;
 
@@ -139,6 +140,7 @@ export async function cacheOfflineCredentials(
  * ```
  */
 export async function getOfflineCredentials(): Promise<OfflineCredentials | null> {
+  await waitForDb();
   const db = getEngineConfig().db!;
   const credentials = await db.table('offlineCredentials').get(CREDENTIALS_ID);
   if (!credentials) {
@@ -196,6 +198,7 @@ export async function updateOfflineCredentialsProfile(
  * @see {@link cacheOfflineCredentials} for storing credentials on login.
  */
 export async function clearOfflineCredentials(): Promise<void> {
+  await waitForDb();
   const db = getEngineConfig().db!;
   await db.table('offlineCredentials').delete(CREDENTIALS_ID);
 }

@@ -24,7 +24,7 @@
  *
  * @module auth/offlineCredentials
  */
-import { getEngineConfig } from '../config';
+import { getEngineConfig, waitForDb } from '../config';
 import { debugError } from '../debug';
 import { hashValue } from './crypto';
 // =============================================================================
@@ -73,6 +73,7 @@ export async function cacheOfflineCredentials(email, password, user, _session) {
         debugError('[Auth] Cannot cache credentials: email or password is empty');
         throw new Error('Cannot cache credentials: email or password is empty');
     }
+    await waitForDb();
     const config = getEngineConfig();
     const db = config.db;
     /* Extract a normalized profile using the host app's profileExtractor,
@@ -120,6 +121,7 @@ export async function cacheOfflineCredentials(email, password, user, _session) {
  * ```
  */
 export async function getOfflineCredentials() {
+    await waitForDb();
     const db = getEngineConfig().db;
     const credentials = await db.table('offlineCredentials').get(CREDENTIALS_ID);
     if (!credentials) {
@@ -170,6 +172,7 @@ export async function updateOfflineCredentialsProfile(profile) {
  * @see {@link cacheOfflineCredentials} for storing credentials on login.
  */
 export async function clearOfflineCredentials() {
+    await waitForDb();
     const db = getEngineConfig().db;
     await db.table('offlineCredentials').delete(CREDENTIALS_ID);
 }

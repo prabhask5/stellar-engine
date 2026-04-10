@@ -1259,20 +1259,54 @@ switch (authMode) {
 
 #### `resetLoginGuard()`
 
-Clears all login guard state: local failure counters, rate-limit attempts, and the next-allowed-attempt timestamp. Call this on sign-out or app reset to ensure the next login attempt starts with a clean slate.
+Clears all login guard state: local failure counters, rate-limit attempts, the next-allowed-attempt timestamp, and the persistent IndexedDB lockout record. Call this on sign-out or app reset to ensure the next login attempt starts with a clean slate.
 
-The login guard prevents brute-force attacks by rate-limiting failed login attempts with exponential backoff. It also performs a local pre-check against the cached gate hash before calling Supabase, reducing unnecessary API requests.
+The login guard prevents brute-force attacks by rate-limiting failed login attempts with progressive lockout tiers backed by IndexedDB. It also performs a local pre-check against the cached gate hash before calling Supabase, reducing unnecessary API requests.
 
 **Signature:**
 ```ts
-function resetLoginGuard(): void
+function resetLoginGuard(): Promise<void>
 ```
 
 **Example:**
 ```ts
 import { resetLoginGuard } from 'stellar-drive';
 
-resetLoginGuard();
+await resetLoginGuard();
+```
+
+---
+
+#### `checkPersistentLockout()`
+
+Checks whether a persistent PIN lockout is currently active (from a previous browser session). Returns the number of milliseconds remaining in the lockout, or `0` if the account is not locked. Call this in `onMount` on the login page to restore the lockout UI after a page refresh or browser restart.
+
+Lockout tiers (applied progressively as failures accumulate):
+
+| Failures | Lockout Duration |
+|----------|-----------------|
+| 5        | 5 minutes       |
+| 10       | 30 minutes      |
+| 15       | 2 hours         |
+| 20+      | 24 hours        |
+
+**Signature:**
+```ts
+function checkPersistentLockout(): Promise<number>
+```
+
+**Returns:** Milliseconds remaining in the lockout, or `0` if no lockout is active.
+
+**Example:**
+```ts
+import { checkPersistentLockout } from 'stellar-drive/auth';
+
+onMount(async () => {
+  const lockoutMs = await checkPersistentLockout();
+  if (lockoutMs > 0) {
+    startRetryCountdown(lockoutMs); // disable PIN inputs, show countdown
+  }
+});
 ```
 
 ---
@@ -2012,7 +2046,9 @@ maskEmail('ab@test.com');        // → 'ab@test.com' (nothing to mask)
 
 #### `getCurrentDeviceId()`
 
-Returns the current device's persistent unique identifier from localStorage. This ID is generated once (UUID v4) and persisted across page reloads. It is used throughout stellar-drive for echo suppression (filtering out realtime events from the same device), conflict tiebreaking (deterministic ordering when timestamps match), and device trust management.
+Returns the current device's persistent unique identifier. This ID is generated once (UUID v4) and persisted across page reloads. It is used throughout stellar-drive for echo suppression (filtering out realtime events from the same device), conflict tiebreaking (deterministic ordering when timestamps match), and device trust management.
+
+The ID is stored in both localStorage and a separate `{prefix}_device_store` IndexedDB database. On startup, if localStorage has been cleared (e.g., Firefox's "Delete cookies and site data when Firefox is closed" setting), the old UUID is automatically recovered from IndexedDB so the device is not re-registered as a new unknown device. Callers that make trust decisions await `initEngine()`'s async device init before reading the ID.
 
 **Signature:**
 ```ts
@@ -4788,7 +4824,7 @@ interface TrustedDevice {
   id: string;
   /** Supabase user UUID who owns this device. */
   userId: string;
-  /** Stable device identifier from localStorage. */
+  /** Stable device identifier (localStorage + IndexedDB-backed for privacy-wipe resilience). */
   deviceId: string;
   /** Human-readable device label (e.g., browser + OS). */
   deviceLabel?: string;

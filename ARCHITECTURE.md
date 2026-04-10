@@ -889,6 +889,8 @@ if (localDeviceId < remoteDeviceId) {
 
 Device IDs are UUID v4 values stored in localStorage (prefixed with the engine prefix). They persist across sessions but are unique per browser/device.
 
+**localStorage clearing resilience**: The ID is also backed up to a separate raw IndexedDB database (`{prefix}_device_store`). On startup, `_initDeviceId()` runs as fire-and-forget from `_setDeviceIdPrefix()`: if localStorage has been cleared (e.g., by Firefox's "Delete cookies and site data when Firefox is closed" privacy setting) but IndexedDB still has the old UUID, it is silently restored to localStorage. This prevents the device from being re-registered as a new unknown device after a privacy-triggered storage wipe. Callers that make trust decisions (`isDeviceTrusted`, `sendDeviceVerification`) await `waitForDeviceId()` before reading the ID to ensure recovery completes first.
+
 ### 7.5 Post-Resolution Bookkeeping
 
 After all fields are resolved:
@@ -1318,7 +1320,7 @@ Pending device metadata in Supabase `user_metadata` is also namespaced per app: 
 
 Trust duration: 90 days (configurable via `trustDurationDays` in the flat auth config).
 
-Flow: Login on untrusted device -> OTP email sent via Supabase -> user enters OTP -> device added to `trusted_devices` table with current `app_prefix` -> trust established for 90 days.
+Flow: Login on untrusted device → OTP email sent via Supabase → user clicks email link → `/confirm` page verifies OTP → device added to `trusted_devices` → trust established for 90 days.
 
 ### 9.5 Auth State Resolution (`resolveAuthState`)
 
@@ -1353,7 +1355,18 @@ For single-user mode, the resolution determines the auth mode based on local con
 
 **File**: `src/auth/loginGuard.ts`
 
-Minimizes Supabase auth API requests by verifying credentials locally first. This is especially useful for rate-limited Supabase auth endpoints and for providing instant feedback on incorrect PINs:
+Minimizes Supabase auth API requests by verifying credentials locally first. This is especially useful for rate-limited Supabase auth endpoints and for providing instant feedback on incorrect PINs.
+
+**Persistent brute-force protection**: The login guard uses IndexedDB (key `'pin_lockout'` in the `singleUserConfig` table) to persist lockout state across page refreshes and browser restarts. In-memory rate limiting alone resets on page reload, allowing unlimited brute-force attempts. The persistent lockout applies progressive tiers:
+
+| Failures | Lockout Duration |
+|----------|-----------------|
+| 5        | 5 minutes       |
+| 10       | 30 minutes      |
+| 15       | 2 hours         |
+| 20+      | 24 hours        |
+
+`checkPersistentLockout()` is exported from `stellar-drive/auth` for login pages to restore lockout UI on mount. `onLoginSuccess()` and `resetLoginGuard()` are async to clear the IndexedDB record on success or sign-out.
 
 ```
 User enters PIN/password

@@ -43,7 +43,7 @@ export { queryAll, queryOne, reorderEntity, prependOrder } from './data';
 export { signOut, resendConfirmationEmail, getUserProfile, updateProfile, verifyOtp, getValidSession } from './supabase/auth';
 export { resolveAuthState } from './auth/resolveAuthState';
 export type { AuthStateResult } from './auth/resolveAuthState';
-export { resetLoginGuard } from './auth/loginGuard';
+export { resetLoginGuard, checkPersistentLockout } from './auth/loginGuard';
 export { isSingleUserSetUp, getSingleUserInfo, setupSingleUser, unlockSingleUser, lockSingleUser, changeSingleUserGate, updateSingleUserProfile, resetSingleUser, completeSingleUserSetup, completeDeviceVerification, pollDeviceVerification, padPin, changeSingleUserEmail, completeSingleUserEmailChange, fetchRemoteGateConfig, linkSingleUserDevice, resetSingleUserRemote } from './auth/singleUser';
 export { resolveFirstName, resolveUserId, resolveAvatarInitial } from './auth/displayUtils';
 export { isDeviceTrusted, trustCurrentDevice, trustPendingDevice, getTrustedDevices, removeTrustedDevice, maskEmail, sendDeviceVerification, getCurrentDeviceId, getDeviceLabel } from './auth/deviceVerification';

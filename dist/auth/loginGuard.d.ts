@@ -1,14 +1,13 @@
 /**
- * @fileoverview Login Guard -- Local Credential Pre-Check & Rate Limiting
+ * @fileoverview Login Guard -- Local Credential Pre-Check & Lockout
  *
  * Minimizes Supabase auth API requests by verifying credentials locally first.
  * Only calls Supabase when the local hash matches (correct password) or when no
- * local hash exists (with rate limiting).
+ * local hash exists.
  *
  * Architecture:
- * - Maintains **in-memory** state for fast local-hash failure counters and
- *   ephemeral backoff timers (resets on page refresh by design — these are
- *   UX-level optimisations, not security boundaries).
+ * - Maintains **in-memory** state for fast local-hash failure counters
+ *   (resets on page refresh by design).
  * - Maintains **persistent** lockout state in IndexedDB (`singleUserConfig`
  *   table, key `'pin_lockout'`).  This survives page refreshes and tab
  *   closes, preventing brute-force attacks that rely on reloading to reset
@@ -16,11 +15,10 @@
  * - Two operational strategies:
  *   1. `local-match`: A cached hash exists and the user's input matches it.
  *      Proceed to Supabase for authoritative verification.
- *   2. `no-cache`: No cached hash is available. Proceed to Supabase but apply
- *      exponential backoff on repeated failures.
+ *   2. `no-cache`: No cached hash is available. Proceed to Supabase directly.
  * - After a configurable number of consecutive local mismatches, the cached hash
  *   is invalidated (it may be stale from a server-side password change) and the
- *   guard falls back to rate-limited Supabase mode.
+ *   guard falls back to direct Supabase mode.
  *
  * ## Lockout Tiers (persistent, survives page refresh)
  *
@@ -52,7 +50,7 @@
  * - `'local-match'` -- The user's input matched a locally cached hash.
  *   Supabase is called for authoritative confirmation.
  * - `'no-cache'` -- No local hash was available (or it was invalidated).
- *   Supabase is called directly, subject to rate limiting.
+ *   Supabase is called directly.
  */
 export type PreCheckStrategy = 'local-match' | 'no-cache';
 /**
@@ -121,9 +119,8 @@ export declare function preCheckLogin(input: string): Promise<PreCheckResult>;
 /**
  * Called after a successful Supabase login.
  *
- * Resets all login guard counters (local failure count, rate-limit attempts,
- * and the next-allowed-attempt timestamp) and clears the persistent lockout
- * record from IndexedDB so the user starts fresh.
+ * Resets the local failure counter and clears the persistent lockout record
+ * from IndexedDB so the user starts fresh.
  *
  * @example
  * ```ts
@@ -139,11 +136,9 @@ export declare function onLoginSuccess(): Promise<void>;
  *
  * - `'local-match'`: Supabase rejected a locally-matched password, meaning the
  *   cached hash is **stale** (password changed server-side). The cached hash is
- *   invalidated so future attempts go through rate-limited Supabase mode.
- * - `'no-cache'`: Increment the rate-limit counter and apply exponential
- *   backoff (base * 2^(n-1), capped at MAX_DELAY_MS).  Also increments the
- *   persistent failure counter and applies a tier-based lockout if the
- *   threshold is reached.
+ *   invalidated so future attempts go through direct Supabase mode.
+ * - `'no-cache'`: Increments the persistent failure counter and applies a
+ *   tier-based lockout if the threshold is reached.
  *
  * @param strategy - The {@link PreCheckStrategy} that was returned by
  *                   {@link preCheckLogin} for this attempt.
@@ -161,8 +156,8 @@ export declare function onLoginFailure(strategy: PreCheckStrategy): Promise<void
 /**
  * Full reset of all login guard state.
  *
- * Call on sign-out or app reset to clear failure counters and rate-limit
- * timers so the next login attempt starts with a clean slate.
+ * Call on sign-out or app reset to clear failure counters so the next login
+ * attempt starts with a clean slate.
  *
  * @example
  * ```ts

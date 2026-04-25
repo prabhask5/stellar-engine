@@ -206,7 +206,7 @@ function generatePackageJson(opts) {
         },
         dependencies: {
             postgres: '^3.4.0',
-            'stellar-drive': '^1.2.28'
+            'stellar-drive': '^1.2.29'
         },
         type: 'module'
     }, null, 2) + '\n');

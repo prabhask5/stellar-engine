@@ -22,6 +22,7 @@
  * @see {@link engine.ts} for sync guards that check `isDemoMode()`
  */
 import Dexie from 'dexie';
+import type { TrustedDevice } from './types';
 /**
  * Configuration for demo mode, provided by the consumer app.
  *
@@ -54,6 +55,12 @@ export interface DemoConfig {
         lastName: string;
         [key: string]: unknown;
     };
+    /**
+     * Mock trusted devices shown in the profile page when in demo mode.
+     * If omitted, the profile page shows an empty device list.
+     * Use {@link createMockDevices} to generate the canonical demo set.
+     */
+    mockDevices?: TrustedDevice[];
 }
 /**
  * Store that drives the DemoBlockedMessage overlay.

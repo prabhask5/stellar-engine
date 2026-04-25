@@ -26,6 +26,51 @@ import { writable } from 'svelte/store';
 import { getDb, TABLE } from './database';
 import { getEngineConfig, getDexieTableFor } from './config';
 // =============================================================================
+// Mock Device Factory
+// =============================================================================
+/**
+ * Returns the canonical set of mock trusted devices for demo mode.
+ *
+ * Covers every UI state in the profile device list:
+ * - `demo-device`   → the current device (shows "This device" badge, no remove button)
+ * - `demo-device-2` → a recent mobile device (shows remove button)
+ * - `demo-device-3` → an older desktop device (shows remove button)
+ *
+ * @param appPrefix - The app's prefix (e.g. `'stellar'`, `'radiant'`).
+ */
+function createMockDevices(appPrefix) {
+    const now = Date.now();
+    return [
+        {
+            id: 'demo-td-1',
+            userId: 'demo-user',
+            deviceId: 'demo-device',
+            deviceLabel: 'Chrome on macOS',
+            appPrefix,
+            trustedAt: new Date(now - 7 * 86400000).toISOString(),
+            lastUsedAt: new Date(now).toISOString()
+        },
+        {
+            id: 'demo-td-2',
+            userId: 'demo-user',
+            deviceId: 'demo-device-2',
+            deviceLabel: 'Safari on iPhone 15 Pro',
+            appPrefix,
+            trustedAt: new Date(now - 14 * 86400000).toISOString(),
+            lastUsedAt: new Date(now - 2 * 86400000).toISOString()
+        },
+        {
+            id: 'demo-td-3',
+            userId: 'demo-user',
+            deviceId: 'demo-device-3',
+            deviceLabel: 'Firefox on Windows 11',
+            appPrefix,
+            trustedAt: new Date(now - 30 * 86400000).toISOString(),
+            lastUsedAt: new Date(now - 10 * 86400000).toISOString()
+        }
+    ];
+}
+// =============================================================================
 // Demo Blocked Message Store
 // =============================================================================
 /**
@@ -138,7 +183,10 @@ export function setDemoMode(enabled) {
  * @internal
  */
 export function registerDemoConfig(config) {
-    _demoConfig = config;
+    _demoConfig = {
+        ...config,
+        mockDevices: config.mockDevices ?? createMockDevices(_demoPrefix)
+    };
 }
 /**
  * Get the currently registered demo configuration.

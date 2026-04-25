@@ -1730,7 +1730,53 @@ Two Svelte components handle demo mode UI from `stellar-drive/components/`:
 
 **Pattern:** `showDemoBlocked(message)` (exported from `stellar-drive/demo`) writes to `_demoBlockedStore`, which `<DemoBlockedMessage />` reads reactively. Apps must mount `<DemoBlockedMessage />` in their root layout for any calls to `showDemoBlocked()` to render. This is the standardized replacement for all per-page ad-hoc "not available in demo mode" toast implementations.
 
+### 13.8 Offline Navigation Toast
+
+**Component:** `stellar-drive/components/OfflineToast`
+
+When a user navigates to a page whose JavaScript chunks are not cached in the service worker, the dynamic import fails with an `unhandledrejection` event. `<OfflineToast />` catches this centrally and surfaces a friendly message ("This page isn't available offline. Please reconnect or go back.") instead of letting it bubble up as an unhandled error.
+
+- **Self-contained** — registers its own `unhandledrejection` listener in a `$effect` with cleanup on destroy. Apps mount it once in the root layout; no props or store wiring required.
+- **z-index 1500** — positioned top-center, above all navigation chrome but below full-screen overlays.
+- **Auto-dismisses** after 5 seconds. Dismiss button available immediately.
+- **Error variant** available via the internal `show(msg, 'error')` API for future use.
+- **Styled** with stellar-drive design tokens (`#1a2e1a` / `#3d5a3d` green-dark theme) — app-neutral.
+
+This replaces the per-app inline `unhandledrejection` + toast state pattern that was previously duplicated in both Stellar and Radiant's root layouts.
+
 **Mobile banner positioning:** Apps set `--demo-banner-bottom: 4.5rem` in a `@media (max-width: 767px)` rule on `:root` in their root layout `<style>` block. This raises the banner above the ~64px mobile tab bar without affecting the desktop layout.
+
+### 13.9 Toast Notifications
+
+**Store:** `stellar-drive/toast` — **Component:** `stellar-drive/components/GlobalToast`
+
+Centralized toast notification system. The store (`src/stores/toast.ts`) manages the queue; the component (`src/components/GlobalToast.svelte`) renders it.
+
+**Variants:**
+
+| Variant | Colour | Icon | Semantic |
+|---|---|---|---|
+| `info` | Blue | Info circle | Informational / neutral (default) |
+| `success` | Green | Check circle | Confirmations, completed operations |
+| `error` | Red | X circle | Failures, deletions, blocked operations |
+| `warning` | Purple | Alert triangle | Caution, non-fatal issues |
+
+**API:** `addToast(message, variant?, duration?)` enqueues a toast. `dismissToast(id)` removes it immediately. `toastStore` is a read-only `Readable<Toast[]>`.
+
+**`<GlobalToast />`** — self-contained, no props. Subscribes to `toastStore`, renders each toast as a frosted-glass pill with a semantic icon, and calls `dismissToast` after the duration elapses. Handles demo-mode banner offset automatically (shifts the stack up when `<DemoBanner />` is active). Mount once in the root layout:
+
+```svelte
+import GlobalToast from 'stellar-drive/components/GlobalToast';
+<GlobalToast />
+```
+
+Dispatch from any module:
+
+```ts
+import { addToast } from 'stellar-drive/toast';
+addToast('Item saved', 'success');
+addToast('Sync failed', 'error');
+```
 
 ---
 
@@ -1988,7 +2034,7 @@ Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkt
 |  1. Interactive prompts: name, shortName, prefix, description       |
 |  2. Write package.json with stellar-drive dep                       |
 |  3. npm install                                                    |
-|  4. Generate 34+ template files (grouped with animated progress)   |
+|  4. Generate 51 template files (grouped with animated progress)    |
 |  5. npx husky init + pre-commit hook                               |
 |  6. Print styled summary + next steps                              |
 +--------------------------------------------------------------------+
@@ -1998,20 +2044,39 @@ Scaffolds a complete SvelteKit 2 + Svelte 5 PWA project via an interactive walkt
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Config | 8 | `vite.config.ts`, `tsconfig.json`, `eslint.config.js`, `prettier`, `knip` |
+| Config | 10 | `vite.config.ts`, `tsconfig.json`, `svelte.config.js`, `eslint.config.js`, `.prettierrc`, `.prettierignore`, `knip.json`, `.gitignore`, `.env.example`, `package.json` |
 | Documentation | 3 | `README.md`, `ARCHITECTURE.md`, `FRAMEWORKS.md` |
-| Static assets | 13 | `manifest.json`, `offline.html`, SVG icons, email templates |
-| Database | 1 | `supabase-schema.sql` |
-| Source | 2 | `app.html`, `app.d.ts` |
+| Static assets | 12 | `manifest.json`, `offline.html`, SVG icons (6), email templates (3) |
+| Source | 3 | `app.html`, `app.d.ts`, `app.css` |
 | Routes | 16 | Layout files, auth pages, setup wizard, API routes |
-| Library | 1 | `src/lib/types.ts` |
+| Library | 10 | `routes.ts`, `schema.ts`, `types.generated.ts`, `types.ts`, `stores/data.ts`, `db/queries.ts`, `db/repositories/items.ts`, `components/UpdatePrompt.svelte`, `demo/mockData.ts`, `demo/config.ts` |
 | Git hooks | 1 | `.husky/pre-commit` |
 
-### 17.3 Route File Ownership Model
+### 17.3 Page Implementation Model
 
-Each generated route file follows a strict separation:
-- **Engine-managed code**: All imports, load functions, API handlers, auth logic, and state management are fully implemented using stellar-drive exports
-- **TODO placeholders**: All UI/template/style code is left as TODO comments for the app developer
+All infrastructure pages are **fully implemented** — the scaffold ships with complete UI, logic, and styling pre-wired using the green design theme from the email templates. Developers add their app-specific content on top.
+
+**Fully implemented pages (no changes required to use):**
+
+| Page | What's implemented |
+|------|--------------------|
+| `login/+page.svelte` | 3-mode auth (Setup / Unlock / Link Device), 6-digit PIN with auto-focus/paste/backspace, rate-limit countdown, email confirmation and device verification modals, BroadcastChannel cross-tab relay |
+| `confirm/+page.svelte` | Token verification, BroadcastChannel broadcast, can-close / redirect fallback |
+| `profile/+page.svelte` | Name edit, email change with modal, PIN change (3×6 inputs), trusted devices with revocation, debug mode toggle, diagnostics dashboard, debug tools |
+| `setup/+page.svelte` | 4-step wizard: Supabase credentials → validate → deploy via Vercel API → SW polling |
+| `+error.svelte` | 3 variants: offline / 404 / generic, retry and go-home actions |
+| `policy/+page.svelte` | Self-hosted privacy policy template |
+| `demo/+page.svelte` | Demo mode toggle with explanation |
+| `[...catchall]` | Server-side 302 redirect to home |
+| All API routes | Zero app-specific code required |
+
+**TODO stubs (developer fills in):**
+
+- `+page.svelte` (home) — add your app's dashboard content
+- `src/lib/schema.ts` — replace example tables with your domain schema
+- `src/lib/stores/data.ts` — add collection/detail stores for your tables
+- `src/lib/db/queries.ts` — add query functions for your tables
+- `src/lib/demo/mockData.ts` — seed realistic demo data
 
 Three API routes are fully managed with zero app-specific code:
 
@@ -2162,6 +2227,14 @@ This is a complete reference of every source file and its purpose. Use it to qui
 | Remote Changes | `src/stores/remoteChanges.ts` | Remote change notification + action type detection |
 | Network | `src/stores/network.ts` | Online/offline detection with iOS PWA handling |
 | Factories | `src/stores/factories.ts` | Generic collection/detail store factories |
+| Toast | `src/stores/toast.ts` | App-wide toast notification queue (`addToast`, `dismissToast`, `toastStore`) |
+| **Components** | | |
+| SyncStatus | `src/components/SyncStatus.svelte` | Live sync status indicator (idle / syncing / catching-up / error) |
+| DemoBanner | `src/components/DemoBanner.svelte` | Fixed-position demo mode active pill banner |
+| DemoBlockedMessage | `src/components/DemoBlockedMessage.svelte` | Center-screen overlay triggered by `showDemoBlocked()` |
+| DeferredChangesBanner | `src/components/DeferredChangesBanner.svelte` | Cross-device conflict notification with field-level diff preview |
+| GlobalToast | `src/components/GlobalToast.svelte` | Toast queue renderer; mount once in root layout, no props needed |
+| OfflineToast | `src/components/OfflineToast.svelte` | Chunk-load error recovery toast; self-managing `unhandledrejection` listener |
 | **Actions** | | |
 | Remote Change | `src/actions/remoteChange.ts` | Animation action, editing tracker, local animation trigger |
 | Truncate Tooltip | `src/actions/truncateTooltip.ts` | Text truncation with tooltip |
@@ -2183,6 +2256,7 @@ This is a complete reference of every source file and its purpose. Use it to qui
 | Main | `src/index.ts` | Public API barrel export |
 | Auth Entry | `src/entries/auth.ts` | Subpath export for auth utilities |
 | Stores Entry | `src/entries/stores.ts` | Subpath export for stores |
+| Toast Entry | `src/entries/toast.ts` | Subpath export for toast notifications |
 | Actions Entry | `src/entries/actions.ts` | Subpath export for actions |
 | Config Entry | `src/entries/config.ts` | Subpath export for configuration |
 | Kit Entry | `src/entries/kit.ts` | Subpath export for SvelteKit integration |

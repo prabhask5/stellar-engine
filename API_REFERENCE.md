@@ -15,6 +15,13 @@ Complete reference for every public export from the `stellar-drive` package. Thi
 | `stellar-drive/config` | Runtime configuration management (read/write app settings) |
 | `stellar-drive/vite` | Vite plugin for PWA service worker builds, asset manifests, and schema auto-generation |
 | `stellar-drive/kit` | SvelteKit-specific helpers: server route factories, layout loaders, email confirmation, SW lifecycle, auth hydration |
+| `stellar-drive/toast` | Toast notification store: `addToast`, `dismissToast`, `toastStore`, `ToastVariant` type |
+| `stellar-drive/components/GlobalToast` | Svelte component — renders the toast queue; mount once in root layout |
+| `stellar-drive/components/OfflineToast` | Svelte component — offline navigation error toast (chunk-load recovery) |
+| `stellar-drive/components/SyncStatus` | Svelte component — live sync status indicator |
+| `stellar-drive/components/DemoBanner` | Svelte component — demo mode active pill banner |
+| `stellar-drive/components/DemoBlockedMessage` | Svelte component — "not available in demo" modal overlay |
+| `stellar-drive/components/DeferredChangesBanner` | Svelte component — deferred offline changes notification |
 
 ---
 
@@ -64,6 +71,14 @@ Complete reference for every public export from the `stellar-drive` package. Thi
   - [SQL Generation](#sql-generation)
   - [TypeScript Generation](#typescript-generation)
 - [Demo Mode](#demo-mode)
+- [Toast Notifications (`stellar-drive/toast`)](#toast-notifications)
+  - [addToast](#addtoast)
+  - [dismissToast](#dismisstoast)
+  - [toastStore](#toaststore)
+  - [Types](#toast-types)
+- [Svelte Components](#svelte-components)
+  - [GlobalToast](#globaltoast-)
+  - [OfflineToast](#offlinetoast-)
 - [Supabase Client](#supabase-client)
 - [SvelteKit Helpers (`stellar-drive/kit`)](#sveltekit-helpers)
   - [Server Route Factories](#server-route-factories)
@@ -3908,6 +3923,147 @@ const _demoBlockedStore: Writable<string | null>
 ```
 
 **Import:** `import { _demoBlockedStore } from 'stellar-drive/demo';`
+
+---
+
+## Toast Notifications
+
+Import from `stellar-drive/toast`. Centralized toast notification system. Dispatch toasts from any component or store; `<GlobalToast />` (mounted once in the root layout) renders the queue.
+
+### Toast Types
+
+```ts
+type ToastVariant = 'info' | 'success' | 'error' | 'warning';
+
+interface Toast {
+  id: number;
+  message: string;
+  variant: ToastVariant;
+  duration: number;
+  createdAt: number;
+}
+```
+
+**Variant semantics:**
+
+| Variant | Colour | Icon | Use case |
+|---|---|---|---|
+| `info` | Blue `#60a5fa` | Info circle | Informational / neutral (default) |
+| `success` | Green `#34d399` | Check circle | Confirmations, completed operations |
+| `error` | Red `#e85d75` | X circle | Failures, deletions, blocked operations |
+| `warning` | Purple `#a78bfa` | Alert triangle | Caution, non-fatal issues |
+
+---
+
+#### `addToast`
+
+**Signature:**
+```ts
+function addToast(message: string, variant?: ToastVariant, duration?: number): void
+```
+
+Pushes a new toast onto the queue. `variant` defaults to `'info'`. `duration` is the auto-dismiss delay in milliseconds (default: `3000`).
+
+**Example:**
+```ts
+import { addToast } from 'stellar-drive/toast';
+
+addToast('Item saved', 'success');
+addToast('Sync failed', 'error');
+addToast('Reorder will apply on next sync', 'warning');
+addToast('3 items loaded', 'info');
+```
+
+---
+
+#### `dismissToast`
+
+**Signature:**
+```ts
+function dismissToast(id: number): void
+```
+
+Removes the toast with the given `id` from the queue immediately, regardless of its remaining duration.
+
+---
+
+#### `toastStore`
+
+**Type:**
+```ts
+import type { Readable } from 'svelte/store';
+const toastStore: Readable<Toast[]>
+```
+
+Read-only Svelte store containing the current queue of active toasts. `<GlobalToast />` subscribes to this automatically. Subscribe directly only if you need to build a custom toast renderer.
+
+**Import:** `import { toastStore } from 'stellar-drive/toast';`
+
+---
+
+## Svelte Components
+
+Reusable Svelte components exported from `stellar-drive/components/*`. Mount each once in the root layout unless otherwise noted.
+
+---
+
+#### `<GlobalToast />`
+
+**Import:** `import GlobalToast from 'stellar-drive/components/GlobalToast';`
+
+Self-contained component that renders the active toast queue driven by `toastStore`. No props required. Mount once in the root layout.
+
+Handles demo-mode banner offset automatically — when the demo banner is visible, toasts are shifted upward so they are never obscured.
+
+**Mount:**
+```svelte
+<script>
+  import GlobalToast from 'stellar-drive/components/GlobalToast';
+</script>
+
+<!-- Once in root +layout.svelte -->
+<GlobalToast />
+```
+
+**Behaviour:**
+- Subscribes to `toastStore` and renders each `Toast` as a pill styled by its `variant`
+- Auto-dismisses each toast after its `duration` elapses (calls `dismissToast(id)` internally)
+- Dismiss button available immediately on each toast
+- Stacks toasts vertically; newest toast appears at the top
+- Position: `fixed`, bottom-center, `z-index: 1400` (above navigation chrome, below full-screen overlays)
+- Demo-mode banner offset: shifts the stack up automatically when `<DemoBanner />` is active
+
+**Do not** replicate toast rendering inline in your root layout. This component is the standardized renderer for all `addToast()` calls.
+
+---
+
+#### `<OfflineToast />`
+
+**Import:** `import OfflineToast from 'stellar-drive/components/OfflineToast';`
+
+Self-contained component that catches `unhandledrejection` events caused by failed dynamic imports — the error that occurs when a user navigates to an uncached page while offline. Surfaces a friendly dismissible toast at the top-center of the screen instead of letting the error bubble through silently.
+
+No props required. The component registers its own event listener in a `$effect` and cleans up on destroy.
+
+**Mount:**
+```svelte
+<script>
+  import OfflineToast from 'stellar-drive/components/OfflineToast';
+</script>
+
+<!-- Once in root +layout.svelte -->
+<OfflineToast />
+```
+
+**Behaviour:**
+- Detects chunk load errors via `error.message` patterns and `error.name === 'ChunkLoadError'`
+- Calls `event.preventDefault()` to suppress the browser's default unhandled rejection behaviour
+- Shows a green/dark toast: *"This page isn't available offline. Please reconnect or go back."*
+- Auto-dismisses after 5 seconds; dismiss button available immediately
+- Position: `fixed`, top-center, `z-index: 1500` (above navigation chrome)
+- Styled with stellar-drive design tokens — works in any app theme
+
+**Do not** replicate this logic inline in your root layout. This component is the standardized replacement for the per-app `unhandledrejection` + toast state pattern.
 
 ---
 

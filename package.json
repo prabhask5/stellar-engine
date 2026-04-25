@@ -68,6 +68,18 @@
     "./components/DemoBlockedMessage": {
       "svelte": "./src/components/DemoBlockedMessage.svelte",
       "default": "./src/components/DemoBlockedMessage.svelte"
+    },
+    "./components/OfflineToast": {
+      "svelte": "./src/components/OfflineToast.svelte",
+      "default": "./src/components/OfflineToast.svelte"
+    },
+    "./components/GlobalToast": {
+      "svelte": "./src/components/GlobalToast.svelte",
+      "default": "./src/components/GlobalToast.svelte"
+    },
+    "./toast": {
+      "types": "./dist/entries/toast.d.ts",
+      "import": "./dist/entries/toast.js"
     }
   },
   "bin": {

@@ -52,7 +52,7 @@ Building offline-first sync is notoriously difficult. stellar-drive handles the 
 - **Diagnostics** -- Comprehensive runtime diagnostics covering sync, queue, realtime, conflicts, egress, and network state.
 - **Debug utilities** -- Opt-in debug logging and `window` debug utilities for browser console inspection during development.
 - **SvelteKit integration** (optional) -- Layout helpers, server handlers, email confirmation, service worker lifecycle, and auth hydration.
-- **PWA scaffolding CLI** -- `stellar-drive install pwa` generates a complete SvelteKit PWA project (34+ files) with an interactive walkthrough.
+- **PWA scaffolding CLI** -- `stellar-drive install pwa` generates a fully wired SvelteKit PWA skeleton (51 files) with auth, PIN gate, device verification, profile page, demo mode, adaptive navbar, and PWA plumbing pre-connected.
 
 ### Use cases
 
@@ -402,31 +402,156 @@ See [API Reference -- Vite Plugin](./API_REFERENCE.md#vite-plugin-stellarpwa) fo
 
 ### Install PWA
 
-Scaffold a complete offline-first SvelteKit PWA project with an interactive walkthrough:
+Scaffold a complete offline-first SvelteKit PWA skeleton with an interactive walkthrough:
 
 ```bash
 npx stellar-drive install pwa
 ```
 
-The wizard prompts for:
+Run this in an empty directory. The wizard collects four inputs, installs dependencies, and writes 51 files — a fully wired skeleton that passes `npm run validate` and `npm run cleanup` out of the box.
+
+#### Wizard prompts
 
 | Prompt | Required | Description |
 |--------|----------|-------------|
-| App Name | Yes | Full app name (e.g., "Stellar Planner") |
-| Short Name | Yes | Short name for PWA home screen (under 12 chars) |
-| Prefix | Yes | Lowercase key for localStorage, caches, SW, and Supabase table names (auto-suggested from name) |
-| Description | No | App description (default: "A self-hosted offline-first PWA") |
+| App Name | Yes | Full app name (e.g., "Stellar Planner"). Used in page titles, manifest, and email templates. |
+| Short Name | Yes | Condensed name for the PWA home-screen icon (12 chars max). |
+| Prefix | Yes | Lowercase key used for localStorage, caches, the service worker scope, and Supabase table prefixes. Auto-suggested from the app name. |
+| Description | No | One-line description shown in the manifest (default: `"A self-hosted offline-first PWA"`). |
 
-Generates **34+ files** for a production-ready SvelteKit 2 + Svelte 5 project:
+#### What gets generated — 51 files
 
-- **Config files (8):** `vite.config.ts`, `tsconfig.json`, `svelte.config.js`, `eslint.config.js`, `.prettierrc`, `.prettierignore`, `knip.json`, `.gitignore`
-- **Documentation (3):** `README.md`, `ARCHITECTURE.md`, `FRAMEWORKS.md`
-- **Static assets (13):** `manifest.json`, `offline.html`, placeholder SVG icons, email template placeholders
-- **Database (1):** `supabase-schema.sql` with helper functions, example tables, and `trusted_devices` table
-- **Source files (2):** `src/app.html` (PWA-ready with iOS meta tags, SW registration), `src/app.d.ts`
-- **Route files (16):** Root layout, login, setup, profile, protected area, API endpoints, catch-all redirect
-- **Library (1):** `src/lib/types.ts` with re-exports and app-specific type stubs
-- **Git hooks (1):** `.husky/pre-commit` with lint + format + validate
+**Project config (10)**
+
+| File | Purpose |
+|------|---------|
+| `package.json` | All deps and scripts pre-configured: `dev`, `build`, `validate`, `cleanup` |
+| `vite.config.ts` | `stellarPWA` plugin wired with your prefix; schema generation enabled |
+| `tsconfig.json` | Extends SvelteKit's generated config with strict mode |
+| `svelte.config.js` | `adapter-auto` + `vitePreprocess` |
+| `eslint.config.js` | TypeScript-aware ESLint with Svelte plugin |
+| `.prettierrc` | Consistent formatting rules |
+| `.prettierignore` | Ignores build artifacts and generated files |
+| `knip.json` | Dead-code detection configured for SvelteKit |
+| `.gitignore` | Node, SvelteKit, and environment file ignores |
+| `.env.example` | Template for `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` |
+
+**Documentation (3)**
+
+| File | Purpose |
+|------|---------|
+| `README.md` | Project-level readme linking architecture and framework docs |
+| `ARCHITECTURE.md` | Directory layout, data flow, and module responsibilities |
+| `FRAMEWORKS.md` | Technology choices, rationale, and Svelte 5 rune patterns |
+
+**Git hooks (1)**
+
+| File | Purpose |
+|------|---------|
+| `.husky/pre-commit` | Runs `npm run cleanup && npm run validate && git add -u` before every commit |
+
+**Static assets (12)**
+
+| File | Purpose |
+|------|---------|
+| `static/manifest.json` | PWA manifest with all icon sizes and display settings |
+| `static/offline.html` | Offline fallback shown by the service worker |
+| `static/icons/app.svg` | Green primary app icon (letter placeholder) |
+| `static/icons/app-dark.svg` | Dark variant for light-mode context |
+| `static/icons/maskable.svg` | Maskable icon for Android home screens |
+| `static/icons/favicon.svg` | Browser tab favicon |
+| `static/icons/monochrome.svg` | Monochrome icon for notification badges |
+| `static/icons/splash.svg` | Splash screen icon |
+| `static/icons/apple-touch.svg` | iOS Add-to-Home-Screen icon |
+| `static/signup-email.html` | Signup confirmation email template |
+| `static/change-email.html` | Email change confirmation template |
+| `static/device-verification-email.html` | Device trust OTP email template |
+
+**App core (2)**
+
+| File | Purpose |
+|------|---------|
+| `src/app.html` | PWA shell: iOS meta tags, theme color, service-worker registration script |
+| `src/app.d.ts` | SvelteKit ambient types (`App.Locals`, `App.PageData`) |
+
+**Routes (16)**
+
+| Route | File(s) | What it does |
+|-------|---------|-------------|
+| Root layout | `+layout.ts`, `+layout.svelte` | Engine bootstrap, auth resolution, adaptive navbar (top on desktop / bottom on mobile), sync status, offline toast, demo banner, PWA update prompt |
+| Home | `+page.svelte` | Protected placeholder — add your app content here |
+| Error | `+error.svelte` | SvelteKit error page with retry and home link |
+| Login | `login/+page.svelte` | PIN-based login, device linking, device verification email flow, BroadcastChannel handshake, persistent lockout countdown |
+| Email confirm | `confirm/+page.svelte` | Verifies Supabase email OTP, broadcasts `AUTH_CONFIRMED` to the login tab, then closes or redirects |
+| Setup (initial) | `setup/+page.ts`, `setup/+page.svelte` | Multi-step wizard: Supabase credentials → validate → deploy schema → create account. Guarded by `resolveSetupAccess()` — only accessible before a user account exists. |
+| Reconfigure | `setup/Reconfigure.svelte` | Single-page re-setup form for changing credentials after initial setup. Accessible from the profile settings. |
+| Profile | `profile/+page.svelte` | Full settings hub: display name, email change (with re-verification), PIN/code change, trusted devices list with revocation, debug mode toggle, diagnostics dashboard (sync, realtime, queue, egress, errors), reset database |
+| Demo | `demo/+page.svelte` | Toggle demo mode on/off with explanation and confirmation; triggers full page reload |
+| Privacy policy | `policy/+page.svelte` | Static placeholder — replace with your actual policy |
+| Config API | `api/config/+server.ts` | Returns `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` to the client |
+| Setup deploy | `api/setup/deploy/+server.ts` | Writes `.env` during initial setup, creates Supabase auth user + pushes schema SQL |
+| Setup validate | `api/setup/validate/+server.ts` | Validates Supabase credentials without writing anything |
+| Catch-all | `[...catchall]/+page.server.ts` | 302 redirect to `/` for unknown URLs |
+
+**Library (7)**
+
+| File | Purpose |
+|------|---------|
+| `src/lib/routes.ts` | `ROUTES` constants for all app paths — single source of truth |
+| `src/lib/schema.ts` | Example schema with two tables (`items`, `settings`); replace with your domain schema |
+| `src/lib/types.generated.ts` | Placeholder for Vite-plugin-generated TypeScript interfaces |
+| `src/lib/types.ts` | App-specific type stubs and re-exports |
+| `src/lib/components/UpdatePrompt.svelte` | PWA update prompt that appears when a new service worker is waiting |
+| `src/lib/demo/mockData.ts` | Mock data seeded into the demo database on each page load |
+| `src/lib/demo/config.ts` | Demo configuration wired into `initEngine()` |
+
+#### What's pre-wired
+
+The skeleton is not just file stubs — the entire auth and engine lifecycle is already connected:
+
+- **Engine bootstrap** — `initEngine()` in `+layout.ts` with your prefix, name, and demo config; `initConfig()` pulls Supabase credentials from `/api/config` at runtime
+- **Auth resolution** — `resolveRootLayout()` in the layout load determines `authMode` (`'none'` | `'offline'` | `'demo'`) and redirects unauthenticated users to login
+- **Single-user PIN gate** — login page handles first-time setup detection, `unlockSingleUser`, `setupSingleUser` inside the login flow, device linking, and persistent lockout
+- **Device verification** — email OTP flow fully wired through login → confirm → BroadcastChannel → login tab reaction
+- **Setup wizard** — multi-step Supabase credential entry, live validation, schema deploy, and user account creation; guarded so it only appears before initial setup
+- **Profile page** — change name, email (with re-verification cooldown and resend), PIN, revoke trusted devices, toggle debug mode, full diagnostics panel, and reset database
+- **Demo mode** — sandboxed IndexedDB, zero Supabase calls, mock profile, seeded data; toggle from `/demo` or profile settings
+- **Adaptive navbar** — top bar on ≥768px, fixed bottom bar on mobile; active state driven by SvelteKit's `page` store; Dynamic Island safe area padding
+- **PWA plumbing** — service worker via `stellarPWA` Vite plugin, Web App Manifest, offline fallback, `UpdatePrompt` for background updates, iOS splash/touch icons
+- **Email templates** — Supabase-compatible HTML templates for signup, email change, and device verification; drop-in replacements for the default Supabase emails
+
+#### Design theme
+
+The skeleton uses a minimal green theme derived from the email templates:
+
+| Token | Value | Use |
+|-------|-------|-----|
+| Primary | `#6B9E6B` | Buttons, active nav, focus rings, borders |
+| Card background | `#0f0f1e` | Modal and card surfaces |
+| Page background | `#111116` | App background |
+| Card border | `#3d5a3d` | Card outlines |
+| Text | `#f0f0ff` | Primary text |
+| Text secondary | `#c8c8e0` | Descriptions, labels |
+| Text muted | `#7878a0` | Hints, timestamps |
+
+All colors are CSS custom properties — override `:root` in your app's global CSS to adopt any theme.
+
+#### Building on the skeleton
+
+After scaffolding, the typical customisation path is:
+
+1. **Define your schema** — edit `src/lib/schema.ts` to replace the example tables with your domain entities; the Vite plugin auto-generates TypeScript interfaces and pushes Supabase migrations on `npm run dev`
+2. **Add app pages** — create new routes under `src/routes/`; import stores and CRUD helpers from `stellar-drive`
+3. **Wire stores** — in `+page.svelte`, create collection/detail stores with `createCollectionStore` / `createDetailStore` and refresh them with `onSyncComplete`
+4. **Customise the navbar** — the root layout's navbar lists only the home and profile links; add your app's sections to the `navItems` array in `+layout.svelte`
+5. **Replace placeholder content** — swap the privacy policy text, update icon SVGs with your actual branding, and fill in the demo mock data with representative records
+6. **Set environment variables** — copy `.env.example` to `.env` and add your Supabase project URL and publishable key; run the setup wizard on first launch to push the schema
+
+#### Prerequisites
+
+- Node.js ≥ 18
+- A [Supabase](https://supabase.com) project (free tier is sufficient)
+- `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` from the Supabase dashboard (Settings → API)
 
 ---
 
@@ -450,7 +575,8 @@ Import only what you need:
 | `stellar-drive/config` | Runtime config management (`initConfig`, `getConfig`, `setConfig`, `getDexieTableFor`) |
 | `stellar-drive/vite` | Vite plugin (`stellarPWA`) for service worker builds, asset manifests, and schema auto-generation |
 | `stellar-drive/kit` | SvelteKit helpers: server route factories, layout loaders, email confirmation, SW lifecycle, auth hydration |
-| `stellar-drive/components/*` | Svelte components: `SyncStatus`, `DeferredChangesBanner`, `DemoBanner`, `DemoBlockedMessage` |
+| `stellar-drive/toast` | Toast notifications: `addToast`, `dismissToast`, `toastStore`, `ToastVariant` type |
+| `stellar-drive/components/*` | Svelte components: `SyncStatus`, `DeferredChangesBanner`, `DemoBanner`, `DemoBlockedMessage`, `OfflineToast`, `GlobalToast` |
 
 ### Key categories at a glance
 

@@ -1013,6 +1013,7 @@ export function generateSupabaseSQL(
     parts.push(
       'do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;'
     );
+    parts.push('alter table trusted_devices replica identity full;');
     parts.push('');
   }
 

@@ -64,7 +64,7 @@ import { trustPendingDevice } from '../auth/deviceVerification.js';
  * @see {@link ConfirmResult} for the return type shape
  * @see {@link verifyOtp} for the underlying Supabase OTP verification
  */
-export async function handleEmailConfirmation(tokenHash, type) {
+export async function handleEmailConfirmation(tokenHash, type, pendingDeviceId, pendingDeviceLabel) {
     try {
         /* Supabase's verifyOtp does not accept 'magiclink' as a type;
            it expects 'email' for both magic link and email verification flows. */
@@ -73,7 +73,7 @@ export async function handleEmailConfirmation(tokenHash, type) {
         /* For device-verification OTPs (email or magiclink), trust the device
            that initiated the confirmation so it won't be challenged again. */
         if (!error && (type === 'email' || type === 'magiclink')) {
-            await trustPendingDevice();
+            await trustPendingDevice(pendingDeviceId, pendingDeviceLabel);
         }
         if (error) {
             /* Tiered error classification: check for common Supabase error patterns

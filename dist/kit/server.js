@@ -427,7 +427,7 @@ export function createValidateHandler() {
     return async ({ request, url }) => {
         /* ── Guard: validate Origin header (CSRF protection) ──── */
         const origin = request.headers.get('origin');
-        if (origin && origin !== url.origin) {
+        if (!origin || origin !== url.origin) {
             return new Response(JSON.stringify({ valid: false, error: 'Invalid origin' }), {
                 status: 403,
                 headers: SECURITY_HEADERS
@@ -479,7 +479,7 @@ export function createDeployHandler(options) {
     return async ({ request, url }) => {
         /* ── Guard: validate Origin header (CSRF protection) ──── */
         const origin = request.headers.get('origin');
-        if (origin && origin !== url.origin) {
+        if (!origin || origin !== url.origin) {
             return new Response(JSON.stringify({ success: false, error: 'Invalid origin' }), {
                 status: 403,
                 headers: SECURITY_HEADERS

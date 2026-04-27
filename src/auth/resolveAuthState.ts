@@ -40,6 +40,7 @@ import type { OfflineCredentials, SingleUserConfig } from '../types';
 import { getSession, getSessionFromStorage, isSessionExpired } from '../supabase/auth';
 import { getOfflineSession } from './offlineSession';
 import { resetSingleUserRemote } from './singleUser';
+import { isDeviceTrusted } from './deviceVerification';
 import { getEngineConfig, waitForDb } from '../config';
 import { getDb, TABLE } from '../database';
 import { supabase } from '../supabase/client';
@@ -255,6 +256,14 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
       return { session: null, authMode: 'none', offlineProfile: null };
     }
 
+    /* Revocation check: if this device was revoked while online, the realtime
+       handler persists a flag so offline unlock is also blocked. */
+    const revocationState = await db.table(TABLE.SINGLE_USER_CONFIG).get('device_revoked');
+    if (revocationState?.revoked) {
+      debugLog('[Auth] Device revoked — blocking offline access');
+      return { session: null, authMode: 'none', offlineProfile: null };
+    }
+
     // =========================================================================
     // Offline fast path: skip all Supabase SDK calls when offline
     // =========================================================================
@@ -322,6 +331,19 @@ async function resolveSingleUserAuthState(): Promise<AuthStateResult> {
     const hasValidSession = session && !isSessionExpired(session);
 
     if (hasValidSession) {
+      /* Device revocation check: if device verification is enabled, confirm
+         this device is still in the trusted_devices table. Another device may
+         have removed it after this session was established. Fail closed:
+         any error from isDeviceTrusted returns false and forces re-auth. */
+      const deviceVerificationEnabled =
+        getEngineConfig().auth?.deviceVerification?.enabled ?? false;
+      if (deviceVerificationEnabled && session!.user?.id) {
+        const trusted = await isDeviceTrusted(session!.user.id);
+        if (!trusted) {
+          debugLog('[Auth] Device no longer trusted — forcing re-auth');
+          return { session: null, authMode: 'none', offlineProfile: null };
+        }
+      }
       return { session, authMode: 'supabase', offlineProfile: null };
     }
 

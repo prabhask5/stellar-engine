@@ -1869,7 +1869,6 @@ import { browser } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { goto } from '$app/navigation';
 import { initEngine, probeNetworkReachability } from 'stellar-drive';
-import { lockSingleUser } from 'stellar-drive/auth';
 import { resolveRootLayout } from 'stellar-drive/kit';
 import { isSafeRedirect } from 'stellar-drive/utils';
 import { schema } from '$lib/schema';
@@ -1925,7 +1924,8 @@ if (browser) {
       }
     },
     onAuthKicked: async () => {
-      await lockSingleUser();
+      const { signOut } = await import('stellar-drive/auth');
+      await signOut();
       goto(ROUTES.LOGIN);
     }
   });
@@ -2024,6 +2024,7 @@ function generateRootLayoutSvelte(opts) {
   import OfflineToast from 'stellar-drive/components/OfflineToast';
   import DemoBanner from 'stellar-drive/components/DemoBanner';
   import DemoBlockedMessage from 'stellar-drive/components/DemoBlockedMessage';
+  import OfflineBanner from 'stellar-drive/components/OfflineBanner';
   import GlobalToast from 'stellar-drive/components/GlobalToast';
   import UpdatePrompt from '$lib/components/UpdatePrompt.svelte';
 
@@ -2398,6 +2399,7 @@ function generateRootLayoutSvelte(opts) {
 <OfflineToast />
 <GlobalToast />
 <DemoBanner />
+<OfflineBanner />
 <DemoBlockedMessage />
 <UpdatePrompt />
 
@@ -3040,8 +3042,8 @@ function generateSetupPageSvelte(opts) {
 
   import { page } from '$app/stores';
   import { setConfig } from 'stellar-drive/config';
-  import { isOnline } from 'stellar-drive/stores';
   import { pollForNewServiceWorker } from 'stellar-drive/kit';
+  import { isOffline } from 'stellar-drive';
   import Reconfigure from './Reconfigure.svelte';
 
   // =============================================================================
@@ -3095,6 +3097,9 @@ function generateSetupPageSvelte(opts) {
 
   /** Whether this is a first-time setup (public) or reconfiguration */
   const isFirstSetup = $derived(($page.data as { isFirstSetup?: boolean }).isFirstSetup ?? false);
+
+  /** Whether the app is currently offline — disables network-dependent actions. */
+  const offline = $derived(isOffline());
 
   /**
    * Snapshot of the credentials at validation time — used to detect
@@ -3277,13 +3282,6 @@ function generateSetupPageSvelte(opts) {
       {/each}
     </div>
 
-    <!-- Offline warning -->
-    {#if !$isOnline}
-      <div class="message msg-error">
-        You are currently offline. An internet connection is required to complete setup.
-      </div>
-    {/if}
-
     <!-- Step cards -->
     <div class="step-card">
       {#if currentStep === 1}
@@ -3338,7 +3336,7 @@ function generateSetupPageSvelte(opts) {
         <button
           class="btn btn-secondary"
           onclick={handleValidate}
-          disabled={validating || !supabaseUrl || !supabasePublishableKey}
+          disabled={validating || !supabaseUrl || !supabasePublishableKey || offline}
         >
           {#if validating}Testing...{:else}Test Connection{/if}
         </button>
@@ -3369,7 +3367,7 @@ function generateSetupPageSvelte(opts) {
         <button
           class="btn btn-primary"
           onclick={handleDeploy}
-          disabled={deploying || !vercelToken}
+          disabled={deploying || !vercelToken || offline}
         >
           {#if deploying}Deploying...{:else}Deploy{/if}
         </button>
@@ -3726,6 +3724,7 @@ function generateReconfigureSvelte(opts) {
   import { getConfig, setConfig } from 'stellar-drive/config';
   import { isOnline } from 'stellar-drive/stores';
   import { pollForNewServiceWorker, monitorSwLifecycle } from 'stellar-drive/kit';
+  import { isOffline } from 'stellar-drive';
   import { browser } from '$app/environment';
 
   // ===========================================================================
@@ -3768,13 +3767,17 @@ function generateReconfigureSvelte(opts) {
 
   const supabaseNeedsValidation = $derived(supabaseChanged && !validateSuccess);
 
+  /** Whether the app is currently offline — disables network-dependent actions. */
+  const offline = $derived(isOffline());
+
   const canDeploy = $derived(
     supabaseChanged &&
       !supabaseNeedsValidation &&
       !credentialsChanged &&
       !!vercelToken &&
       !deploying &&
-      deployStage === 'idle'
+      deployStage === 'idle' &&
+      !offline
   );
 
   // ===========================================================================
@@ -3958,7 +3961,7 @@ function generateReconfigureSvelte(opts) {
       <button
         class="btn btn-secondary"
         onclick={handleValidate}
-        disabled={!supabaseUrl || !supabasePublishableKey || validating}
+        disabled={!supabaseUrl || !supabasePublishableKey || validating || offline}
       >
         {#if validating}
           <span class="spinner small"></span>
@@ -4562,7 +4565,7 @@ function generateLoginPage(opts) {
     linkSingleUserDevice,
     checkPersistentLockout
   } from 'stellar-drive/auth';
-  import { sendDeviceVerification, isDemoMode } from 'stellar-drive';
+  import { sendDeviceVerification, isDemoMode, isOffline } from 'stellar-drive';
   import { isSafeRedirect } from 'stellar-drive/utils';
 
   // ==========================================================================
@@ -4578,6 +4581,9 @@ function generateLoginPage(opts) {
     if (param && isSafeRedirect(param)) return param;
     return '/';
   });
+
+  /** Whether the app is currently offline — disables network-dependent actions. */
+  const offline = $derived(isOffline());
 
   // ==========================================================================
   //                          SHARED UI STATE
@@ -5407,7 +5413,7 @@ function generateLoginPage(opts) {
               oninput={(e) => handleDigitInput(linkDigits, i, e, linkInputs, autoSubmitLink)}
               onkeydown={(e) => handleDigitKeydown(linkDigits, i, e, linkInputs)}
               onpaste={(e) => handleDigitPaste(linkDigits, e, linkInputs, autoSubmitLink)}
-              disabled={linkLoading || retryCountdown > 0}
+              disabled={linkLoading || retryCountdown > 0 || offline}
               autocomplete="off"
             />
           {/each}
@@ -5437,7 +5443,7 @@ function generateLoginPage(opts) {
             <input type="text" id="lastName" bind:value={lastName} disabled={loading} placeholder="Smith" />
           </div>
         </div>
-        <button class="btn-primary" onclick={goToCodeStep} disabled={loading}>
+        <button class="btn-primary" onclick={goToCodeStep} disabled={loading || offline}>
           Continue
         </button>
 
@@ -5458,7 +5464,7 @@ function generateLoginPage(opts) {
               oninput={(e) => handleDigitInput(codeDigits, i, e, codeInputs, autoFocusConfirm)}
               onkeydown={(e) => handleDigitKeydown(codeDigits, i, e, codeInputs)}
               onpaste={(e) => handleDigitPaste(codeDigits, e, codeInputs, autoFocusConfirm)}
-              disabled={loading}
+              disabled={loading || offline}
               autocomplete="off"
             />
           {/each}
@@ -5477,7 +5483,7 @@ function generateLoginPage(opts) {
               oninput={(e) => handleDigitInput(confirmDigits, i, e, confirmInputs, autoSubmitSetup)}
               onkeydown={(e) => handleDigitKeydown(confirmDigits, i, e, confirmInputs)}
               onpaste={(e) => handleDigitPaste(confirmDigits, e, confirmInputs, autoSubmitSetup)}
-              disabled={loading}
+              disabled={loading || offline}
               autocomplete="off"
             />
           {/each}
@@ -5524,7 +5530,7 @@ function generateLoginPage(opts) {
       <p class="modal-text">
         We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.
       </p>
-      <button class="btn-primary" onclick={handleResendEmail} disabled={resendCooldown > 0}>
+      <button class="btn-primary" onclick={handleResendEmail} disabled={resendCooldown > 0 || offline}>
         {#if resendCooldown > 0}Resend in {resendCooldown}s{:else}Resend email{/if}
       </button>
     </div>
@@ -5540,7 +5546,7 @@ function generateLoginPage(opts) {
         We sent a verification link to <strong>{maskedEmail}</strong>. Click it to trust this device.
       </p>
       <p class="modal-hint">This page will update automatically once verified.</p>
-      <button class="btn-primary" onclick={handleResendEmail} disabled={resendCooldown > 0}>
+      <button class="btn-primary" onclick={handleResendEmail} disabled={resendCooldown > 0 || offline}>
         {#if resendCooldown > 0}Resend in {resendCooldown}s{:else}Resend email{/if}
       </button>
     </div>
@@ -5753,6 +5759,8 @@ function generateConfirmPage(opts) {
     /* ── Read Supabase callback params ── */
     const tokenHash = $page.url.searchParams.get('token_hash');
     const type = $page.url.searchParams.get('type');
+    const pendingDeviceId = $page.url.searchParams.get('pending_device_id') ?? undefined;
+    const pendingDeviceLabel = $page.url.searchParams.get('pending_device_label') ?? undefined;
 
     if (!tokenHash || !type) {
       goto('/', { replaceState: true });
@@ -5762,7 +5770,9 @@ function generateConfirmPage(opts) {
     /* ── Verify the token ── */
     const result = await handleEmailConfirmation(
       tokenHash,
-      type as 'signup' | 'email' | 'email_change' | 'magiclink'
+      type as 'signup' | 'email' | 'email_change' | 'magiclink',
+      pendingDeviceId,
+      pendingDeviceLabel
     );
 
     if (!result.success) {
@@ -6073,10 +6083,14 @@ function generateProfilePage(opts) {
   import type { TrustedDevice } from 'stellar-drive';
   import { getDemoConfig } from 'stellar-drive';
   import { showDemoBlocked } from 'stellar-drive/demo';
+  import { isOffline } from 'stellar-drive';
   import { onMount } from 'svelte';
 
   /** Whether the app is in demo mode — shows a simplified read-only profile. */
   const inDemoMode = $derived(isDemoMode());
+
+  /** Whether the app is currently offline — disables network-dependent actions. */
+  const offline = $derived(isOffline());
 
   // =============================================================================
   //                         COMPONENT STATE
@@ -6789,16 +6803,16 @@ function generateProfilePage(opts) {
         <div class="form-row">
           <div class="form-group">
             <label for="firstName">First name</label>
-            <input id="firstName" type="text" bind:value={firstName} disabled={profileLoading} autocomplete="given-name" />
+            <input id="firstName" type="text" bind:value={firstName} disabled={profileLoading || offline} autocomplete="given-name" />
           </div>
           <div class="form-group">
             <label for="lastName">Last name</label>
-            <input id="lastName" type="text" bind:value={lastName} disabled={profileLoading} autocomplete="family-name" />
+            <input id="lastName" type="text" bind:value={lastName} disabled={profileLoading || offline} autocomplete="family-name" />
           </div>
         </div>
         {#if profileError}<p class="msg msg-error">{profileError}</p>{/if}
         {#if profileSuccess}<p class="msg msg-success">{profileSuccess}</p>{/if}
-        <button class="btn-primary" type="submit" disabled={profileLoading}>
+        <button class="btn-primary" type="submit" disabled={profileLoading || offline}>
           {profileLoading ? 'Saving…' : 'Save changes'}
         </button>
       </form>
@@ -6821,7 +6835,7 @@ function generateProfilePage(opts) {
             oninput={(e) => handleDigitInput(oldCodeDigits, i, e, oldCodeInputs)}
             onkeydown={(e) => handleDigitKeydown(oldCodeDigits, i, e, oldCodeInputs)}
             onpaste={(e) => handleDigitPaste(oldCodeDigits, e, oldCodeInputs)}
-            disabled={codeLoading || inDemoMode} autocomplete="off" />
+            disabled={codeLoading || inDemoMode || offline} autocomplete="off" />
         {/each}
       </div>
 
@@ -6833,7 +6847,7 @@ function generateProfilePage(opts) {
             oninput={(e) => handleDigitInput(newCodeDigits, i, e, newCodeInputs)}
             onkeydown={(e) => handleDigitKeydown(newCodeDigits, i, e, newCodeInputs)}
             onpaste={(e) => handleDigitPaste(newCodeDigits, e, newCodeInputs)}
-            disabled={codeLoading || inDemoMode} autocomplete="off" />
+            disabled={codeLoading || inDemoMode || offline} autocomplete="off" />
         {/each}
       </div>
 
@@ -6845,14 +6859,14 @@ function generateProfilePage(opts) {
             oninput={(e) => handleDigitInput(confirmCodeDigits, i, e, confirmCodeInputs)}
             onkeydown={(e) => handleDigitKeydown(confirmCodeDigits, i, e, confirmCodeInputs)}
             onpaste={(e) => handleDigitPaste(confirmCodeDigits, e, confirmCodeInputs)}
-            disabled={codeLoading || inDemoMode} autocomplete="off" />
+            disabled={codeLoading || inDemoMode || offline} autocomplete="off" />
         {/each}
       </div>
     </div>
 
     {#if codeError}<p class="msg msg-error">{codeError}</p>{/if}
     {#if codeSuccess}<p class="msg msg-success">{codeSuccess}</p>{/if}
-    <button class="btn-primary" onclick={handleCodeSubmit} disabled={codeLoading || inDemoMode}>
+    <button class="btn-primary" onclick={handleCodeSubmit} disabled={codeLoading || inDemoMode || offline}>
       {codeLoading ? 'Updating…' : 'Update PIN'}
     </button>
   </section>
@@ -6865,12 +6879,12 @@ function generateProfilePage(opts) {
     <div class="form-group">
       <label for="newEmail">New email address</label>
       <input id="newEmail" type="email" bind:value={newEmail}
-        placeholder={currentEmail} disabled={emailLoading || inDemoMode}
+        placeholder={currentEmail} disabled={emailLoading || inDemoMode || offline}
         autocomplete="email" />
     </div>
     {#if emailError}<p class="msg msg-error">{emailError}</p>{/if}
     {#if emailSuccess}<p class="msg msg-success">{emailSuccess}</p>{/if}
-    <button class="btn-primary" onclick={handleEmailSubmit} disabled={emailLoading || !newEmail || inDemoMode}>
+    <button class="btn-primary" onclick={handleEmailSubmit} disabled={emailLoading || !newEmail || inDemoMode || offline}>
       {emailLoading ? 'Sending…' : 'Send confirmation'}
     </button>
   </section>
@@ -6902,7 +6916,7 @@ function generateProfilePage(opts) {
             <button
               class="btn-remove"
               onclick={() => handleRemoveDevice(device.id)}
-              disabled={removingDeviceId === device.id || inDemoMode}
+              disabled={removingDeviceId === device.id || inDemoMode || offline}
               aria-label="Remove device"
             >
               {#if removingDeviceId === device.id}

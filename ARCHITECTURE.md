@@ -1316,11 +1316,11 @@ Trusted device registry stored in Supabase `trusted_devices` table:
 
 The unique constraint is `(user_id, device_id, app_prefix)`. A device trusted in one app is not automatically trusted in another app sharing the same Supabase project. All device verification queries filter by `app_prefix` via an internal `getAppPrefix()` helper that returns the current engine prefix.
 
-Pending device metadata in Supabase `user_metadata` is also namespaced per app: `pending_{prefix}_device_id` and `pending_{prefix}_device_label` (previously the flat keys `pending_device_id` / `pending_device_label`).
+The originating device's ID and label travel inside the OTP email link itself as query params (`pending_device_id`, `pending_device_label`) on the `emailRedirectTo` URL. The confirm page reads them from the URL and passes them directly to `trustPendingDevice()`. No shared `user_metadata` field is used — each OTP email is 1:1 with the device that sent it, so concurrent verification requests from multiple devices cannot interfere.
 
 Trust duration: 90 days (configurable via `trustDurationDays` in the flat auth config).
 
-Flow: Login on untrusted device → OTP email sent via Supabase → user clicks email link → `/confirm` page verifies OTP → device added to `trusted_devices` → trust established for 90 days.
+Flow: Login on untrusted device → OTP email sent via Supabase (device ID baked into redirect URL) → user clicks email link → `/confirm` page verifies OTP → `trustPendingDevice(pendingDeviceId, pendingDeviceLabel)` called with URL params → device added to `trusted_devices` → trust established for 90 days.
 
 ### 9.5 Auth State Resolution (`resolveAuthState`)
 

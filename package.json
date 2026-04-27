@@ -69,6 +69,10 @@
       "svelte": "./src/components/DemoBlockedMessage.svelte",
       "default": "./src/components/DemoBlockedMessage.svelte"
     },
+    "./components/OfflineBanner": {
+      "svelte": "./src/components/OfflineBanner.svelte",
+      "default": "./src/components/OfflineBanner.svelte"
+    },
     "./components/OfflineToast": {
       "svelte": "./src/components/OfflineToast.svelte",
       "default": "./src/components/OfflineToast.svelte"

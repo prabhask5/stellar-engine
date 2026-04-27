@@ -89,20 +89,6 @@ export function padPin(pin) {
     return `${pin}_app`;
 }
 /**
- * Legacy PIN padding that used the per-app prefix as a suffix.
- *
- * Used only during password migration: if the user's Supabase password was
- * created with the old app-specific suffix (e.g., `1234_stellar`), the
- * migration path tries this legacy format as a fallback before giving up.
- *
- * @param pin - The raw PIN/password entered by the user.
- * @returns The legacy padded string with the app-specific suffix.
- */
-function padPinLegacy(pin) {
-    const prefix = getEngineConfig().prefix || 'app';
-    return `${pin}_${prefix}`;
-}
-/**
  * Build the full redirect URL for email confirmation flows.
  *
  * Uses `window.location.origin` combined with the configured
@@ -489,28 +475,10 @@ export async function unlockSingleUser(gate) {
             }
             const strategy = preCheck.strategy;
             const paddedPassword = padPin(gate);
-            let { data, error } = await supabase.auth.signInWithPassword({
+            const { data, error } = await supabase.auth.signInWithPassword({
                 email: config.email,
                 password: paddedPassword
             });
-            /* Migration: try legacy app-specific password if universal one fails */
-            if (error) {
-                const legacyPassword = padPinLegacy(gate);
-                if (legacyPassword !== paddedPassword) {
-                    const legacy = await supabase.auth.signInWithPassword({
-                        email: config.email,
-                        password: legacyPassword
-                    });
-                    if (!legacy.error) {
-                        data = legacy.data;
-                        error = null;
-                        /* Silently migrate password to universal format */
-                        await supabase.auth.updateUser({ password: paddedPassword }).catch((e) => {
-                            debugWarn('[SingleUser] Password migration failed:', e);
-                        });
-                    }
-                }
-            }
             if (error) {
                 await onLoginFailure(strategy);
                 debugWarn('[SingleUser] signInWithPassword failed:', error.message);
@@ -530,14 +498,14 @@ export async function unlockSingleUser(gate) {
             }
             /* Re-apply profile to user_metadata on each login to keep Supabase
                in sync with any local profile changes made while offline.
-               This runs BEFORE device verification so that app_domain is set
-               in user_metadata before any OTP email is sent — email templates
-               use {{ .Data.app_domain }} for confirmation links. */
+               app_name and app_domain are intentionally excluded here — they are
+               written just-in-time by sendDeviceVerification() before any OTP
+               email is sent. Writing them here would clobber the shared
+               user_metadata with whichever app was unlocked most recently,
+               corrupting the other app's email template variables. */
             const profileToMetadata = engineConfig.auth?.profileToMetadata;
             const metadata = {
-                ...(profileToMetadata ? profileToMetadata(config.profile) : config.profile),
-                app_name: engineConfig.name,
-                app_domain: engineConfig.domain
+                ...(profileToMetadata ? profileToMetadata(config.profile) : config.profile)
             };
             await supabase.auth.updateUser({ data: metadata }).catch((e) => {
                 debugWarn('[SingleUser] Failed to update user_metadata on unlock:', e);
@@ -563,8 +531,15 @@ export async function unlockSingleUser(gate) {
                     };
                 }
                 /* Trusted device — refresh the last_used_at timestamp to extend
-                   the trust window */
+                   the trust window. Also clear any stale revocation flag so a
+                   device that was revoked and re-added is not permanently blocked. */
                 await touchTrustedDevice(user.id);
+                try {
+                    await getDb().table(TABLE.SINGLE_USER_CONFIG).delete('device_revoked');
+                }
+                catch (e) {
+                    debugWarn('[SingleUser] Failed to clear device revocation flag:', e);
+                }
             }
             /* Cache offline credentials for future offline unlocks */
             try {
@@ -601,6 +576,11 @@ export async function unlockSingleUser(gate) {
         }
         else {
             // --- OFFLINE UNLOCK ---
+            /* Block if this device was revoked — persisted by realtime DELETE handler */
+            const revocationState = await getDb().table(TABLE.SINGLE_USER_CONFIG).get('device_revoked');
+            if (revocationState?.revoked) {
+                return { error: 'This device has been removed. Please sign in on a trusted device.' };
+            }
             /* Fall back to local hash verification when offline */
             const inputHash = await hashValue(gate);
             if (config.gateHash && inputHash !== config.gateHash) {
@@ -840,13 +820,15 @@ export async function lockSingleUser() {
 export async function changeSingleUserGate(oldGate, newGate) {
     if (isDemoMode())
         return { error: null };
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return { error: 'Code cannot be changed while offline. Please connect to the internet.' };
+    }
     try {
         const config = await readConfig();
         if (!config) {
             return { error: 'Single-user mode is not set up' };
         }
-        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-        if (!isOffline && config.email) {
+        if (config.email) {
             /* Online: verify old gate locally first (faster, avoids network round-trip).
                Fall back to Supabase verification if no local hash is available. */
             if (config.gateHash) {
@@ -860,27 +842,10 @@ export async function changeSingleUserGate(oldGate, newGate) {
                 /* No local hash — fall back to Supabase verification.
                    This can happen after a migration from an older schema. */
                 const paddedOld = padPin(oldGate);
-                let { error: verifyError } = await supabase.auth.signInWithPassword({
+                const { error: verifyError } = await supabase.auth.signInWithPassword({
                     email: config.email,
                     password: paddedOld
                 });
-                /* Migration: try legacy app-specific password */
-                if (verifyError) {
-                    const legacyOld = padPinLegacy(oldGate);
-                    if (legacyOld !== paddedOld) {
-                        const legacy = await supabase.auth.signInWithPassword({
-                            email: config.email,
-                            password: legacyOld
-                        });
-                        if (!legacy.error) {
-                            verifyError = null;
-                            /* Silently migrate password to universal format */
-                            await supabase.auth.updateUser({ password: paddedOld }).catch((e) => {
-                                debugWarn('[SingleUser] Password migration failed:', e);
-                            });
-                        }
-                    }
-                }
                 if (verifyError) {
                     return { error: 'Current code is incorrect' };
                 }
@@ -893,14 +858,7 @@ export async function changeSingleUserGate(oldGate, newGate) {
                 return { error: `Failed to update code: ${updateError.message}` };
             }
         }
-        else {
-            /* Offline: can only verify against the local hash */
-            const oldHash = await hashValue(oldGate);
-            if (config.gateHash && oldHash !== config.gateHash) {
-                return { error: 'Current code is incorrect' };
-            }
-        }
-        /* Update local hash regardless of online/offline status */
+        /* Update local hash to match new gate */
         const newHash = await hashValue(newGate);
         config.gateHash = newHash;
         config.updatedAt = new Date().toISOString();
@@ -1131,9 +1089,13 @@ export async function resetSingleUser() {
         try {
             const db = getDb();
             await db.table(TABLE.SINGLE_USER_CONFIG).delete(CONFIG_KEY);
+            // Explicitly purge offline credentials and session regardless of connectivity.
+            // signOut() skips OFFLINE_CREDENTIALS when offline — resetSingleUser must not.
+            await db.table(TABLE.OFFLINE_CREDENTIALS).delete('current_user');
+            await db.table(TABLE.OFFLINE_SESSION).delete('current_session');
         }
         catch (e) {
-            debugWarn('[SingleUser] Failed to clear config on reset:', e);
+            debugWarn('[SingleUser] Failed to clear local auth state on reset:', e);
         }
         debugLog('[SingleUser] Reset complete');
         return { error: result.error };
@@ -1239,28 +1201,10 @@ export async function linkSingleUserDevice(email, pin) {
             return { error: preCheck.error, retryAfterMs: preCheck.retryAfterMs };
         }
         const paddedPassword = padPin(pin);
-        let { data, error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
             email,
             password: paddedPassword
         });
-        /* Migration: try legacy app-specific password if universal one fails */
-        if (error) {
-            const legacyPassword = padPinLegacy(pin);
-            if (legacyPassword !== paddedPassword) {
-                const legacy = await supabase.auth.signInWithPassword({
-                    email,
-                    password: legacyPassword
-                });
-                if (!legacy.error) {
-                    data = legacy.data;
-                    error = null;
-                    /* Silently migrate password to universal format */
-                    await supabase.auth.updateUser({ password: paddedPassword }).catch((e) => {
-                        debugWarn('[SingleUser] Password migration failed:', e);
-                    });
-                }
-            }
-        }
         if (error) {
             await onLoginFailure('no-cache');
             debugWarn('[SingleUser] linkSingleUserDevice signIn failed:', error.message);

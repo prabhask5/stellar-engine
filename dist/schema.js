@@ -774,6 +774,7 @@ export function generateSupabaseSQL(schema, options) {
         parts.push('create index if not exists idx_trusted_devices_app_prefix on trusted_devices(app_prefix);');
         parts.push('');
         parts.push('do $$ begin alter publication supabase_realtime add table trusted_devices; exception when duplicate_object then null; end $$;');
+        parts.push('alter table trusted_devices replica identity full;');
         parts.push('');
     }
     /* ---- Storage Buckets ---- */

@@ -1492,7 +1492,9 @@ if (result.error) {
 
 Locks the application by stopping the sync engine and resetting auth state to `'none'`. This is a "soft lock" — it does NOT destroy the Supabase session, clear local data, or sign out. The user's data remains intact in IndexedDB, and they can unlock again with their PIN without needing network access (if offline credentials are cached).
 
-Use this for "lock screen" functionality where the app should be inaccessible but preserve all state for quick re-entry.
+Use this for user-initiated "lock screen" functionality where the app should be inaccessible but preserve all state for quick re-entry.
+
+**Do not use this in `onAuthKicked`.** When the engine kicks auth (device revoked, session invalidated), use `signOut()` instead — it performs a full sign-out and clears the session. `lockSingleUser()` is for voluntary lock only.
 
 **Signature:**
 ```ts
@@ -1911,15 +1913,15 @@ await trustCurrentDevice('user-uuid-123');
 
 ---
 
-#### `trustPendingDevice()`
+#### `trustPendingDevice(pendingDeviceId?, pendingDeviceLabel?)`
 
-Trusts the pending device stored in Supabase `user_metadata`. Called from the email confirmation page after a device OTP is verified. This trusts the **originating device** (the one that entered the PIN and triggered the verification email), not necessarily the device that opened the confirmation link. This distinction matters because users often open confirmation emails on a different device (e.g., PIN entered on laptop, email opened on phone).
+Trusts the originating device after a device OTP is verified. Called from the email confirmation page. This trusts the **originating device** (the one that entered the PIN and triggered the verification email), not necessarily the device that opened the confirmation link. This distinction matters because users often open confirmation emails on a different device (e.g., PIN entered on laptop, email opened on phone).
 
-Falls back to trusting the current device if no pending device ID is found in `user_metadata`.
+The device ID and label come from the `pending_device_id` and `pending_device_label` query params embedded in the OTP email's redirect URL by `sendDeviceVerification()`. No `user_metadata` is read. Falls back to trusting the current device if `pendingDeviceId` is not provided (same-browser flows or old-format links). Also clears the `device_revoked` IndexedDB flag on success.
 
 **Signature:**
 ```ts
-function trustPendingDevice(): Promise<void>
+function trustPendingDevice(pendingDeviceId?: string, pendingDeviceLabel?: string): Promise<void>
 ```
 
 **Example:**
@@ -2003,7 +2005,7 @@ await removeTrustedDevice('device-row-uuid-456');
 
 #### `sendDeviceVerification(email)`
 
-Sends a device verification OTP email to the user. Performs two actions: (1) stores the pending device info (device ID and label) in Supabase `user_metadata` so the confirmation page can trust the originating device even if the link is opened on a different device, and (2) sends an OTP email via `signInWithOtp()` with `shouldCreateUser: false` to prevent account creation abuse.
+Sends a device verification OTP email to the user. Builds an `emailRedirectTo` URL containing the originating device's ID and label as query params (`pending_device_id`, `pending_device_label`), writes `app_name` and `app_domain` to `user_metadata` just before sending (so email templates resolve to the correct app), then sends the OTP via `signInWithOtp()` with `shouldCreateUser: false` to prevent account creation abuse. Each OTP email is 1:1 with the device that sent it — no shared `user_metadata` field, so concurrent OTPs from multiple devices cannot interfere with each other.
 
 **Signature:**
 ```ts
@@ -4976,7 +4978,7 @@ interface SingleUserConfig {
 }
 ```
 
-**Usage:** Managed internally by the single-user auth functions (`completeSingleUserSetup`, `lockSingleUser`, `changeSingleUserGate`).
+**Usage:** Managed internally by the single-user auth functions (`completeSingleUserSetup`, `changeSingleUserGate`).
 
 ---
 

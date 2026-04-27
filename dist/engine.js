@@ -71,6 +71,7 @@ import { isOnline } from './stores/network';
 import { getSession } from './supabase/auth';
 import { supabase as supabaseProxy } from './supabase/client';
 import { getOfflineCredentials } from './auth/offlineCredentials';
+import { isDeviceTrusted } from './auth/deviceVerification';
 import { getOfflineSession, createOfflineSession } from './auth/offlineSession';
 import { validateSchema } from './supabase/validate';
 import { formatBytes } from './utils';
@@ -2950,6 +2951,22 @@ export async function startSyncEngine() {
             })();
             const user = await Promise.race([validationPromise, timeoutPromise]);
             if (user) {
+                // If device verification is enabled, re-check trust on reconnect.
+                // This catches the case where the device was removed while offline:
+                // the realtime DELETE event is missed while offline and is not replayed
+                // on reconnect, so this is the only place that catches it.
+                const deviceVerificationEnabled = config.auth?.deviceVerification?.enabled ?? false;
+                if (deviceVerificationEnabled) {
+                    const trusted = await isDeviceTrusted(user.id);
+                    if (!trusted) {
+                        debugWarn('[Engine] Device no longer trusted on reconnect');
+                        if (config.onAuthKicked) {
+                            await clearPendingSyncQueue();
+                            config.onAuthKicked('This device has been removed. Please sign in again.');
+                        }
+                        return;
+                    }
+                }
                 markAuthValidated();
                 debugLog('[Engine] Auth validated on reconnect');
                 // Trigger sync after successful auth validation (with egress cooldown)
@@ -3142,6 +3159,31 @@ export async function startSyncEngine() {
                 debugLog(`[SYNC] Skipping periodic poll — realtime reconnecting (${Math.round(sinceRealtimeStart / 1000)}s ago)`);
             }
             else {
+                // Device trust check during polling fallback: when realtime is down,
+                // the reconnect handler (which normally calls isDeviceTrusted) never fires.
+                // A revoked device could keep syncing forever via this polling path.
+                const engineConfig = getEngineConfig();
+                const deviceVerificationEnabled = engineConfig.auth?.deviceVerification?.enabled ?? false;
+                if (deviceVerificationEnabled) {
+                    try {
+                        const { data: userData } = await getSupabase().auth.getUser();
+                        const user = userData?.user;
+                        if (user) {
+                            const trusted = await isDeviceTrusted(user.id);
+                            if (!trusted) {
+                                debugWarn('[SYNC] Device no longer trusted during polling — kicking auth');
+                                if (engineConfig.onAuthKicked) {
+                                    await clearPendingSyncQueue();
+                                    engineConfig.onAuthKicked('This device has been removed. Please sign in again.');
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    catch (e) {
+                        debugWarn('[SYNC] Device trust check failed during polling:', e);
+                    }
+                }
                 runFullSync(true).catch((e) => debugError('[SYNC] Periodic sync failed:', e));
             }
         }

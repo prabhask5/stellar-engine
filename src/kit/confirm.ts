@@ -90,7 +90,9 @@ export interface ConfirmResult {
  */
 export async function handleEmailConfirmation(
   tokenHash: string,
-  type: 'signup' | 'email' | 'email_change' | 'magiclink'
+  type: 'signup' | 'email' | 'email_change' | 'magiclink',
+  pendingDeviceId?: string,
+  pendingDeviceLabel?: string
 ): Promise<ConfirmResult> {
   try {
     /* Supabase's verifyOtp does not accept 'magiclink' as a type;
@@ -101,7 +103,7 @@ export async function handleEmailConfirmation(
     /* For device-verification OTPs (email or magiclink), trust the device
        that initiated the confirmation so it won't be challenged again. */
     if (!error && (type === 'email' || type === 'magiclink')) {
-      await trustPendingDevice();
+      await trustPendingDevice(pendingDeviceId, pendingDeviceLabel);
     }
 
     if (error) {

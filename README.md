@@ -586,7 +586,7 @@ Import only what you need:
 
 **CRUD and queries:** `engineCreate`, `engineUpdate`, `engineDelete`, `engineIncrement`, `engineBatchWrite`, `engineGetOrCreate`, `queryAll`, `queryOne`, `engineGet`, `markEntityModified`
 
-**Authentication:** `resolveAuthState`, `signOut`, `getValidSession`, `setupSingleUser`, `unlockSingleUser`, `lockSingleUser`, `resetSingleUser`, device verification functions, display helpers (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`)
+**Authentication:** `resolveAuthState`, `signOut`, `getValidSession`, `setupSingleUser`, `unlockSingleUser`, `lockSingleUser` (voluntary soft-lock only — use `signOut` in `onAuthKicked`), `resetSingleUser`, device verification functions, display helpers (`resolveFirstName`, `resolveUserId`, `resolveAvatarInitial`)
 
 **Reactive stores:** `syncStatusStore`, `authState`, `isAuthenticated`, `userDisplayInfo`, `isOnline`, `remoteChangesStore`, `createCollectionStore`, `createDetailStore`, `onSyncComplete`, `onRealtimeDataUpdate`
 

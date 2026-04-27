@@ -16,11 +16,13 @@
  *   days (default: 90). The `last_used_at` column is refreshed on each
  *   successful login via {@link touchTrustedDevice}.
  * - **OTP flow**: Uses Supabase `signInWithOtp()` with `shouldCreateUser: false`
- *   to send a magic link email. The confirm page verifies the token and trusts
- *   both the originating device and the confirming device.
- * - **Cross-device verification**: The originating device's ID is stored in
- *   `user_metadata` as `pending_{prefix}_device_id` so the confirm page can trust it
- *   even when opened on a different device (e.g., phone).
+ *   to send a magic link email. The originating device's ID and label are
+ *   embedded directly in the `emailRedirectTo` URL as query params
+ *   (`pending_device_id`, `pending_device_label`). The confirm page reads them
+ *   from the URL and trusts exactly that device — no shared mutable state.
+ * - **Cross-device verification**: Because the device ID travels inside the
+ *   email link itself, each OTP is 1:1 with its originating device. Concurrent
+ *   OTPs from multiple devices are fully isolated with no race condition.
  *
  * ## Database Schema
  *
@@ -48,6 +50,12 @@
  *   and security. Reduce this for higher-security applications.
  * - **RLS**: The `trusted_devices` table should have Row Level Security
  *   policies ensuring users can only read/write their own device records.
+ * - **URL param trust**: `pending_device_id` travels in the email link URL.
+ *   It controls only which device is trusted after a valid `token_hash`
+ *   verification — not whether trust is granted at all. Tampering with this
+ *   param requires intercepting the email delivery chain, which already gives
+ *   full account compromise via the token itself. `pending_device_label` is
+ *   capped at 100 characters before storage to prevent oversized DB writes.
  *
  * @module deviceVerification
  * @see {@link singleUser} for how device verification integrates into the auth flow
@@ -130,7 +138,7 @@ export declare function isDeviceTrusted(userId: string): Promise<boolean>;
  * await trustCurrentDevice(user.id);
  * ```
  *
- * @see {@link trustPendingDevice} for trusting a remote device via user_metadata
+ * @see {@link trustPendingDevice} for trusting the originating device after OTP confirmation
  */
 export declare function trustCurrentDevice(userId: string): Promise<void>;
 /**
@@ -185,12 +193,13 @@ export declare function removeTrustedDevice(id: string): Promise<void>;
 /**
  * Send a device verification OTP email to the user.
  *
- * This function performs two actions:
- * 1. **Stores pending device info** in Supabase `user_metadata` so that the
- *    confirm page can trust the originating device even if the link is opened
- *    on a different device.
- * 2. **Sends an OTP email** via `signInWithOtp()` with `shouldCreateUser: false`
- *    to prevent account creation through this endpoint.
+ * Builds an `emailRedirectTo` URL containing the originating device's ID and
+ * label as query params (`pending_device_id`, `pending_device_label`), then
+ * sends an OTP email via `signInWithOtp()` with `shouldCreateUser: false` to
+ * prevent account creation through this endpoint.
+ *
+ * Each email is 1:1 with the device that sent it — no shared `user_metadata`
+ * field, so concurrent OTPs from multiple devices cannot interfere.
  *
  * The existing session is intentionally kept alive so that
  * {@link pollDeviceVerification} can continue checking trust status.
@@ -211,35 +220,36 @@ export declare function sendDeviceVerification(email: string): Promise<{
     error: string | null;
 }>;
 /**
- * Trust the pending device stored in `user_metadata`.
+ * Trust the device that originated a verification OTP.
  *
- * Called from the confirm page after a device OTP is verified. This function
- * trusts the ORIGINATING device (the one that entered the PIN and triggered
- * verification), not necessarily the device opening the confirmation link.
+ * Called from the confirm page after a device OTP is verified. Accepts the
+ * originating device ID and label directly from the email redirect URL — no
+ * shared `user_metadata` field, so concurrent OTPs from multiple devices
+ * each trust only their own originating device.
  *
  * ## Cross-Device Flow
  *
- * 1. Device A enters the PIN -> untrusted -> OTP sent, device A's ID stored
- *    in `user_metadata.pending_{prefix}_device_id`.
- * 2. User opens the OTP link on Device B (or Device A).
- * 3. This function reads `pending_{prefix}_device_id` from metadata and trusts Device A.
- * 4. Device A polls via {@link pollDeviceVerification} and discovers it's now trusted.
- * 5. Only Device A is trusted — the confirming device (B) is NOT added, since
- *    the user never signed into the app on that device.
+ * 1. Device A sends OTP → redirect URL contains Device A's ID as query params.
+ * 2. User opens the link (on Device A or Device B).
+ * 3. Confirm page passes `pendingDeviceId` / `pendingDeviceLabel` here.
+ * 4. This function upserts only Device A into `trusted_devices`.
+ * 5. Device A polls via {@link pollDeviceVerification} and discovers it's now trusted.
  *
- * If no `pending_{prefix}_device_id` is found in metadata (same-browser case where the
- * link was opened in the same browser), falls back to trusting the current
- * device only.
+ * If `pendingDeviceId` is not provided (edge case: old-format links), falls
+ * back to trusting the current device.
+ *
+ * @param pendingDeviceId    - Device ID from the email redirect URL query param.
+ * @param pendingDeviceLabel - Device label from the email redirect URL query param.
  *
  * @example
  * ```ts
  * // Called from the /confirm page after OTP verification:
- * await trustPendingDevice();
+ * await trustPendingDevice(pendingDeviceId, pendingDeviceLabel);
  * ```
  *
- * @see {@link sendDeviceVerification} which stores the pending device ID
+ * @see {@link sendDeviceVerification} which embeds the device ID in the redirect URL
  */
-export declare function trustPendingDevice(): Promise<void>;
+export declare function trustPendingDevice(pendingDeviceId?: string, pendingDeviceLabel?: string): Promise<void>;
 /**
  * Verify a device verification OTP token hash from an email link.
  *

@@ -74,7 +74,7 @@ export interface ConfirmResult {
  * @see {@link ConfirmResult} for the return type shape
  * @see {@link verifyOtp} for the underlying Supabase OTP verification
  */
-export declare function handleEmailConfirmation(tokenHash: string, type: 'signup' | 'email' | 'email_change' | 'magiclink'): Promise<ConfirmResult>;
+export declare function handleEmailConfirmation(tokenHash: string, type: 'signup' | 'email' | 'email_change' | 'magiclink', pendingDeviceId?: string, pendingDeviceLabel?: string): Promise<ConfirmResult>;
 /**
  * Broadcasts an auth confirmation event via `BroadcastChannel` so other
  * open tabs (e.g. the login page that initiated the email flow) can detect

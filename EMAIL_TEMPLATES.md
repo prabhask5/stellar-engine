@@ -54,9 +54,11 @@ initEngine({
 
 These values are automatically included in `user_metadata` during:
 - `setupSingleUser()` -- initial signup
-- `unlockSingleUser()` -- each login (ensures metadata stays current before any OTP email)
+- `sendDeviceVerification()` -- written just before the OTP email is sent, so templates resolve to the correct app (both apps share one Supabase user; writing at unlock time would clobber whichever app was used last)
 - `linkSingleUserDevice()` -- device linking (before device verification email)
 - `updateSingleUserProfile()` -- profile updates
+
+Note: `unlockSingleUser()` no longer writes `app_name` / `app_domain` to `user_metadata`. It syncs only profile fields (first name, last name, etc.) on each login.
 
 ## Confirmation Link Format
 

@@ -74,8 +74,9 @@
  */
 import { debugLog, debugWarn, debugError, isDebugMode } from './debug';
 import { getEngineConfig, getDexieTableFor, findTableConfig, RECENTLY_MODIFIED_TTL_MS } from './config';
-import { getDb } from './database';
+import { getDb, TABLE } from './database';
 import { getDeviceId } from './deviceId';
+import { isDeviceTrusted } from './auth/deviceVerification';
 import { resolveConflicts, storeConflictHistory, getPendingOpsForEntity } from './conflicts';
 import { getPendingEntityIds } from './queue';
 import { remoteChangesStore } from './stores/remoteChanges';
@@ -937,6 +938,62 @@ export async function startRealtimeSubscriptions(userId) {
                 handleRealtimeChange(table, payload).catch((error) => {
                     debugError(`[Realtime] Error processing ${table} change:`, error);
                 });
+            });
+        }
+        /* ---- Device revocation listener ----
+           When device verification is enabled, subscribe to DELETE events on
+           trusted_devices. If this device's row is removed (by the user from
+           another device), immediately kick auth so the session doesn't linger.
+    
+           REPLICA IDENTITY FULL must be set on trusted_devices for RLS to filter
+           DELETE events to only the owning user — the schema generator handles this.
+           On any DELETE we re-query isDeviceTrusted() rather than inspecting the
+           payload's `old` record, so this works regardless of replica identity
+           settings and is authoritative by definition. */
+        const deviceVerificationEnabled = config.auth?.deviceVerification?.enabled ?? false;
+        if (deviceVerificationEnabled) {
+            state.channel = state.channel.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'trusted_devices' }, () => {
+                const userId = state.userId;
+                if (!userId)
+                    return;
+                isDeviceTrusted(userId)
+                    .then(async (trusted) => {
+                    if (!trusted) {
+                        debugLog('[Realtime] Device removed from trusted_devices — kicking auth');
+                        // Persist revocation flag so offline unlock is also blocked
+                        try {
+                            const db = getDb();
+                            await db
+                                .table(TABLE.SINGLE_USER_CONFIG)
+                                .put({ id: 'device_revoked', revoked: true });
+                        }
+                        catch (e) {
+                            debugWarn('[Realtime] Failed to write device revocation flag:', e);
+                        }
+                        if (config.onAuthKicked) {
+                            config.onAuthKicked('This device has been removed. Please sign in again.');
+                        }
+                    }
+                })
+                    .catch((e) => {
+                    debugWarn('[Realtime] Device trust re-check failed after DELETE event:', e);
+                });
+            });
+        }
+        /* ---- Device trust restored listener ----
+           When a new trusted_devices row is inserted (admin re-adds this device,
+           or device verification completes), clear the local revocation flag so
+           offline access is not permanently blocked for a legitimately re-trusted
+           device. */
+        if (deviceVerificationEnabled) {
+            state.channel = state.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trusted_devices' }, async () => {
+                try {
+                    const db = getDb();
+                    await db.table(TABLE.SINGLE_USER_CONFIG).delete('device_revoked');
+                }
+                catch (e) {
+                    debugWarn('[Realtime] Failed to clear device revocation flag on INSERT:', e);
+                }
             });
         }
         /* ---- Activate the channel ----

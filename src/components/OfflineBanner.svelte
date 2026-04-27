@@ -16,7 +16,7 @@
   - Never overlaps top nav on desktop or island-header on mobile.
 -->
 <script lang="ts">
-  import { isOnline } from '../stores/network';
+  import { isOnline } from 'stellar-drive/stores';
 </script>
 
 {#if !$isOnline}
